@@ -1,0 +1,82 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.19/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.19",
+  "version": "0.2.0",
+  "id": "b06fba6f-9dd8-4195-bc4b-30c009e9f10e",
+  "developer": {
+    "name": "Claude Code Teams Bot",
+    "websiteUrl": "https://github.com",
+    "privacyUrl": "https://github.com",
+    "termsOfUseUrl": "https://github.com"
+  },
+  "name": {
+    "short": "Claude Code",
+    "full": "Claude Code Teams Bot"
+  },
+  "description": {
+    "short": "Control Claude Code from Teams",
+    "full": "A Teams bot that bridges to Claude Code running on your local machine. Send messages to Claude Code and receive responses with syntax-highlighted code directly in Teams."
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "accentColor": "#D97706",
+  "bots": [
+    {
+      "botId": "b06fba6f-9dd8-4195-bc4b-30c009e9f10e",
+      "scopes": ["personal", "groupChat"],
+      "supportsFiles": true,
+      "isNotificationOnly": false,
+      "commandLists": [
+        {
+          "scopes": ["personal", "groupChat"],
+          "commands": [
+            {
+              "title": "help",
+              "description": "Show available commands"
+            },
+            {
+              "title": "new",
+              "description": "Start a new session"
+            },
+            {
+              "title": "project",
+              "description": "Switch working directory"
+            },
+            {
+              "title": "model",
+              "description": "Set or show current model"
+            },
+            {
+              "title": "models",
+              "description": "List available models"
+            },
+            {
+              "title": "status",
+              "description": "Show session info"
+            },
+            {
+              "title": "thinking",
+              "description": "Set thinking budget"
+            },
+            {
+              "title": "permission",
+              "description": "Set permission mode"
+            },
+            {
+              "title": "clear",
+              "description": "Clear session (alias for /new)"
+            },
+            {
+              "title": "compact",
+              "description": "Clear session with fresh context"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "permissions": ["messageTeamMembers"],
+  "validDomains": []
+}

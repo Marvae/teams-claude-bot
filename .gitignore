@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment
+.env
+
+# Python (legacy)
+__pycache__/
+*.pyc
+.venv/
+
+# Sessions
+.sessions.json
+
+# OS
+.DS_Store
