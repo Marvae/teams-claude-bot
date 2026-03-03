@@ -216,16 +216,10 @@ export class ClaudeCodeBot extends ActivityHandler {
       // Stop typing
       typingController.abort();
       await typingLoop;
-      const progressActivityId = await progress.stop();
 
       if (result.error) {
         console.error(`[BOT] Error from Claude: ${result.error}`);
-        const errorMsg = friendlyError(result.error);
-        if (progressActivityId) {
-          await ctx.updateActivity({ id: progressActivityId, type: "message", text: errorMsg });
-        } else {
-          await ctx.sendActivity(errorMsg);
-        }
+        await progress.finalize([friendlyError(result.error)]);
         return;
       }
 
@@ -234,33 +228,14 @@ export class ClaudeCodeBot extends ActivityHandler {
       }
 
       console.log('[BOT] Formatting and sending response');
-      const response = formatResponse(result);
-      const chunks = splitMessage(response);
-
-      // Replace the progress message with the first chunk
-      if (progressActivityId && chunks.length > 0) {
-        await ctx.updateActivity({ id: progressActivityId, type: "message", text: chunks[0] });
-        for (let i = 1; i < chunks.length; i++) {
-          await ctx.sendActivity(chunks[i]);
-        }
-      } else {
-        for (const chunk of chunks) {
-          await ctx.sendActivity(chunk);
-        }
-      }
+      await progress.finalize(splitMessage(formatResponse(result)));
       console.log('[BOT] Response sent successfully');
     } catch (err) {
       console.error('[BOT] Error in handleMessage:', err);
       typingController.abort();
       await typingLoop;
-      const progressActivityId = await progress.stop();
       const msg = err instanceof Error ? err.message : String(err);
-      const errorMsg = friendlyError(msg);
-      if (progressActivityId) {
-        await ctx.updateActivity({ id: progressActivityId, type: "message", text: errorMsg });
-      } else {
-        await ctx.sendActivity(errorMsg);
-      }
+      await progress.finalize([friendlyError(msg)]);
     }
   }
 
@@ -311,46 +286,23 @@ export class ClaudeCodeBot extends ActivityHandler {
         );
         typingController.abort();
         await typingLoop;
-        const progressActivityId = await progress.stop();
 
         if (result.error) {
-          const errorMsg = "Could not resume session. Is your Terminal still open?\n\n" +
+          await progress.finalize(["Could not resume session. Is your Terminal still open?\n\n" +
             "Close it with `/exit`, then try again.\n" +
-            "Or use **Quick Pickup** instead — it works without closing Terminal.";
-          if (progressActivityId) {
-            await ctx.updateActivity({ id: progressActivityId, type: "message", text: errorMsg });
-          } else {
-            await ctx.sendActivity(errorMsg);
-          }
+            "Or use **Quick Pickup** instead — it works without closing Terminal."]);
           clearSession(conversationId);
           clearHandoffMode(conversationId);
         } else {
           if (result.sessionId) setSession(conversationId, result.sessionId);
-          const response = formatResponse(result);
-          const chunks = splitMessage(response);
-          if (progressActivityId && chunks.length > 0) {
-            await ctx.updateActivity({ id: progressActivityId, type: "message", text: chunks[0] });
-            for (let i = 1; i < chunks.length; i++) {
-              await ctx.sendActivity(chunks[i]);
-            }
-          } else {
-            for (const chunk of chunks) {
-              await ctx.sendActivity(chunk);
-            }
-          }
+          await progress.finalize(splitMessage(formatResponse(result)));
         }
       } catch (err) {
         typingController.abort();
         await typingLoop;
-        const progressActivityId = await progress.stop();
-        const errorMsg = "Could not resume session. Is your Terminal still open?\n\n" +
+        await progress.finalize(["Could not resume session. Is your Terminal still open?\n\n" +
           "Close it with `/exit`, then try again.\n" +
-          "Or use **Quick Pickup** instead.";
-        if (progressActivityId) {
-          await ctx.updateActivity({ id: progressActivityId, type: "message", text: errorMsg });
-        } else {
-          await ctx.sendActivity(errorMsg);
-        }
+          "Or use **Quick Pickup** instead."]);
         clearSession(conversationId);
         clearHandoffMode(conversationId);
       }
@@ -380,15 +332,9 @@ export class ClaudeCodeBot extends ActivityHandler {
       );
       typingController.abort();
       await typingLoop;
-      const progressActivityId = await progress.stop();
 
       if (result.error) {
-        const errorMsg = friendlyError(result.error);
-        if (progressActivityId) {
-          await ctx.updateActivity({ id: progressActivityId, type: "message", text: errorMsg });
-        } else {
-          await ctx.sendActivity(errorMsg);
-        }
+        await progress.finalize([friendlyError(result.error)]);
         return;
       }
 
@@ -396,29 +342,12 @@ export class ClaudeCodeBot extends ActivityHandler {
         setSession(conversationId, result.sessionId);
       }
 
-      const response = formatResponse(result);
-      const chunks = splitMessage(response);
-      if (progressActivityId && chunks.length > 0) {
-        await ctx.updateActivity({ id: progressActivityId, type: "message", text: chunks[0] });
-        for (let i = 1; i < chunks.length; i++) {
-          await ctx.sendActivity(chunks[i]);
-        }
-      } else {
-        for (const chunk of chunks) {
-          await ctx.sendActivity(chunk);
-        }
-      }
+      await progress.finalize(splitMessage(formatResponse(result)));
     } catch (err) {
       typingController.abort();
       await typingLoop;
-      const progressActivityId = await progress.stop();
       const msg = err instanceof Error ? err.message : String(err);
-      const errorMsg = friendlyError(msg);
-      if (progressActivityId) {
-        await ctx.updateActivity({ id: progressActivityId, type: "message", text: errorMsg });
-      } else {
-        await ctx.sendActivity(errorMsg);
-      }
+      await progress.finalize([friendlyError(msg)]);
     }
   }
 
@@ -444,15 +373,25 @@ export class ClaudeCodeBot extends ActivityHandler {
 
   private createProgressNotifier(ctx: TurnContext): {
     onProgress: (event: ProgressEvent) => void;
-    /** Stop the notifier and return the activityId of the progress message (if any). */
-    stop: () => Promise<string | undefined>;
+    /** Replace the progress message with final content, or send new if no progress was shown. */
+    finalize: (chunks: string[]) => Promise<void>;
   } {
+    const MAX_LINES = 10;
     const throttleMs = 2000;
     let activityId: string | undefined;
     let lastSentAt = 0;
-    let pendingMessage: string | undefined;
+    let pendingMessages: string[] = [];
     let timer: NodeJS.Timeout | undefined;
     const progressLines: string[] = [];
+
+    const addLines = (messages: string[]): void => {
+      for (const msg of messages) {
+        if (progressLines.length >= MAX_LINES) {
+          progressLines.shift();
+        }
+        progressLines.push(msg);
+      }
+    };
 
     const updateProgress = async (): Promise<void> => {
       const text = progressLines.join("\n\n");
@@ -470,9 +409,10 @@ export class ClaudeCodeBot extends ActivityHandler {
     };
 
     const flushPending = async (): Promise<void> => {
-      if (!pendingMessage) return;
-      progressLines.push(pendingMessage);
-      pendingMessage = undefined;
+      if (pendingMessages.length === 0) return;
+      const msgs = pendingMessages;
+      pendingMessages = [];
+      addLines(msgs);
       lastSentAt = Date.now();
       await updateProgress();
     };
@@ -486,13 +426,13 @@ export class ClaudeCodeBot extends ActivityHandler {
         const waitMs = throttleMs - (now - lastSentAt);
 
         if (waitMs <= 0 && !timer) {
-          progressLines.push(message);
+          addLines([message]);
           lastSentAt = now;
           void updateProgress();
           return;
         }
 
-        pendingMessage = message;
+        pendingMessages.push(message);
         if (!timer) {
           timer = setTimeout(() => {
             timer = undefined;
@@ -500,13 +440,24 @@ export class ClaudeCodeBot extends ActivityHandler {
           }, Math.max(waitMs, 100));
         }
       },
-      stop: async () => {
+      finalize: async (chunks: string[]) => {
         if (timer) {
           clearTimeout(timer);
           timer = undefined;
         }
-        await flushPending();
-        return activityId;
+        if (chunks.length === 0) return;
+        try {
+          if (activityId) {
+            await ctx.updateActivity({ id: activityId, type: "message", text: chunks[0] });
+          } else {
+            await ctx.sendActivity(chunks[0]);
+          }
+        } catch {
+          await ctx.sendActivity(chunks[0]);
+        }
+        for (let i = 1; i < chunks.length; i++) {
+          await ctx.sendActivity(chunks[i]);
+        }
       },
     };
   }
