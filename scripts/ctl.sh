@@ -37,7 +37,7 @@ case "$1" in
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <string>${PATH}</string>
     </dict>
 </dict>
 </plist>
