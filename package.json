@@ -14,7 +14,11 @@
     "start": "node dist/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "package": "node scripts/package-manifest.mjs"
+    "package": "node scripts/package-manifest.mjs",
+    "lint": "eslint src/ tests/",
+    "typecheck": "tsc --noEmit",
+    "format": "prettier --write src/ tests/",
+    "format:check": "prettier --check src/ tests/"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.63",
@@ -23,12 +27,18 @@
     "express": "^5.2.1"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/express": "^5.0.6",
     "@types/node": "^25.3.3",
+    "@typescript-eslint/eslint-plugin": "^8.56.1",
+    "@typescript-eslint/parser": "^8.56.1",
     "concurrently": "^9.2.1",
     "esbuild": "^0.27.3",
+    "eslint": "^10.0.2",
+    "prettier": "^3.8.1",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
+    "typescript-eslint": "^8.56.1",
     "vitest": "^4.0.18"
   },
   "engines": {

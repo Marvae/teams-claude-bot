@@ -15,23 +15,47 @@ const COMMAND_GROUPS: CommandGroup[] = [
     commands: [
       { title: "/new", command: "/new", description: "Start a fresh session" },
       { title: "/clear", command: "/clear", description: "Alias for /new" },
-      { title: "/compact", command: "/compact", description: "Clear with fresh context" },
-      { title: "/status", command: "/status", description: "Show session info" },
+      {
+        title: "/compact",
+        command: "/compact",
+        description: "Clear with fresh context",
+      },
+      {
+        title: "/status",
+        command: "/status",
+        description: "Show session info",
+      },
     ],
   },
   {
     label: "Project",
     commands: [
-      { title: "/project", command: "/project", description: "Show/change working directory" },
+      {
+        title: "/project",
+        command: "/project",
+        description: "Show/change working directory",
+      },
     ],
   },
   {
     label: "Configuration",
     commands: [
       { title: "/model", command: "/model", description: "Show/set model" },
-      { title: "/models", command: "/models", description: "List available models" },
-      { title: "/thinking", command: "/thinking", description: "Set thinking budget" },
-      { title: "/permission", command: "/permission", description: "Set permission mode" },
+      {
+        title: "/models",
+        command: "/models",
+        description: "List available models",
+      },
+      {
+        title: "/thinking",
+        command: "/thinking",
+        description: "Set thinking budget",
+      },
+      {
+        title: "/permission",
+        command: "/permission",
+        description: "Set permission mode",
+      },
     ],
   },
 ];

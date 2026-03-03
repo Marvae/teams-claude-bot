@@ -3,10 +3,7 @@ import { BotFrameworkAdapter, TurnContext } from "botbuilder";
 import express from "express";
 import { ClaudeCodeBot } from "./bot/teams-bot.js";
 import { loadSessions } from "./session/manager.js";
-import {
-  loadConversationRefs,
-  getConversationRef,
-} from "./handoff/store.js";
+import { loadConversationRefs, getConversationRef } from "./handoff/store.js";
 
 // Load persisted state
 loadSessions();
@@ -56,23 +53,21 @@ app.post("/api/handoff", async (req, res) => {
     }
   }
 
-  const { workDir, sessionId, mode } = req.body ?? {};
+  const { workDir, sessionId, mode: _mode } = req.body ?? {};
 
   const ref = getConversationRef();
   if (!ref) {
     return res.status(404).json({
       success: false,
-      error: "First time setup: send any message to the bot in Teams first, then retry /handoff. This is only needed once.",
+      error:
+        "First time setup: send any message to the bot in Teams first, then retry /handoff. This is only needed once.",
     });
   }
 
   try {
-    await adapter.continueConversation(
-      ref,
-      async (ctx: TurnContext) => {
-        await bot.handleHandoff(ctx, "handoff_fork", workDir, sessionId);
-      },
-    );
+    await adapter.continueConversation(ref, async (ctx: TurnContext) => {
+      await bot.handleHandoff(ctx, "handoff_fork", workDir, sessionId);
+    });
 
     console.log("[HANDOFF] Proactive notification sent");
     res.json({ success: true });
@@ -86,8 +81,6 @@ app.post("/api/handoff", async (req, res) => {
 });
 
 app.listen(config.port, () => {
-  console.log(
-    `Bot running on http://localhost:${config.port}/api/messages`,
-  );
+  console.log(`Bot running on http://localhost:${config.port}/api/messages`);
   console.log(`Working directory: ${config.claudeWorkDir}`);
 });

@@ -15,10 +15,7 @@ interface SessionData {
 
 type SessionStore = Record<string, SessionData>;
 
-const SESSIONS_FILE = resolve(
-  process.cwd(),
-  ".sessions.json",
-);
+const SESSIONS_FILE = resolve(process.cwd(), ".sessions.json");
 
 let sessions: SessionStore = {};
 
@@ -174,16 +171,11 @@ export function setThinkingTokens(
   persist();
 }
 
-export function getPermissionMode(
-  conversationId: string,
-): string | undefined {
+export function getPermissionMode(conversationId: string): string | undefined {
   return sessions[conversationId]?.permissionMode;
 }
 
-export function setPermissionMode(
-  conversationId: string,
-  mode: string,
-): void {
+export function setPermissionMode(conversationId: string, mode: string): void {
   ensureEntry(conversationId).permissionMode = mode;
   persist();
 }

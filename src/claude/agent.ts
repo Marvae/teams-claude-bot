@@ -94,9 +94,7 @@ export async function runClaude(
     let finalPrompt = prompt;
     if (images && images.length > 0) {
       const paths = await saveImagesToTmp(images);
-      const imageRefs = paths
-        .map((p) => `[Uploaded image: ${p}]`)
-        .join("\n");
+      const imageRefs = paths.map((p) => `[Uploaded image: ${p}]`).join("\n");
       finalPrompt = `The user sent the following image(s). Use the Read tool to view them:\n${imageRefs}\n\n${prompt}`;
     }
 
@@ -128,11 +126,13 @@ export async function runClaude(
           const toolInfo: ToolInfo = { name: toolName };
           const input = progress.input as Record<string, unknown> | undefined;
           if (input) {
-            if (typeof input.file_path === "string") toolInfo.file = input.file_path;
+            if (typeof input.file_path === "string")
+              toolInfo.file = input.file_path;
             if (typeof input.command === "string") {
               toolInfo.command = input.command.slice(0, 100);
             }
-            if (typeof input.pattern === "string") toolInfo.pattern = input.pattern;
+            if (typeof input.pattern === "string")
+              toolInfo.pattern = input.pattern;
           }
           onProgress?.({ type: "tool_use", tool: toolInfo });
         }
@@ -191,10 +191,11 @@ export async function runClaude(
       tools,
     };
   } catch (err) {
-    const errorMessage =
-      err instanceof Error ? err.message : String(err);
+    const errorMessage = err instanceof Error ? err.message : String(err);
     console.error(`[CLAUDE] Error: ${errorMessage}`);
-    console.error(`[CLAUDE] Options: sessionId=${sessionId}, workDir=${workDir}, resume=${!!sessionId}`);
+    console.error(
+      `[CLAUDE] Options: sessionId=${sessionId}, workDir=${workDir}, resume=${!!sessionId}`,
+    );
     if (err instanceof Error && err.stack) {
       console.error(`[CLAUDE] Stack: ${err.stack}`);
     }

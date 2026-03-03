@@ -11,7 +11,7 @@ import {
   getPermissionMode,
   setPermissionMode,
   listPastSessions,
-  switchToSession,
+  // switchToSession, // TODO: implement session switching
   getHandoffMode,
   clearHandoffMode,
 } from "../session/manager.js";
@@ -62,9 +62,7 @@ export async function handleCommand(
 
     case "/compact": {
       clearSession(conversationId);
-      await ctx.sendActivity(
-        "Session cleared. Context will be managed fresh.",
-      );
+      await ctx.sendActivity("Session cleared. Context will be managed fresh.");
       return true;
     }
 
