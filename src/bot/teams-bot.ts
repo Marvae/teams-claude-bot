@@ -1,6 +1,7 @@
 import {
   ActivityHandler,
   ActivityTypes,
+  BotFrameworkAdapter,
   TurnContext,
 } from "botbuilder";
 import { stripMention } from "./mention.js";
@@ -15,14 +16,35 @@ import {
   getThinkingTokens,
   getPermissionMode,
   switchToSession,
-  setContinueMode,
-  consumeContinueMode,
+  setHandoffMode,
 } from "../session/manager.js";
-import { runClaude, type ImageInput } from "../claude/agent.js";
+import { runClaude, getSessionSummary, type ImageInput } from "../claude/agent.js";
 import { formatResponse, splitMessage } from "../claude/formatter.js";
 import { processAttachments } from "./attachments.js";
 import { config } from "../config.js";
 import { saveConversationRef } from "../handoff/store.js";
+
+function friendlyError(error: string): string {
+  if (error.includes("exited with code 1")) {
+    return "Something went wrong with Claude Code. Try `/new` to start a fresh session.";
+  }
+  if (error.includes("Session not found")) {
+    return "Session not found. The Terminal session may have been deleted. Try `/new` to start fresh.";
+  }
+  if (error.includes("ENOENT")) {
+    return "Could not start Claude Code. The bot service may need to be restarted.";
+  }
+  if (error.includes("rate_limit") || error.includes("429")) {
+    return "Claude API is rate limited. Please wait a moment and try again.";
+  }
+  if (error.includes("token") || error.includes("context_length")) {
+    return "Conversation is too long. Use `/new` to start a fresh session.";
+  }
+  if (error.includes("timeout") || error.includes("ETIMEDOUT")) {
+    return "Request timed out. Please try again.";
+  }
+  return `Something went wrong: ${error.slice(0, 200)}`;
+}
 
 export class ClaudeCodeBot extends ActivityHandler {
   constructor() {
@@ -98,19 +120,15 @@ export class ClaudeCodeBot extends ActivityHandler {
         return;
       }
 
-      if (value.action === "handoff_resume") {
-        const wd = value.workDir as string;
-        const sid = value.sessionId as string | undefined;
-        if (sid) {
-          setSession(conversationId, sid);
-        }
-        setWorkDir(conversationId, wd);
-        await ctx.sendActivity(`🔄 Resumed Terminal session\n\n📂 ${wd}\n\nSend a message to continue.`);
-        return;
-      }
+      if (value.action === "handoff_pickup" || value.action === "handoff_resume") {
+        // Save ref for background use (ctx gets revoked after HTTP response)
+        const ref = TurnContext.getConversationReference(ctx.activity);
+        const adapter = ctx.adapter as BotFrameworkAdapter;
 
-      if (value.action === "handoff_dismiss") {
-        await ctx.sendActivity("Dismissed. Current session unchanged.");
+        // Don't await — run in background so Teams gets HTTP 200 quickly
+        adapter.continueConversation(ref, async (bgCtx) => {
+          await this.handleHandoff(bgCtx, value.action as string, value.workDir as string, value.sessionId as string | undefined);
+        }).catch((err) => console.error("[HANDOFF] Background error:", err));
         return;
       }
 
@@ -118,7 +136,6 @@ export class ClaudeCodeBot extends ActivityHandler {
     }
 
     let text = (ctx.activity.text ?? "").trim();
-    console.log(`[BOT] Message text: "${text}"`);
 
     const conversationId = ctx.activity.conversation.id;
 
@@ -152,7 +169,6 @@ export class ClaudeCodeBot extends ActivityHandler {
     if (!images && (await handleCommand(text, conversationId, ctx))) return;
 
     // Start typing indicator loop
-    console.log('[BOT] Starting typing indicator and Claude API call');
     const typingController = new AbortController();
     const typingLoop = this.startTypingLoop(ctx, typingController.signal);
 
@@ -174,8 +190,8 @@ export class ClaudeCodeBot extends ActivityHandler {
       await typingLoop;
 
       if (result.error) {
-        console.log(`[BOT] Error from Claude: ${result.error}`);
-        await ctx.sendActivity(`Error: \`${result.error}\``);
+        console.error(`[BOT] Error from Claude: ${result.error}`);
+        await ctx.sendActivity(friendlyError(result.error));
         return;
       }
 
@@ -196,7 +212,127 @@ export class ClaudeCodeBot extends ActivityHandler {
       typingController.abort();
       await typingLoop;
       const msg = err instanceof Error ? err.message : String(err);
-      await ctx.sendActivity(`Error: \`${msg.slice(0, 500)}\``);
+      await ctx.sendActivity(friendlyError(msg));
+    }
+  }
+
+  /** Handle handoff action — callable from both Adaptive Card clicks and direct API. */
+  public async handleHandoff(
+    ctx: TurnContext,
+    action: string,
+    workDir: string,
+    sessionId?: string,
+  ): Promise<void> {
+    const conversationId = ctx.activity.conversation.id;
+
+    if (action === "handoff_pickup") {
+      // Immediately acknowledge to avoid Teams "something went wrong" timeout
+      // Keep it short and language-neutral with emoji
+      await ctx.sendActivity(`🔄 📂 ${workDir}`);
+
+      setHandoffMode(conversationId, "pickup");
+      clearSession(conversationId);
+      if (workDir) setWorkDir(conversationId, workDir);
+
+      console.log(`[HANDOFF] Pickup: sessionId=${sessionId}, workDir=${workDir}`);
+      const summary = sessionId ? getSessionSummary(sessionId) : undefined;
+      console.log(`[HANDOFF] Summary: ${summary ? summary.length + ' chars' : 'none'}`);
+      const prompt = summary
+        ? `The user handed off from Terminal to Teams. Here is their recent Terminal conversation:\n\n${summary}\n\nYou MUST reply in the same language as the conversation above. Briefly welcome the user to Teams and summarize what they were working on. Be concise.`
+        : `The user handed off from Terminal to Teams (project: ${workDir ?? "unknown"}). Welcome them and ask what they need help with.`;
+
+      await this.runClaudeAndRespond(ctx, conversationId, prompt);
+    } else if (action === "handoff_resume") {
+      setHandoffMode(conversationId, "resume");
+      if (sessionId) setSession(conversationId, sessionId);
+      if (workDir) setWorkDir(conversationId, workDir);
+
+      const typingController = new AbortController();
+      const typingLoop = this.startTypingLoop(ctx, typingController.signal);
+      try {
+        const result = await runClaude(
+          "The user just handed off this session from their Terminal to Teams mobile. Briefly welcome them and summarize what you were working on.",
+          getSession(conversationId),
+          getWorkDir(conversationId),
+          getModel(conversationId),
+          getThinkingTokens(conversationId),
+          getPermissionMode(conversationId),
+        );
+        typingController.abort();
+        await typingLoop;
+
+        if (result.error) {
+          // Resume failed — likely Terminal still running
+          await ctx.sendActivity(
+            "Could not resume session. Is your Terminal still open?\n\n" +
+              "Close it with `/exit`, then try again.\n" +
+              "Or use **Quick Pickup** instead — it works without closing Terminal.",
+          );
+          clearSession(conversationId);
+          clearHandoffMode(conversationId);
+        } else {
+          if (result.sessionId) setSession(conversationId, result.sessionId);
+          const response = formatResponse(result);
+          const chunks = splitMessage(response);
+          for (const chunk of chunks) {
+            await ctx.sendActivity(chunk);
+          }
+        }
+      } catch (err) {
+        typingController.abort();
+        await typingLoop;
+        await ctx.sendActivity(
+          "Could not resume session. Is your Terminal still open?\n\n" +
+            "Close it with `/exit`, then try again.\n" +
+            "Or use **Quick Pickup** instead.",
+        );
+        clearSession(conversationId);
+        clearHandoffMode(conversationId);
+      }
+    }
+  }
+
+  private async runClaudeAndRespond(
+    ctx: TurnContext,
+    conversationId: string,
+    prompt: string,
+    images?: ImageInput[],
+  ): Promise<void> {
+    const typingController = new AbortController();
+    const typingLoop = this.startTypingLoop(ctx, typingController.signal);
+
+    try {
+      const result = await runClaude(
+        prompt,
+        getSession(conversationId),
+        getWorkDir(conversationId),
+        getModel(conversationId),
+        getThinkingTokens(conversationId),
+        getPermissionMode(conversationId),
+        images,
+      );
+      typingController.abort();
+      await typingLoop;
+
+      if (result.error) {
+        await ctx.sendActivity(friendlyError(result.error));
+        return;
+      }
+
+      if (result.sessionId) {
+        setSession(conversationId, result.sessionId);
+      }
+
+      const response = formatResponse(result);
+      const chunks = splitMessage(response);
+      for (const chunk of chunks) {
+        await ctx.sendActivity(chunk);
+      }
+    } catch (err) {
+      typingController.abort();
+      await typingLoop;
+      const msg = err instanceof Error ? err.message : String(err);
+      await ctx.sendActivity(friendlyError(msg));
     }
   }
 

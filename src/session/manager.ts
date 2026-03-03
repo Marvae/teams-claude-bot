@@ -9,7 +9,7 @@ interface SessionData {
   model?: string;
   thinkingTokens?: number | null;
   permissionMode?: string;
-  continueMode?: boolean;
+  handoffMode?: "pickup" | "resume";
   history?: Array<{ sessionId: string; workDir: string; usedAt: string }>;
 }
 
@@ -86,25 +86,6 @@ export function clearSession(conversationId: string): void {
   }
 }
 
-export function setContinueMode(conversationId: string, workDir: string): void {
-  pushHistory(conversationId);
-  const entry = ensureEntry(conversationId);
-  delete entry.claudeSessionId;
-  entry.workDir = workDir;
-  entry.continueMode = true;
-  persist();
-}
-
-export function consumeContinueMode(conversationId: string): boolean {
-  const entry = sessions[conversationId];
-  if (entry?.continueMode) {
-    delete entry.continueMode;
-    persist();
-    return true;
-  }
-  return false;
-}
-
 export interface PastSession {
   index: number;
   sessionId: string;
@@ -142,6 +123,28 @@ export function switchToSession(
 
   persist();
   return { index, ...target };
+}
+
+export function setHandoffMode(
+  conversationId: string,
+  mode: "pickup" | "resume",
+): void {
+  ensureEntry(conversationId).handoffMode = mode;
+  persist();
+}
+
+export function getHandoffMode(
+  conversationId: string,
+): "pickup" | "resume" | undefined {
+  return sessions[conversationId]?.handoffMode;
+}
+
+export function clearHandoffMode(conversationId: string): void {
+  const entry = sessions[conversationId];
+  if (entry) {
+    delete entry.handoffMode;
+    persist();
+  }
 }
 
 export function getWorkDir(conversationId: string): string {

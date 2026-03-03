@@ -1,5 +1,111 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
-import { tmpdir } from "os";
+import { tmpdir, homedir } from "os";
+import { readdirSync, existsSync, readFileSync } from "fs";
+import { join } from "path";
+
+/** Find the jsonl file path for a session. */
+export function findSessionFile(
+  sessionId: string,
+  projectsDir = join(homedir(), ".claude", "projects"),
+): string | undefined {
+  if (!existsSync(projectsDir)) return undefined;
+
+  for (const dir of readdirSync(projectsDir)) {
+    const sessionFile = join(projectsDir, dir, `${sessionId}.jsonl`);
+    if (existsSync(sessionFile)) return sessionFile;
+  }
+  return undefined;
+}
+
+/** Find the cwd for a session by scanning its jsonl file for the cwd field. */
+export function findSessionCwd(
+  sessionId: string,
+  projectsDir = join(homedir(), ".claude", "projects"),
+): string | undefined {
+  const file = findSessionFile(sessionId, projectsDir);
+  if (!file) return undefined;
+
+  try {
+    const chunk = readFileSync(file, "utf-8").slice(0, 10000);
+    for (const line of chunk.split("\n")) {
+      if (!line.includes('"cwd"')) continue;
+      const data = JSON.parse(line);
+      if (data.cwd) return data.cwd;
+    }
+  } catch {}
+  return undefined;
+}
+
+const MAX_SUMMARY_CHARS = 4000;
+
+/** Extract a conversation summary from a session's transcript. */
+export function getSessionSummary(
+  sessionId: string,
+  projectsDir = join(homedir(), ".claude", "projects"),
+): string | undefined {
+  const file = findSessionFile(sessionId, projectsDir);
+  if (!file) return undefined;
+
+  try {
+    const content = readFileSync(file, "utf-8");
+    const lines = content.split("\n");
+    const messages: Array<{ role: string; text: string }> = [];
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const data = JSON.parse(line);
+
+        // User messages (string or array content)
+        if (data.type === "user") {
+          if (typeof data.message?.content === "string") {
+            messages.push({ role: "user", text: data.message.content });
+          } else if (Array.isArray(data.message?.content)) {
+            const textParts: string[] = [];
+            for (const block of data.message.content) {
+              if (block.type === "text" && typeof block.text === "string") {
+                textParts.push(block.text);
+              }
+            }
+            if (textParts.length > 0) {
+              messages.push({ role: "user", text: textParts.join("\n") });
+            }
+          }
+        }
+
+        // Assistant messages — only extract text blocks, skip tool_use
+        if (data.type === "assistant" && Array.isArray(data.message?.content)) {
+          const textParts: string[] = [];
+          for (const block of data.message.content) {
+            if (block.type === "text" && typeof block.text === "string") {
+              textParts.push(block.text);
+            }
+          }
+          if (textParts.length > 0) {
+            messages.push({ role: "assistant", text: textParts.join("\n") });
+          }
+        }
+      } catch {}
+    }
+
+    if (messages.length === 0) return undefined;
+
+    // Take the last ~10 messages
+    const recent = messages.slice(-10);
+    let summary = recent
+      .map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.text}`)
+      .join("\n\n");
+
+    // Truncate
+    if (summary.length > MAX_SUMMARY_CHARS) {
+      summary = "..." + summary.slice(-MAX_SUMMARY_CHARS);
+    }
+
+    return summary;
+  } catch {}
+  return undefined;
+}
+
 
 export interface ToolInfo {
   name: string;
@@ -52,7 +158,6 @@ export async function runClaude(
   thinkingTokens?: number | null,
   permissionMode?: string,
   images?: ImageInput[],
-  continueSession?: boolean,
 ): Promise<ClaudeResult> {
   const tools: ToolInfo[] = [];
   let resultText: string | undefined;
@@ -70,9 +175,16 @@ export async function runClaude(
     if (thinkingTokens !== undefined && thinkingTokens !== null) {
       options.maxThinkingTokens = thinkingTokens;
     }
-    if (workDir) options.cwd = workDir;
-    if (continueSession) options.continue = true;
-    else if (sessionId) options.resume = sessionId;
+    if (sessionId) {
+      const sessionCwd = findSessionCwd(sessionId);
+      if (!sessionCwd) {
+        return { error: `Session not found: ${sessionId}`, tools };
+      }
+      options.resume = sessionId;
+      options.cwd = sessionCwd;
+    } else {
+      if (workDir) options.cwd = workDir;
+    }
 
     // Save images to tmp files and prepend paths to prompt
     let finalPrompt = prompt;
@@ -153,6 +265,11 @@ export async function runClaude(
   } catch (err) {
     const errorMessage =
       err instanceof Error ? err.message : String(err);
+    console.error(`[CLAUDE] Error: ${errorMessage}`);
+    console.error(`[CLAUDE] Options: sessionId=${sessionId}, workDir=${workDir}, resume=${!!sessionId}`);
+    if (err instanceof Error && err.stack) {
+      console.error(`[CLAUDE] Stack: ${err.stack}`);
+    }
     return {
       error: errorMessage.slice(0, 500),
       tools,

@@ -48,13 +48,21 @@ app.post("/api/messages", async (req, res) => {
 
 // Handoff API - called by Terminal skill to notify Teams
 app.post("/api/handoff", async (req, res) => {
-  const { workDir, sessionId } = req.body ?? {};
+  // Verify handoff token if configured
+  if (config.handoffToken) {
+    const token = req.headers["x-handoff-token"];
+    if (token !== config.handoffToken) {
+      return res.status(401).json({ success: false, error: "Unauthorized" });
+    }
+  }
+
+  const { workDir, sessionId, mode } = req.body ?? {};
 
   const ref = getConversationRef();
   if (!ref) {
     return res.status(404).json({
       success: false,
-      error: "No conversation reference. Message the bot in Teams first.",
+      error: "First time setup: send any message to the bot in Teams first, then retry /handoff. This is only needed once.",
     });
   }
 
@@ -62,13 +70,21 @@ app.post("/api/handoff", async (req, res) => {
     await adapter.continueConversation(
       ref,
       async (ctx: TurnContext) => {
+        // Direct mode: skip card, call handoff handler directly
+        if (mode === "pickup" || mode === "resume") {
+          const action = mode === "pickup" ? "handoff_pickup" : "handoff_resume";
+          await bot.handleHandoff(ctx, action, workDir, sessionId);
+          return;
+        }
+
+        // Default: show Adaptive Card with both options
         const card = CardFactory.adaptiveCard({
           type: "AdaptiveCard",
           version: "1.4",
           body: [
             {
               type: "TextBlock",
-              text: "Terminal Session Ready",
+              text: "Handoff Ready",
               size: "large",
               weight: "bolder",
             },
@@ -79,17 +95,25 @@ app.post("/api/handoff", async (req, res) => {
                 { title: "Time", value: new Date().toLocaleTimeString() },
               ],
             },
+            {
+              type: "TextBlock",
+              text: "Quick Pickup: new session with context summary. Both sides can work independently.\nResume: same session takeover. Close Terminal first (/exit).",
+              size: "small",
+              isSubtle: true,
+              wrap: true,
+              spacing: "small",
+            },
           ],
           actions: [
             {
               type: "Action.Submit",
-              title: "▶️ Resume",
-              data: { action: "handoff_resume", workDir, sessionId },
+              title: "▶️ Quick Pickup (recommended)",
+              data: { action: "handoff_pickup", workDir, sessionId },
             },
             {
               type: "Action.Submit",
-              title: "Dismiss",
-              data: { action: "handoff_dismiss" },
+              title: "🔄 Resume (close Terminal first)",
+              data: { action: "handoff_resume", workDir, sessionId },
             },
           ],
         });

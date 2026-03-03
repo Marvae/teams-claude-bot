@@ -6,6 +6,8 @@ set -a
 source .env 2>/dev/null
 set +a
 
+TUNNEL_ID="${DEVTUNNEL_ID:-YOUR_TUNNEL_ID}"
+
 cleanup() {
   echo "[run.sh] Shutting down..."
   kill $BOT_PID $TUNNEL_PID 2>/dev/null
@@ -16,12 +18,54 @@ cleanup() {
 
 trap cleanup INT TERM EXIT
 
-# Start bot and tunnel
+# Start bot
 node dist/index.js &
 BOT_PID=$!
 
-devtunnel host peaceful-plane-fm228kq &
+# Start tunnel with error detection
+TUNNEL_LOG=$(mktemp)
+devtunnel host "$TUNNEL_ID" > "$TUNNEL_LOG" 2>&1 &
 TUNNEL_PID=$!
+
+# Wait a few seconds and check if tunnel started
+sleep 3
+if ! kill -0 $TUNNEL_PID 2>/dev/null; then
+  echo "[run.sh] ERROR: Tunnel failed to start!"
+  echo ""
+  cat "$TUNNEL_LOG"
+  echo ""
+  if grep -q "Unauthorized" "$TUNNEL_LOG"; then
+    echo "[run.sh] Tunnel auth expired or permissions lost."
+    echo ""
+    echo "  Fix steps:"
+    echo "  1. devtunnel user logout && devtunnel user login"
+    echo "  2. Try again: teams-bot restart"
+    echo ""
+    echo "  If still failing, create a new tunnel:"
+    echo "  1. devtunnel create --allow-anonymous"
+    echo "  2. devtunnel port create -p 3978"
+    echo "  3. Update DEVTUNNEL_ID in .env with the new tunnel ID"
+    echo "  4. Update Azure Bot messaging endpoint with the new URL"
+    echo "     ${AZURE_BOT_CONFIG_URL:-Azure Portal → Bot registration → Configuration → Messaging endpoint}"
+    echo "  5. teams-bot restart"
+  elif grep -q "not found" "$TUNNEL_LOG"; then
+    echo "[run.sh] Tunnel '$TUNNEL_ID' not found (expired or deleted)."
+    echo ""
+    echo "  Fix steps:"
+    echo "  1. devtunnel create --allow-anonymous"
+    echo "  2. devtunnel port create -p 3978"
+    echo "  3. Update DEVTUNNEL_ID in .env with the new tunnel ID"
+    echo "  4. Update Azure Bot messaging endpoint with the new URL"
+    echo "     ${AZURE_BOT_CONFIG_URL:-Azure Portal → Bot registration → Configuration → Messaging endpoint}"
+    echo "  5. teams-bot restart"
+  fi
+  rm -f "$TUNNEL_LOG"
+  cleanup
+fi
+
+# Print tunnel URL
+cat "$TUNNEL_LOG"
+rm -f "$TUNNEL_LOG"
 
 echo "[run.sh] Bot PID=$BOT_PID, Tunnel PID=$TUNNEL_PID"
 

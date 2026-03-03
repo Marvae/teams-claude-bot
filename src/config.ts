@@ -31,4 +31,5 @@ export const config = {
   port: parseInt(process.env.PORT ?? "3978", 10),
   claudeWorkDir: expandHome(process.env.CLAUDE_WORK_DIR ?? "~/Work"),
   allowedUsers: parseAllowedUsers(process.env.ALLOWED_USERS),
+  handoffToken: process.env.HANDOFF_TOKEN ?? "",
 } as const;

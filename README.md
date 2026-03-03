@@ -10,19 +10,25 @@ A lightweight Microsoft Teams bot that bridges to Claude Code on your local mach
 
 - **Full Claude Code access** — Read, Write, Edit, Bash, Glob, Grep tools via Teams messages
 - **Image & file upload** — Send screenshots for Claude to analyze, or upload code files for review
+- **Handoff** — Seamlessly switch between Terminal and Teams with `/handoff` skill
+  - **Quick Pickup** — New session with conversation summary (both sides work independently)
+  - **Resume Session** — Take over the exact Terminal session (requires closing Terminal first)
+  - **Handoff Back** — Return session to Terminal with `/handoff back`
 - **Access control** — Restrict usage to authorized users via Azure AD object ID or email
-- **Per-conversation isolation** — Each chat has its own session, working directory, model, and thinking budget
-- **Session persistence** — Conversations survive bot restarts (`.sessions.json`)
-- **Slash commands** — `/model`, `/project`, `/thinking`, `/permission`, `/new`, `/status`, `/help`
+- **Session management** — Per-conversation session, working directory, model, and thinking budget
+  - Session history with `/sessions` (Adaptive Card with Resume buttons)
+  - Session persistence across bot restarts (`.sessions.json`)
+- **Slash commands** — `/model`, `/project`, `/thinking`, `/permission`, `/new`, `/status`, `/sessions`, `/handoff`, `/help`
 - **Typing indicators** — Shows "typing..." while Claude is processing
 - **Message chunking** — Auto-splits long responses to fit Teams' 25KB limit
+- **Friendly error handling** — User-friendly error messages instead of raw stack traces
 
 ## Architecture
 
 ```
 Teams (any device)
   → Bot Framework SDK
-    → Express server (/api/messages)
+    → Express server (/api/messages, /api/handoff)
       → Claude Agent SDK
         → Claude Code (local machine)
 ```
@@ -31,45 +37,70 @@ Teams (any device)
 
 ```
 src/
-├── index.ts                 # Express server entry point
+├── index.ts                 # Express server (bot endpoint + handoff API)
 ├── config.ts                # Env var parsing (app credentials, allowed users)
 ├── bot/
-│   ├── teams-bot.ts         # Main ActivityHandler (auth check, attachments, routing)
+│   ├── teams-bot.ts         # Main ActivityHandler (auth, attachments, handoff, routing)
 │   ├── commands.ts          # Slash command handling
 │   ├── attachments.ts       # Download & process Teams file/image attachments
 │   ├── mention.ts           # Strip @mentions in group chats
 │   └── cards.ts             # Adaptive card builders
 ├── claude/
-│   ├── agent.ts             # Claude Agent SDK integration (text + image support)
+│   ├── agent.ts             # Claude Agent SDK integration (query, session lookup, summary)
 │   └── formatter.ts         # Response formatting & message splitting
+├── handoff/
+│   └── store.ts             # Conversation reference storage (for proactive messages)
 └── session/
-    └── manager.ts           # Per-conversation session persistence
+    └── manager.ts           # Session persistence, history, handoff mode tracking
+
+.claude/
+├── skills/handoff/
+│   ├── SKILL.md             # /handoff skill for Claude Code CLI
+│   └── get-session-id.sh    # Session ID extraction via process tree
+└── hooks/
+    └── session-start.sh     # SessionStart hook to capture session ID
+```
+
+### Handoff Flow
+
+```
+Terminal → Teams (Quick Pickup):
+1. User runs /handoff in Terminal
+2. Skill extracts session ID, calls POST /api/handoff
+3. Bot sends Adaptive Card to Teams with Quick Pickup / Resume buttons
+4. User taps Quick Pickup → Bot reads Terminal transcript summary
+5. Bot starts new session with summary injected as context
+6. Both Terminal and Teams can work independently
+
+Terminal → Teams (Resume):
+1. Same as above, but user taps Resume
+2. User must /exit Terminal first
+3. Bot resumes the exact same session with full context
+
+Teams → Terminal:
+1. User sends /handoff back in Teams
+2. Pickup mode: Teams session stays, Terminal is still active
+3. Resume mode: Bot shows `claude -r <id>` command, clears Teams session
 ```
 
 ### Message Flow
 
 ```
 1. User sends message in Teams (text, image, or file)
-2. Access control check (ALLOWED_USERS whitelist)
-3. Process attachments:
+2. Save conversation reference (for proactive handoff notifications)
+3. Access control check (ALLOWED_USERS whitelist)
+4. Handle Adaptive Card button clicks (handoff, session switch)
+5. Process attachments:
    - Images → base64 → Claude vision content block
    - Text/code files → prepend to prompt as code block
    - Unsupported → notify user, skip
-4. Route slash commands (if text-only)
-5. Start typing indicator loop (3s interval)
-6. Call Claude Agent SDK query() with prompt + images
-7. Collect session ID, tool usage, and result
-8. Format response (tools used + result)
-9. Split into chunks, send back to Teams
+6. Route slash commands
+7. Start typing indicator loop (3s interval)
+8. Call Claude Agent SDK query() with prompt + images
+9. Collect session ID, tool usage, and result
+10. Format response (tools used + result)
+11. Split into chunks, send back to Teams
 ```
-
-### Attachment Handling
-
-| Type | Action |
-|------|--------|
-| Images (jpeg, png, gif, webp) | Base64 encode → Claude image content block |
-| Text/code files (35+ extensions) | Read as UTF-8 → prepend to prompt as code block |
-| Other files | Skip with "unsupported file type" notice |
 
 ### Access Control
 
@@ -109,24 +140,35 @@ ALLOWED_USERS=user1@contoso.com,user2@contoso.com
    MICROSOFT_APP_ID=<your-bot-app-id>
    MICROSOFT_APP_PASSWORD=<your-bot-password>
    MICROSOFT_APP_TENANT_ID=<your-tenant-id>
-   PORT=3978                          # optional, default 3978
-   CLAUDE_WORK_DIR=~/Work             # optional, default ~/Work
-   ALLOWED_USERS=                     # optional, comma-separated whitelist
+   DEVTUNNEL_ID=<your-devtunnel-id>        # created during setup
+   PORT=3978                                # optional, default 3978
+   CLAUDE_WORK_DIR=~/Work                   # optional, default ~/Work
+   ALLOWED_USERS=                           # optional, comma-separated whitelist
+   HANDOFF_TOKEN=                           # optional, shared secret for /api/handoff
    ```
 
-3. **Start the bot**
+3. **Create a dev tunnel**
+   ```bash
+   devtunnel create --allow-anonymous
+   devtunnel port create -p 3978
+   ```
+   Add the tunnel ID to `.env` as `DEVTUNNEL_ID`.
+
+4. **Start the bot**
    ```bash
    npm run dev
    ```
 
-4. **Upload the Teams app manifest** from `manifest/` to Teams admin center.
+5. **Upload the Teams app manifest** from `manifest/` to Teams admin center.
 
-5. **Update messaging endpoint** in Azure Bot registration → `<tunnel-url>/api/messages`.
+6. **Update messaging endpoint** in Azure Bot registration → `<tunnel-url>/api/messages`.
 
-6. **Install as background service**
+7. **Send a message to the bot in Teams** — This is a one-time setup to enable handoff notifications.
+
+8. **Install as background service**
    ```bash
    npm link          # Register the CLI command
-   teams-bot install # Install service + auto-start on login
+   teams-bot install # Install service + auto-start on login + optional /handoff skill
    ```
 
 ## Commands
@@ -141,20 +183,41 @@ ALLOWED_USERS=user1@contoso.com,user2@contoso.com
 | `/models` | List available models |
 | `/thinking [tokens\|off]` | Set extended thinking budget |
 | `/permission [mode]` | Set permission mode |
+| `/sessions` | View session history (Adaptive Card with Resume buttons) |
+| `/handoff back` | Hand session back to Terminal |
 | `/status` | Show current session config |
 | `/help` | Show command card |
 
 Any other message is sent to Claude Code as a prompt.
 
+### Handoff Skill (Terminal → Teams)
+
+Install the `/handoff` skill for Claude Code:
+
+```bash
+teams-bot install-skill    # Interactive setup (global or project scope)
+teams-bot uninstall-skill  # Remove skill and hook
+```
+
+Then in any Claude Code session:
+
+```
+/handoff              # Teams shows choice card (Quick Pickup or Resume)
+/handoff pickup       # Direct quick pickup (no card)
+/handoff resume       # Direct resume (no card)
+```
+
 ## Service Management
 
 ```bash
-teams-bot install     # Install + auto-start on login
-teams-bot status      # Check if running
-teams-bot logs        # Tail logs
-teams-bot restart     # Rebuild + restart
-teams-bot stop        # Stop service
-teams-bot uninstall   # Remove service
+teams-bot install         # Install + auto-start on login
+teams-bot install-skill   # Install /handoff skill for Claude Code
+teams-bot uninstall-skill # Remove /handoff skill
+teams-bot status          # Check if running
+teams-bot logs            # Tail logs
+teams-bot restart         # Rebuild + restart
+teams-bot stop            # Stop service
+teams-bot uninstall       # Remove service
 ```
 
 ## Development
