@@ -169,6 +169,7 @@ export async function runClaude(
       permissionMode: permissionMode ?? "bypassPermissions",
       allowDangerouslySkipPermissions: true,
       maxTurns: 50,
+      executable: process.execPath,
     };
 
     if (model) options.model = model;

@@ -168,6 +168,26 @@ export class ClaudeCodeBot extends ActivityHandler {
     // Handle slash commands (only for text-only messages)
     if (!images && (await handleCommand(text, conversationId, ctx))) return;
 
+    // Run session init prompt on new sessions
+    const isNewSession = !getSession(conversationId);
+    if (isNewSession && config.sessionInitPrompt) {
+      console.log('[BOT] Running session init prompt...');
+      const initResult = await runClaude(
+        config.sessionInitPrompt,
+        undefined,
+        getWorkDir(conversationId),
+        getModel(conversationId),
+        getThinkingTokens(conversationId),
+        getPermissionMode(conversationId),
+      );
+      if (initResult.sessionId) {
+        setSession(conversationId, initResult.sessionId);
+      }
+      if (initResult.error) {
+        console.warn(`[BOT] Session init error: ${initResult.error}`);
+      }
+    }
+
     // Start typing indicator loop
     const typingController = new AbortController();
     const typingLoop = this.startTypingLoop(ctx, typingController.signal);

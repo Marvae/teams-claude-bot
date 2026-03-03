@@ -32,4 +32,5 @@ export const config = {
   claudeWorkDir: expandHome(process.env.CLAUDE_WORK_DIR ?? "~/Work"),
   allowedUsers: parseAllowedUsers(process.env.ALLOWED_USERS),
   handoffToken: process.env.HANDOFF_TOKEN ?? "",
+  sessionInitPrompt: process.env.SESSION_INIT_PROMPT,
 } as const;
