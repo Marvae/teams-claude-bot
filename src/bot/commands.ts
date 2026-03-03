@@ -258,24 +258,11 @@ export async function handleCommand(
           return true;
         }
 
-        if (mode === "pickup") {
-          clearHandoffMode(conversationId);
-          // Pickup mode: Teams already has its own session, just clear handoff state
-          await ctx.sendActivity(
-            "Handed back. Your Terminal session is still active.\n\nYou can keep using this session.",
-          );
-        } else {
-          // Resume mode: give back the session ID, start fresh on Teams
-          clearHandoffMode(conversationId);
-          clearSession(conversationId);
-          await ctx.sendActivity(
-            sessionId
-              ? `Session ready for Terminal:\n\n` +
-                  `\`\`\`\nclaude -r ${sessionId}\n\`\`\`\n\n` +
-                  `New session started on Teams. Send a message to begin.`
-              : "New session started on Teams. Send a message to begin.",
-          );
-        }
+        // Always-fork: just clear handoff state, both sides keep working
+        clearHandoffMode(conversationId);
+        await ctx.sendActivity(
+          "Handed back. Your Terminal session is still active.\n\nYou can keep working here.",
+        );
       } else {
         await ctx.sendActivity(
           "**Handoff commands:**\n\n" +
