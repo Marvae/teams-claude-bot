@@ -13,7 +13,8 @@
     "build": "esbuild src/index.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/index.js --external:@anthropic-ai/claude-agent-sdk --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\"",
     "start": "node dist/index.js",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "package": "node scripts/package-manifest.mjs"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.1.0",
