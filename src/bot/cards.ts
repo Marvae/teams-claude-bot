@@ -115,3 +115,68 @@ export function buildHelpCard(): Record<string, unknown> {
     body,
   };
 }
+
+export function buildPermissionCard(
+  toolName: string,
+  input: Record<string, unknown>,
+  toolUseID: string,
+  decisionReason?: string,
+): Record<string, unknown> {
+  const inputDisplay = JSON.stringify(input, null, 2).slice(0, 500);
+
+  const body: Record<string, unknown>[] = [
+    {
+      type: "TextBlock",
+      text: "🔒 Permission Required",
+      weight: "bolder",
+      size: "medium",
+    },
+    {
+      type: "TextBlock",
+      text: `Tool: **${toolName}**`,
+      wrap: true,
+    },
+    {
+      type: "TextBlock",
+      text: `\`\`\`\n${inputDisplay}\n\`\`\``,
+      wrap: true,
+      fontType: "monospace",
+    },
+  ];
+
+  if (decisionReason) {
+    body.push({
+      type: "TextBlock",
+      text: `Reason: ${decisionReason}`,
+      wrap: true,
+      isSubtle: true,
+    });
+  }
+
+  return {
+    type: "AdaptiveCard",
+    version: "1.4",
+    $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+    body,
+    actions: [
+      {
+        type: "Action.Submit",
+        title: "✅ Allow",
+        style: "positive",
+        data: {
+          action: "permission_allow",
+          toolUseID,
+        },
+      },
+      {
+        type: "Action.Submit",
+        title: "❌ Deny",
+        style: "destructive",
+        data: {
+          action: "permission_deny",
+          toolUseID,
+        },
+      },
+    ],
+  };
+}
