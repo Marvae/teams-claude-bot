@@ -310,3 +310,46 @@ describe("runClaude", () => {
     });
   });
 });
+
+describe("canUseTool callback", () => {
+  beforeEach(() => {
+    mockQuery.mockReset();
+  });
+
+  it("passes canUseTool to SDK options", async () => {
+    mockQuery.mockImplementation(async function* () {
+      yield { type: "system", subtype: "init", session_id: "test-session" };
+      yield { result: "Done" };
+    });
+
+    const canUseTool = vi.fn().mockResolvedValue({ behavior: "allow" });
+
+    await runClaude(
+      "test prompt",
+      undefined, // sessionId
+      undefined, // workDir
+      undefined, // model
+      undefined, // thinkingTokens
+      undefined, // permissionMode
+      undefined, // images
+      undefined, // onProgress
+      { canUseTool }, // runOptions with canUseTool
+    );
+
+    // Verify canUseTool was passed
+    const call = mockQuery.mock.calls[0][0];
+    expect(call.options.canUseTool).toBe(canUseTool);
+  });
+
+  it("does not pass canUseTool when not provided", async () => {
+    mockQuery.mockImplementation(async function* () {
+      yield { type: "system", subtype: "init", session_id: "test-session" };
+      yield { result: "Done" };
+    });
+
+    await runClaude("test prompt");
+
+    const call = mockQuery.mock.calls[0][0];
+    expect(call.options.canUseTool).toBeUndefined();
+  });
+});
