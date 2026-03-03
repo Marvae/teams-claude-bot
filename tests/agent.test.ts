@@ -2,7 +2,7 @@
  * Agent tests - mock SDK to test Claude integration logic
  * Tests: runClaude options, fork/continue, progress events, error handling
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Mock the SDK
 const mockQuery = vi.fn();
@@ -25,7 +25,7 @@ describe("runClaude", () => {
         yield { result: "Done!" };
       });
 
-      const result = await runClaude("hello world");
+      await runClaude("hello world");
 
       expect(mockQuery).toHaveBeenCalledOnce();
       const call = mockQuery.mock.calls[0][0];
@@ -34,7 +34,11 @@ describe("runClaude", () => {
 
     it("returns session ID from init message", async () => {
       mockQuery.mockImplementation(async function* () {
-        yield { type: "system", subtype: "init", session_id: "new-session-456" };
+        yield {
+          type: "system",
+          subtype: "init",
+          session_id: "new-session-456",
+        };
         yield { result: "OK" };
       });
 
@@ -71,7 +75,7 @@ describe("runClaude", () => {
         undefined, // permissionMode
         undefined, // images
         undefined, // onProgress
-        { resume: "fork" } // runOptions
+        { resume: "fork" }, // runOptions
       );
 
       const call = mockQuery.mock.calls[0][0];
@@ -94,7 +98,7 @@ describe("runClaude", () => {
         undefined,
         undefined,
         undefined,
-        { resume: "continue" }
+        { resume: "continue" },
       );
 
       const call = mockQuery.mock.calls[0][0];
@@ -142,7 +146,7 @@ describe("runClaude", () => {
         undefined,
         undefined,
         undefined,
-        (e) => events.push(e)
+        (e) => events.push(e),
       );
 
       expect(events).toHaveLength(2);
@@ -169,8 +173,15 @@ describe("runClaude", () => {
       });
 
       const events: ProgressEvent[] = [];
-      await runClaude("test", undefined, undefined, undefined, undefined, undefined, undefined, (e) =>
-        events.push(e)
+      await runClaude(
+        "test",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        (e) => events.push(e),
       );
 
       expect(events[0].tool.command?.length).toBe(100);
@@ -212,7 +223,7 @@ describe("runClaude", () => {
 
   describe("error handling", () => {
     it("returns error message when SDK throws", async () => {
-      mockQuery.mockImplementation(async function* () {
+      mockQuery.mockImplementation(async function* (_ctx) {
         throw new Error("API rate limited");
       });
 
@@ -223,7 +234,7 @@ describe("runClaude", () => {
     });
 
     it("truncates long error messages", async () => {
-      mockQuery.mockImplementation(async function* () {
+      mockQuery.mockImplementation(async function* (_ctx) {
         throw new Error("x".repeat(1000));
       });
 
@@ -250,7 +261,14 @@ describe("runClaude", () => {
         yield { result: "OK" };
       });
 
-      await runClaude("test", undefined, undefined, undefined, undefined, "default");
+      await runClaude(
+        "test",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        "default",
+      );
 
       const call = mockQuery.mock.calls[0][0];
       expect(call.options.permissionMode).toBe("default");

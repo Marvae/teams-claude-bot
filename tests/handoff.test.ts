@@ -17,13 +17,15 @@ describe("handoff mode", () => {
   });
 
   it("sets and gets handoff mode", async () => {
-    const { setHandoffMode, getHandoffMode } = await import("../src/session/manager.js");
+    const { setHandoffMode, getHandoffMode } =
+      await import("../src/session/manager.js");
     setHandoffMode("conv-hm", "pickup");
     expect(getHandoffMode("conv-hm")).toBe("pickup");
   });
 
   it("clears handoff mode", async () => {
-    const { setHandoffMode, getHandoffMode, clearHandoffMode } = await import("../src/session/manager.js");
+    const { setHandoffMode, getHandoffMode, clearHandoffMode } =
+      await import("../src/session/manager.js");
     setHandoffMode("conv-hm2", "resume");
     clearHandoffMode("conv-hm2");
     expect(getHandoffMode("conv-hm2")).toBeUndefined();
@@ -75,8 +77,13 @@ describe("session history", () => {
   });
 
   it("switchToSession swaps active and history", async () => {
-    const { loadSessions, setSession, getSession, switchToSession, listPastSessions } =
-      await import("../src/session/manager.js");
+    const {
+      loadSessions,
+      setSession,
+      getSession,
+      switchToSession,
+      listPastSessions,
+    } = await import("../src/session/manager.js");
     loadSessions();
     setSession("conv-switch", "session-a");
     setSession("conv-switch", "session-b");
@@ -101,8 +108,13 @@ describe("session history", () => {
   });
 
   it("clearSession pushes to history", async () => {
-    const { loadSessions, setSession, clearSession, getSession, listPastSessions } =
-      await import("../src/session/manager.js");
+    const {
+      loadSessions,
+      setSession,
+      clearSession,
+      getSession,
+      listPastSessions,
+    } = await import("../src/session/manager.js");
     loadSessions();
     setSession("conv-clear", "session-a");
     clearSession("conv-clear");

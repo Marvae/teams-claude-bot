@@ -24,7 +24,10 @@ export function formatResponse(result: ClaudeResult): string {
   return parts.length > 0 ? parts.join("\n\n") : "Done (no output)";
 }
 
-export function splitMessage(text: string, maxLen = MAX_MESSAGE_LENGTH): string[] {
+export function splitMessage(
+  text: string,
+  maxLen = MAX_MESSAGE_LENGTH,
+): string[] {
   if (text.length <= maxLen) return [text];
 
   const chunks: string[] = [];

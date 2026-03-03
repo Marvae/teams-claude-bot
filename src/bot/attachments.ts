@@ -77,9 +77,8 @@ function getBotToken(ctx: TurnContext): string | undefined {
     return connectorClient.credentials.token as string;
   }
   // Fallback: try getting from the adapter's credentials
-  const creds = (ctx.adapter as unknown as Record<string, unknown>).credentials as
-    | { token?: string }
-    | undefined;
+  const creds = (ctx.adapter as unknown as Record<string, unknown>)
+    .credentials as { token?: string } | undefined;
   return creds?.token;
 }
 
@@ -101,8 +100,7 @@ export async function downloadAttachment(
 ): Promise<DownloadedAttachment | null> {
   // Teams file attachments store the download URL in content.downloadUrl
   const content = attachment.content as Record<string, unknown> | undefined;
-  const url =
-    (content?.downloadUrl as string) ?? attachment.contentUrl;
+  const url = (content?.downloadUrl as string) ?? attachment.contentUrl;
   if (!url) return null;
 
   const headers: Record<string, string> = {};
@@ -116,12 +114,14 @@ export async function downloadAttachment(
 
   const buffer = Buffer.from(await resp.arrayBuffer());
   const name = attachment.name ?? "attachment";
-  const respType = resp.headers.get("content-type") ?? "application/octet-stream";
+  const respType =
+    resp.headers.get("content-type") ?? "application/octet-stream";
   // Teams file attachments have a generic contentType, so infer from file extension
   const contentType =
-    attachment.contentType === "application/vnd.microsoft.teams.file.download.info"
+    attachment.contentType ===
+    "application/vnd.microsoft.teams.file.download.info"
       ? inferContentType(name, respType)
-      : attachment.contentType ?? respType;
+      : (attachment.contentType ?? respType);
 
   return { data: buffer, contentType, name };
 }

@@ -8,7 +8,7 @@ import { stripMention } from "./mention.js";
 import { handleCommand } from "./commands.js";
 import {
   clearSession,
-  clearHandoffMode,
+  // clearHandoffMode, // TODO: use in handoff cleanup
   getSession,
   setSession,
   setWorkDir,
@@ -78,20 +78,24 @@ export class ClaudeCodeBot extends ActivityHandler {
 
     // Known Teams service URLs
     const validDomains = [
-      'https://smba.trafficmanager.net',
-      'https://amer.ng.msg.teams.microsoft.com',
-      'https://apac.ng.msg.teams.microsoft.com',
-      'https://emea.ng.msg.teams.microsoft.com',
-      'https://northamerica.ng.msg.teams.microsoft.com',
-      'https://southamerica.ng.msg.teams.microsoft.com',
-      'https://europe.ng.msg.teams.microsoft.com',
-      'https://asia.ng.msg.teams.microsoft.com'
+      "https://smba.trafficmanager.net",
+      "https://amer.ng.msg.teams.microsoft.com",
+      "https://apac.ng.msg.teams.microsoft.com",
+      "https://emea.ng.msg.teams.microsoft.com",
+      "https://northamerica.ng.msg.teams.microsoft.com",
+      "https://southamerica.ng.msg.teams.microsoft.com",
+      "https://europe.ng.msg.teams.microsoft.com",
+      "https://asia.ng.msg.teams.microsoft.com",
     ];
 
-    const isValid = validDomains.some(domain => serviceUrl.startsWith(domain));
+    const isValid = validDomains.some((domain) =>
+      serviceUrl.startsWith(domain),
+    );
 
     if (!isValid) {
-      console.warn(`[SECURITY] Rejected request from unknown service: ${serviceUrl}`);
+      console.warn(
+        `[SECURITY] Rejected request from unknown service: ${serviceUrl}`,
+      );
     }
 
     return isValid;
@@ -100,14 +104,14 @@ export class ClaudeCodeBot extends ActivityHandler {
   private async handleMessage(ctx: TurnContext): Promise<void> {
     // Security: Log request origin (validation handled by Bot Framework JWT)
     if (!this.isValidTeamsRequest(ctx)) {
-      console.warn('[SECURITY] Unknown service origin - allowing (JWT already validated by adapter)');
+      console.warn(
+        "[SECURITY] Unknown service origin - allowing (JWT already validated by adapter)",
+      );
     }
 
     // Access control check
     if (!this.isUserAllowed(ctx)) {
-      await ctx.sendActivity(
-        "Sorry, you are not authorized to use this bot.",
-      );
+      await ctx.sendActivity("Sorry, you are not authorized to use this bot.");
       return;
     }
 
@@ -119,7 +123,9 @@ export class ClaudeCodeBot extends ActivityHandler {
       if (value.action === "resume_session") {
         const switched = switchToSession(conversationId, value.index as number);
         if (switched) {
-          await ctx.sendActivity(`🔄 Resumed session\n\n📂 ${switched.workDir}`);
+          await ctx.sendActivity(
+            `🔄 Resumed session\n\n📂 ${switched.workDir}`,
+          );
         } else {
           await ctx.sendActivity("Session not found.");
         }
@@ -132,9 +138,16 @@ export class ClaudeCodeBot extends ActivityHandler {
         const adapter = ctx.adapter as BotFrameworkAdapter;
 
         // Don't await — run in background so Teams gets HTTP 200 quickly
-        adapter.continueConversation(ref, async (bgCtx) => {
-          await this.handleHandoff(bgCtx, value.action as string, value.workDir as string, value.sessionId as string | undefined);
-        }).catch((err) => console.error("[HANDOFF] Background error:", err));
+        adapter
+          .continueConversation(ref, async (bgCtx) => {
+            await this.handleHandoff(
+              bgCtx,
+              value.action as string,
+              value.workDir as string,
+              value.sessionId as string | undefined,
+            );
+          })
+          .catch((err) => console.error("[HANDOFF] Background error:", err));
         return;
       }
 
@@ -177,7 +190,7 @@ export class ClaudeCodeBot extends ActivityHandler {
     // Run session init prompt on new sessions
     const isNewSession = !getSession(conversationId);
     if (isNewSession && config.sessionInitPrompt) {
-      console.log('[BOT] Running session init prompt...');
+      console.log("[BOT] Running session init prompt...");
       const initResult = await runClaude(
         config.sessionInitPrompt,
         undefined,
@@ -200,7 +213,7 @@ export class ClaudeCodeBot extends ActivityHandler {
     const progress = this.createProgressNotifier(ctx);
 
     try {
-      console.log('[BOT] Calling runClaude...');
+      console.log("[BOT] Calling runClaude...");
       const result = await runClaude(
         text || "What is in this image?",
         getSession(conversationId),
@@ -212,7 +225,7 @@ export class ClaudeCodeBot extends ActivityHandler {
         progress.onProgress,
       );
 
-      console.log('[BOT] runClaude completed, stopping typing');
+      console.log("[BOT] runClaude completed, stopping typing");
       // Stop typing
       typingController.abort();
       await typingLoop;
@@ -227,11 +240,11 @@ export class ClaudeCodeBot extends ActivityHandler {
         setSession(conversationId, result.sessionId);
       }
 
-      console.log('[BOT] Formatting and sending response');
+      console.log("[BOT] Formatting and sending response");
       await progress.finalize(splitMessage(formatResponse(result)));
-      console.log('[BOT] Response sent successfully');
+      console.log("[BOT] Response sent successfully");
     } catch (err) {
-      console.error('[BOT] Error in handleMessage:', err);
+      console.error("[BOT] Error in handleMessage:", err);
       typingController.abort();
       await typingLoop;
       const msg = err instanceof Error ? err.message : String(err);
@@ -323,10 +336,14 @@ export class ClaudeCodeBot extends ActivityHandler {
       }
       await new Promise<void>((resolve) => {
         const timer = setTimeout(resolve, 3000);
-        signal.addEventListener("abort", () => {
-          clearTimeout(timer);
-          resolve();
-        }, { once: true });
+        signal.addEventListener(
+          "abort",
+          () => {
+            clearTimeout(timer);
+            resolve();
+          },
+          { once: true },
+        );
       });
     }
   }
@@ -394,10 +411,13 @@ export class ClaudeCodeBot extends ActivityHandler {
 
         pendingMessages.push(message);
         if (!timer) {
-          timer = setTimeout(() => {
-            timer = undefined;
-            void flushPending();
-          }, Math.max(waitMs, 100));
+          timer = setTimeout(
+            () => {
+              timer = undefined;
+              void flushPending();
+            },
+            Math.max(waitMs, 100),
+          );
         }
       },
       finalize: async (chunks: string[]) => {
@@ -408,7 +428,11 @@ export class ClaudeCodeBot extends ActivityHandler {
         if (chunks.length === 0) return;
         try {
           if (activityId) {
-            await ctx.updateActivity({ id: activityId, type: "message", text: chunks[0] });
+            await ctx.updateActivity({
+              id: activityId,
+              type: "message",
+              text: chunks[0],
+            });
           } else {
             await ctx.sendActivity(chunks[0]);
           }
