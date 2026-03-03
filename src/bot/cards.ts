@@ -180,3 +180,59 @@ export function buildPermissionCard(
     ],
   };
 }
+
+export function buildPermissionModeCard(
+  currentMode?: string,
+): Record<string, unknown> {
+  const modes = [
+    {
+      id: "default",
+      label: "🛡️ Default",
+      desc: "Ask before risky operations",
+    },
+    {
+      id: "acceptEdits",
+      label: "📝 Accept Edits",
+      desc: "Auto-allow file edits, ask for others",
+    },
+    {
+      id: "bypassPermissions",
+      label: "⚡ Bypass",
+      desc: "Allow everything (current default)",
+    },
+  ];
+
+  const body: Record<string, unknown>[] = [
+    {
+      type: "TextBlock",
+      text: "Permission Mode",
+      weight: "bolder",
+      size: "medium",
+    },
+    {
+      type: "TextBlock",
+      text: currentMode
+        ? `Current: **${currentMode}**`
+        : "No mode set (using bypass)",
+      wrap: true,
+      spacing: "small",
+    },
+  ];
+
+  const actions = modes.map((m) => ({
+    type: "Action.Submit",
+    title: m.label,
+    data: {
+      action: "set_permission_mode",
+      mode: m.id,
+    },
+  }));
+
+  return {
+    type: "AdaptiveCard",
+    version: "1.4",
+    $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+    body,
+    actions,
+  };
+}
