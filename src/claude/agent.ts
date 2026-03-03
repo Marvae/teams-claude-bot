@@ -126,6 +126,11 @@ export interface ImageInput {
   data: string;
 }
 
+export interface ProgressEvent {
+  type: "tool_use";
+  tool: ToolInfo;
+}
+
 const EXT_MAP: Record<string, string> = {
   "image/png": ".png",
   "image/jpeg": ".jpg",
@@ -158,6 +163,7 @@ export async function runClaude(
   thinkingTokens?: number | null,
   permissionMode?: string,
   images?: ImageInput[],
+  onProgress?: (event: ProgressEvent) => void,
 ): Promise<ClaudeResult> {
   const tools: ToolInfo[] = [];
   let resultText: string | undefined;
@@ -237,12 +243,13 @@ export async function runClaude(
               if (input) {
                 if (typeof input.file_path === "string")
                   toolInfo.file = input.file_path;
-                else if (typeof input.command === "string")
+                if (typeof input.command === "string")
                   toolInfo.command = input.command.slice(0, 100);
-                else if (typeof input.pattern === "string")
+                if (typeof input.pattern === "string")
                   toolInfo.pattern = input.pattern;
               }
               tools.push(toolInfo);
+              onProgress?.({ type: "tool_use", tool: toolInfo });
             }
           }
         }
