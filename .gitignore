@@ -17,3 +17,12 @@ __pycache__/
 
 # OS
 .DS_Store
+
+# Runtime state
+.conversation-refs.json
+
+# Build artifacts
+teams-claude-bot.zip
+
+# Temp assets
+manifest/claude-original.png
