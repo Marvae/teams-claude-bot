@@ -27,7 +27,23 @@ export interface ProgressEvent {
 
 export interface RunClaudeOptions {
   resume?: "fork" | "continue";
+  canUseTool?: CanUseTool;
 }
+
+export type CanUseTool = (
+  toolName: string,
+  input: Record<string, unknown>,
+  options: {
+    signal: AbortSignal;
+    toolUseID: string;
+    decisionReason?: string;
+    blockedPath?: string;
+  },
+) => Promise<{
+  behavior: "allow" | "deny";
+  message?: string;
+  toolUseID?: string;
+}>;
 
 const EXT_MAP: Record<string, string> = {
   "image/png": ".png",
@@ -88,6 +104,11 @@ export async function runClaude(
       }
     } else {
       if (workDir) options.cwd = workDir;
+    }
+
+    // Pass canUseTool callback if provided
+    if (runOptions?.canUseTool) {
+      options.canUseTool = runOptions.canUseTool;
     }
 
     // Save images to tmp files and prepend paths to prompt
