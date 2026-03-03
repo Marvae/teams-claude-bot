@@ -8,6 +8,7 @@ import { stripMention } from "./mention.js";
 import { handleCommand } from "./commands.js";
 import {
   clearSession,
+  clearHandoffMode,
   getSession,
   setSession,
   setWorkDir,
@@ -18,7 +19,12 @@ import {
   switchToSession,
   setHandoffMode,
 } from "../session/manager.js";
-import { runClaude, getSessionSummary, type ImageInput } from "../claude/agent.js";
+import {
+  runClaude,
+  getSessionSummary,
+  type ImageInput,
+  type ProgressEvent,
+} from "../claude/agent.js";
 import { formatResponse, splitMessage } from "../claude/formatter.js";
 import { processAttachments } from "./attachments.js";
 import { config } from "../config.js";
@@ -191,6 +197,7 @@ export class ClaudeCodeBot extends ActivityHandler {
     // Start typing indicator loop
     const typingController = new AbortController();
     const typingLoop = this.startTypingLoop(ctx, typingController.signal);
+    const progress = this.createProgressNotifier(ctx);
 
     try {
       console.log('[BOT] Calling runClaude...');
@@ -202,6 +209,7 @@ export class ClaudeCodeBot extends ActivityHandler {
         getThinkingTokens(conversationId),
         getPermissionMode(conversationId),
         images,
+        progress.onProgress,
       );
 
       console.log('[BOT] runClaude completed, stopping typing');
@@ -233,6 +241,8 @@ export class ClaudeCodeBot extends ActivityHandler {
       await typingLoop;
       const msg = err instanceof Error ? err.message : String(err);
       await ctx.sendActivity(friendlyError(msg));
+    } finally {
+      await progress.stop();
     }
   }
 
@@ -269,6 +279,7 @@ export class ClaudeCodeBot extends ActivityHandler {
 
       const typingController = new AbortController();
       const typingLoop = this.startTypingLoop(ctx, typingController.signal);
+      const progress = this.createProgressNotifier(ctx);
       try {
         const result = await runClaude(
           "The user just handed off this session from their Terminal to Teams mobile. Briefly welcome them and summarize what you were working on.",
@@ -277,6 +288,8 @@ export class ClaudeCodeBot extends ActivityHandler {
           getModel(conversationId),
           getThinkingTokens(conversationId),
           getPermissionMode(conversationId),
+          undefined,
+          progress.onProgress,
         );
         typingController.abort();
         await typingLoop;
@@ -308,6 +321,8 @@ export class ClaudeCodeBot extends ActivityHandler {
         );
         clearSession(conversationId);
         clearHandoffMode(conversationId);
+      } finally {
+        await progress.stop();
       }
     }
   }
@@ -320,6 +335,7 @@ export class ClaudeCodeBot extends ActivityHandler {
   ): Promise<void> {
     const typingController = new AbortController();
     const typingLoop = this.startTypingLoop(ctx, typingController.signal);
+    const progress = this.createProgressNotifier(ctx);
 
     try {
       const result = await runClaude(
@@ -330,6 +346,7 @@ export class ClaudeCodeBot extends ActivityHandler {
         getThinkingTokens(conversationId),
         getPermissionMode(conversationId),
         images,
+        progress.onProgress,
       );
       typingController.abort();
       await typingLoop;
@@ -353,6 +370,8 @@ export class ClaudeCodeBot extends ActivityHandler {
       await typingLoop;
       const msg = err instanceof Error ? err.message : String(err);
       await ctx.sendActivity(friendlyError(msg));
+    } finally {
+      await progress.stop();
     }
   }
 
@@ -374,5 +393,99 @@ export class ClaudeCodeBot extends ActivityHandler {
         }, { once: true });
       });
     }
+  }
+
+  private createProgressNotifier(ctx: TurnContext): {
+    onProgress: (event: ProgressEvent) => void;
+    stop: () => Promise<void>;
+  } {
+    const throttleMs = 3000;
+    let lastSentAt = 0;
+    let pendingMessage: string | undefined;
+    let timer: NodeJS.Timeout | undefined;
+    let lastMessage = "";
+
+    const sendProgress = async (message: string): Promise<void> => {
+      if (!message || message === lastMessage) return;
+      lastMessage = message;
+      try {
+        await ctx.sendActivity(message);
+      } catch {
+        // Ignore transient progress update failures.
+      }
+    };
+
+    const flushPending = async (): Promise<void> => {
+      if (!pendingMessage) return;
+      const msg = pendingMessage;
+      pendingMessage = undefined;
+      lastSentAt = Date.now();
+      await sendProgress(msg);
+    };
+
+    return {
+      onProgress: (event: ProgressEvent) => {
+        const message = this.formatProgressMessage(event);
+        if (!message) return;
+
+        const now = Date.now();
+        const waitMs = throttleMs - (now - lastSentAt);
+
+        if (waitMs <= 0 && !timer) {
+          lastSentAt = now;
+          void sendProgress(message);
+          return;
+        }
+
+        pendingMessage = message;
+        if (!timer) {
+          timer = setTimeout(() => {
+            timer = undefined;
+            void flushPending();
+          }, Math.max(waitMs, 100));
+        }
+      },
+      stop: async () => {
+        if (timer) {
+          clearTimeout(timer);
+          timer = undefined;
+        }
+        await flushPending();
+      },
+    };
+  }
+
+  private formatProgressMessage(event: ProgressEvent): string | undefined {
+    if (event.type !== "tool_use") return undefined;
+    const tool = event.tool;
+
+    if (tool.name === "Bash") {
+      return `🔧 Running: ${this.truncateProgress(tool.command ?? "bash", 100)}`;
+    }
+    if (tool.name === "Grep") {
+      return `🔎 Searching: ${this.truncateProgress(tool.pattern ?? "pattern", 100)}`;
+    }
+    if (tool.name === "Read") {
+      return tool.file
+        ? `📖 Reading: ${this.truncateProgress(tool.file, 100)}`
+        : "📖 Reading file...";
+    }
+    if (tool.name === "Edit") {
+      return tool.file
+        ? `✍️ Editing: ${this.truncateProgress(tool.file, 100)}`
+        : "✍️ Editing file...";
+    }
+    if (tool.name === "Write") {
+      return tool.file
+        ? `✍️ Writing: ${this.truncateProgress(tool.file, 100)}`
+        : "✍️ Writing file...";
+    }
+
+    return `🔧 Running: ${tool.name}`;
+  }
+
+  private truncateProgress(value: string, max: number): string {
+    if (value.length <= max) return value;
+    return `${value.slice(0, max - 3)}...`;
   }
 }
