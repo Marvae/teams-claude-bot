@@ -21,7 +21,7 @@ const sessionState = {
     workDir: string;
     usedAt: string;
   } | null,
-  handoffMode: undefined as "pickup" | "resume" | undefined,
+  handoffMode: undefined as "pickup" | undefined,
 };
 
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({

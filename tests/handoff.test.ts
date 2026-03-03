@@ -26,7 +26,7 @@ describe("handoff mode", () => {
   it("clears handoff mode", async () => {
     const { setHandoffMode, getHandoffMode, clearHandoffMode } =
       await import("../src/session/manager.js");
-    setHandoffMode("conv-hm2", "resume");
+    setHandoffMode("conv-hm2", "pickup");
     clearHandoffMode("conv-hm2");
     expect(getHandoffMode("conv-hm2")).toBeUndefined();
   });

@@ -9,7 +9,7 @@ interface SessionData {
   model?: string;
   thinkingTokens?: number | null;
   permissionMode?: string;
-  handoffMode?: "pickup" | "resume";
+  handoffMode?: "pickup";
   history?: Array<{ sessionId: string; workDir: string; usedAt: string }>;
 }
 
@@ -122,17 +122,12 @@ export function switchToSession(
   return { index, ...target };
 }
 
-export function setHandoffMode(
-  conversationId: string,
-  mode: "pickup" | "resume",
-): void {
+export function setHandoffMode(conversationId: string, mode: "pickup"): void {
   ensureEntry(conversationId).handoffMode = mode;
   persist();
 }
 
-export function getHandoffMode(
-  conversationId: string,
-): "pickup" | "resume" | undefined {
+export function getHandoffMode(conversationId: string): "pickup" | undefined {
   return sessions[conversationId]?.handoffMode;
 }
 
