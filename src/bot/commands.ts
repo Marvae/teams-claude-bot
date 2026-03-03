@@ -12,6 +12,8 @@ import {
   setPermissionMode,
   listPastSessions,
   switchToSession,
+  getHandoffMode,
+  clearHandoffMode,
 } from "../session/manager.js";
 import { buildHelpCard } from "./cards.js";
 
@@ -242,6 +244,43 @@ export async function handleCommand(
       });
 
       await ctx.sendActivity({ attachments: [card] });
+      return true;
+    }
+
+    case "/handoff": {
+      if (arg === "back") {
+        const mode = getHandoffMode(conversationId);
+        const sessionId = getSession(conversationId);
+
+        if (!mode && !sessionId) {
+          await ctx.sendActivity("No active handoff to hand back.");
+          return true;
+        }
+
+        if (mode === "pickup") {
+          clearHandoffMode(conversationId);
+          // Pickup mode: Teams already has its own session, just clear handoff state
+          await ctx.sendActivity(
+            "Handed back. Your Terminal session is still active.\n\nYou can keep using this session.",
+          );
+        } else {
+          // Resume mode: give back the session ID, start fresh on Teams
+          clearHandoffMode(conversationId);
+          clearSession(conversationId);
+          await ctx.sendActivity(
+            sessionId
+              ? `Session ready for Terminal:\n\n` +
+                  `\`\`\`\nclaude -r ${sessionId}\n\`\`\`\n\n` +
+                  `New session started on Teams. Send a message to begin.`
+              : "New session started on Teams. Send a message to begin.",
+          );
+        }
+      } else {
+        await ctx.sendActivity(
+          "**Handoff commands:**\n\n" +
+            `\`/handoff back\` — hand session back to Terminal`,
+        );
+      }
       return true;
     }
 
