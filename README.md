@@ -147,12 +147,17 @@ ALLOWED_USERS=user1@contoso.com,user2@contoso.com
    HANDOFF_TOKEN=                           # optional, shared secret for /api/handoff
    ```
 
-3. **Create a dev tunnel**
+3. **Create a persistent dev tunnel**
    ```bash
-   devtunnel create --allow-anonymous
-   devtunnel port create -p 3978
+   devtunnel create --id my-teams-bot --allow-anonymous
+   devtunnel port create my-teams-bot -p 3978
    ```
-   Add the tunnel ID to `.env` as `DEVTUNNEL_ID`.
+   The `--id` value is your custom name (e.g., `my-teams-bot`, `claude-bot`). This is your `DEVTUNNEL_ID`.
+   ```bash
+   # .env
+   DEVTUNNEL_ID=my-teams-bot
+   ```
+   This creates a persistent tunnel, so the URL stays the same.
 
 4. **Start the bot**
    ```bash
