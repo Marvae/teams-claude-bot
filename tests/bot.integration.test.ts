@@ -249,3 +249,68 @@ describe("ClaudeCodeBot e2e (TestAdapter)", () => {
     );
   });
 });
+
+describe("permission card interactions", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("handles /permission command with card", async () => {
+    const adapter = createAdapter();
+    await adapter.send("/permission").assertReply((reply) => {
+      expect(reply.attachments).toBeDefined();
+      expect(reply.attachments?.length).toBe(1);
+      const card = reply.attachments![0].content as Record<string, unknown>;
+      expect(card.type).toBe("AdaptiveCard");
+      const actions = card.actions as Array<Record<string, unknown>>;
+      expect(actions.length).toBe(3);
+      expect(actions.map((a) => a.title)).toContain("🛡️ Default");
+      expect(actions.map((a) => a.title)).toContain("⚡ Bypass");
+    });
+  });
+
+  it("handles set_permission_mode action", async () => {
+    const adapter = createAdapter();
+    await adapter
+      .send({
+        type: ActivityTypes.Message,
+        value: {
+          action: "set_permission_mode",
+          mode: "acceptEdits",
+        },
+      })
+      .assertReply((reply) => {
+        expect(reply.text).toContain("acceptEdits");
+      });
+  });
+
+  it("handles permission_allow action for unknown toolUseID", async () => {
+    const adapter = createAdapter();
+    await adapter
+      .send({
+        type: ActivityTypes.Message,
+        value: {
+          action: "permission_allow",
+          toolUseID: "nonexistent-123",
+        },
+      })
+      .assertReply((reply) => {
+        expect(reply.text).toContain("expired");
+      });
+  });
+
+  it("handles permission_deny action for unknown toolUseID", async () => {
+    const adapter = createAdapter();
+    await adapter
+      .send({
+        type: ActivityTypes.Message,
+        value: {
+          action: "permission_deny",
+          toolUseID: "nonexistent-456",
+        },
+      })
+      .assertReply((reply) => {
+        expect(reply.text).toContain("expired");
+      });
+  });
+});

@@ -87,7 +87,7 @@ export async function runClaude(
   try {
     const options: Record<string, unknown> = {
       allowedTools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
-      permissionMode: permissionMode ?? "bypassPermissions",
+      permissionMode: permissionMode ?? "default",
       allowDangerouslySkipPermissions: true,
       maxTurns: 50,
       executable: process.execPath,

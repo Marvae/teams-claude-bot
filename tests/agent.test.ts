@@ -245,7 +245,7 @@ describe("runClaude", () => {
   });
 
   describe("permission mode", () => {
-    it("uses bypassPermissions by default", async () => {
+    it("uses default permission mode by default", async () => {
       mockQuery.mockImplementation(async function* () {
         yield { result: "OK" };
       });
@@ -253,7 +253,7 @@ describe("runClaude", () => {
       await runClaude("test");
 
       const call = mockQuery.mock.calls[0][0];
-      expect(call.options.permissionMode).toBe("bypassPermissions");
+      expect(call.options.permissionMode).toBe("default");
     });
 
     it("uses provided permissionMode", async () => {

@@ -323,7 +323,7 @@ export class ClaudeCodeBot extends ActivityHandler {
     const permissionMode = getPermissionMode(conversationId);
     const finalRunOptions = { ...runOptions };
 
-    if (permissionMode && permissionMode !== "bypassPermissions") {
+    if (permissionMode !== "bypassPermissions") {
       const sendCard = async (req: {
         toolName: string;
         input: Record<string, unknown>;

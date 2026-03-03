@@ -198,7 +198,7 @@ export function buildPermissionModeCard(
     {
       id: "bypassPermissions",
       label: "⚡ Bypass",
-      desc: "Allow everything (current default)",
+      desc: "Allow everything (fast but risky)",
     },
   ];
 
