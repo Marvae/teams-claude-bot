@@ -142,7 +142,7 @@ ALLOWED_USERS=user1@contoso.com,user2@contoso.com
    MICROSOFT_APP_TENANT_ID=<your-tenant-id>
    DEVTUNNEL_ID=<your-devtunnel-id>        # created during setup
    PORT=3978                                # optional, default 3978
-   CLAUDE_WORK_DIR=~/Work                   # optional, default ~/Work
+   CLAUDE_WORK_DIR=~/Work                   # required, must exist
    ALLOWED_USERS=                           # optional, comma-separated whitelist
    HANDOFF_TOKEN=                           # optional, shared secret for /api/handoff
    ```
