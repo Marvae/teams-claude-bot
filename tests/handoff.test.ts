@@ -1,181 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, afterAll } from "vitest";
-import { mkdirSync, writeFileSync, rmSync, existsSync } from "fs";
-import { join, resolve } from "path";
+import { rmSync, existsSync, writeFileSync, mkdtempSync } from "fs";
+import { resolve, join } from "path";
 import { tmpdir } from "os";
 
-// --- findSessionCwd tests ---
-
-// Use a temp directory to avoid polluting real ~/.claude/projects
-const TEST_BASE = join(tmpdir(), "claude-bot-test-" + process.pid);
-const PROJECTS_DIR = join(TEST_BASE, ".claude", "projects");
-const TEST_PROJECT = join(PROJECTS_DIR, "-test-handoff-project");
-const TEST_SESSION_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
-
-function setupTestSession(lines: string[]) {
-  mkdirSync(TEST_PROJECT, { recursive: true });
-  writeFileSync(
-    join(TEST_PROJECT, `${TEST_SESSION_ID}.jsonl`),
-    lines.join("\n"),
-  );
-}
-
-function cleanupTestSession() {
-  if (existsSync(TEST_PROJECT)) {
-    rmSync(TEST_PROJECT, { recursive: true });
-  }
-}
-
-describe("findSessionCwd", () => {
-  beforeEach(() => cleanupTestSession());
-  afterEach(() => cleanupTestSession());
-  afterAll(() => {
-    if (existsSync(TEST_BASE)) rmSync(TEST_BASE, { recursive: true });
-  });
-
-  it("finds cwd when it is on the first line", async () => {
-    setupTestSession([
-      JSON.stringify({ cwd: "/test/project", sessionId: TEST_SESSION_ID }),
-      JSON.stringify({ type: "message", text: "hello" }),
-    ]);
-    const { findSessionCwd } = await import("../src/claude/agent.js");
-    expect(findSessionCwd(TEST_SESSION_ID, PROJECTS_DIR)).toBe("/test/project");
-  });
-
-  it("finds cwd when it is not on the first line", async () => {
-    setupTestSession([
-      JSON.stringify({ type: "queue-operation", operation: "dequeue", timestamp: "2026-01-01" }),
-      JSON.stringify({ parentUuid: null, isSidechain: false }),
-      JSON.stringify({ type: "system", cwd: "/test/deep/project" }),
-    ]);
-    const { findSessionCwd } = await import("../src/claude/agent.js");
-    expect(findSessionCwd(TEST_SESSION_ID, PROJECTS_DIR)).toBe("/test/deep/project");
-  });
-
-  it("returns undefined for nonexistent session", async () => {
-    const { findSessionCwd } = await import("../src/claude/agent.js");
-    expect(findSessionCwd("nonexistent-0000-0000-0000-000000000000", PROJECTS_DIR)).toBeUndefined();
-  });
-
-  it("returns undefined when jsonl has no cwd field", async () => {
-    setupTestSession([
-      JSON.stringify({ type: "queue-operation" }),
-      JSON.stringify({ type: "message", text: "no cwd here" }),
-    ]);
-    const { findSessionCwd } = await import("../src/claude/agent.js");
-    expect(findSessionCwd(TEST_SESSION_ID, PROJECTS_DIR)).toBeUndefined();
-  });
-
-  it("handles malformed jsonl gracefully", async () => {
-    setupTestSession([
-      "not valid json",
-      '{"cwd": "/recovery/path"}',
-    ]);
-    const { findSessionCwd } = await import("../src/claude/agent.js");
-    expect(findSessionCwd(TEST_SESSION_ID, PROJECTS_DIR)).toBe("/recovery/path");
-  });
-
-  it("works with hyphenated directory names", async () => {
-    const hyphenProject = join(PROJECTS_DIR, "-test-client-cocoa");
-    mkdirSync(hyphenProject, { recursive: true });
-    writeFileSync(
-      join(hyphenProject, `${TEST_SESSION_ID}.jsonl`),
-      JSON.stringify({ cwd: "/Users/test/Work/client-cocoa" }),
-    );
-    try {
-      cleanupTestSession();
-      const { findSessionCwd } = await import("../src/claude/agent.js");
-      expect(findSessionCwd(TEST_SESSION_ID, PROJECTS_DIR)).toBe("/Users/test/Work/client-cocoa");
-    } finally {
-      rmSync(hyphenProject, { recursive: true });
-    }
-  });
-
-  it("returns undefined when projects dir does not exist", async () => {
-    const { findSessionCwd } = await import("../src/claude/agent.js");
-    expect(findSessionCwd(TEST_SESSION_ID, "/nonexistent/path")).toBeUndefined();
-  });
-});
-
-// --- getSessionSummary tests ---
-
-describe("getSessionSummary", () => {
-  beforeEach(() => cleanupTestSession());
-  afterEach(() => cleanupTestSession());
-
-  it("extracts user and assistant text messages", async () => {
-    setupTestSession([
-      JSON.stringify({ type: "user", message: { content: "help me fix the bug" } }),
-      JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "Sure, let me look at it." }] } }),
-      JSON.stringify({ type: "user", message: { content: "thanks" } }),
-    ]);
-    const { getSessionSummary } = await import("../src/claude/agent.js");
-    const summary = getSessionSummary(TEST_SESSION_ID, PROJECTS_DIR);
-    expect(summary).toContain("help me fix the bug");
-    expect(summary).toContain("Sure, let me look at it.");
-    expect(summary).toContain("thanks");
-  });
-
-  it("skips tool_use blocks in assistant messages", async () => {
-    setupTestSession([
-      JSON.stringify({ type: "user", message: { content: "read the file" } }),
-      JSON.stringify({ type: "assistant", message: { content: [
-        { type: "tool_use", name: "Read", input: { file_path: "/tmp/test" } },
-        { type: "text", text: "Here is the file content." },
-      ] } }),
-    ]);
-    const { getSessionSummary } = await import("../src/claude/agent.js");
-    const summary = getSessionSummary(TEST_SESSION_ID, PROJECTS_DIR);
-    expect(summary).toContain("Here is the file content.");
-    expect(summary).not.toContain("tool_use");
-    expect(summary).not.toContain("file_path");
-  });
-
-  it("skips non-user/assistant message types", async () => {
-    setupTestSession([
-      JSON.stringify({ type: "system", cwd: "/test" }),
-      JSON.stringify({ type: "queue-operation", operation: "dequeue" }),
-      JSON.stringify({ type: "user", message: { content: "hello" } }),
-    ]);
-    const { getSessionSummary } = await import("../src/claude/agent.js");
-    const summary = getSessionSummary(TEST_SESSION_ID, PROJECTS_DIR);
-    expect(summary).toContain("hello");
-    expect(summary).not.toContain("queue-operation");
-  });
-
-  it("returns undefined for nonexistent session", async () => {
-    const { getSessionSummary } = await import("../src/claude/agent.js");
-    expect(getSessionSummary("nonexistent-0000-0000-0000-000000000000", PROJECTS_DIR)).toBeUndefined();
-  });
-
-  it("returns undefined for empty transcript", async () => {
-    setupTestSession([]);
-    const { getSessionSummary } = await import("../src/claude/agent.js");
-    expect(getSessionSummary(TEST_SESSION_ID, PROJECTS_DIR)).toBeUndefined();
-  });
-
-  it("truncates long summaries", async () => {
-    const longText = "x".repeat(1000);
-    const lines = Array.from({ length: 20 }, (_, i) =>
-      JSON.stringify({ type: "user", message: { content: `msg ${i}: ${longText}` } }),
-    );
-    setupTestSession(lines);
-    const { getSessionSummary } = await import("../src/claude/agent.js");
-    const summary = getSessionSummary(TEST_SESSION_ID, PROJECTS_DIR);
-    expect(summary).toBeDefined();
-    expect(summary!.length).toBeLessThanOrEqual(4003); // 4000 + "..."
-  });
-
-  it("takes only last 10 messages", async () => {
-    const lines = Array.from({ length: 20 }, (_, i) =>
-      JSON.stringify({ type: "user", message: { content: `message-${i}` } }),
-    );
-    setupTestSession(lines);
-    const { getSessionSummary } = await import("../src/claude/agent.js");
-    const summary = getSessionSummary(TEST_SESSION_ID, PROJECTS_DIR);
-    expect(summary).not.toContain("message-0");
-    expect(summary).toContain("message-19");
-  });
-});
+// Use a temp cwd per file to isolate .sessions.json
+const ORIGINAL_CWD = process.cwd();
+const TEMP_CWD = mkdtempSync(join(tmpdir(), "claude-bot-handoff-"));
+process.chdir(TEMP_CWD);
 
 // --- Handoff mode tests ---
 
@@ -206,7 +37,7 @@ describe("handoff mode", () => {
 
 // --- Session history tests ---
 
-const SESSIONS_FILE = join(tmpdir(), `claude-bot-test-sessions-${process.pid}.json`);
+const SESSIONS_FILE = resolve(process.cwd(), ".sessions.json");
 
 describe("session history", () => {
   beforeEach(async () => {
@@ -300,6 +131,12 @@ describe("conversation ref store", () => {
 
   afterEach(() => {
     if (existsSync(REFS_FILE)) rmSync(REFS_FILE);
+  });
+
+  afterAll(() => {
+    if (existsSync(SESSIONS_FILE)) rmSync(SESSIONS_FILE);
+    process.chdir(ORIGINAL_CWD);
+    rmSync(TEMP_CWD, { recursive: true, force: true });
   });
 
   it("returns null when no refs saved", async () => {

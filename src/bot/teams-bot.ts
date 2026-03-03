@@ -21,9 +21,9 @@ import {
 } from "../session/manager.js";
 import {
   runClaude,
-  getSessionSummary,
   type ImageInput,
   type ProgressEvent,
+  type RunClaudeOptions,
 } from "../claude/agent.js";
 import { formatResponse, splitMessage } from "../claude/formatter.js";
 import { processAttachments } from "./attachments.js";
@@ -126,7 +126,7 @@ export class ClaudeCodeBot extends ActivityHandler {
         return;
       }
 
-      if (value.action === "handoff_pickup" || value.action === "handoff_resume") {
+      if (value.action === "handoff_fork") {
         // Save ref for background use (ctx gets revoked after HTTP response)
         const ref = TurnContext.getConversationReference(ctx.activity);
         const adapter = ctx.adapter as BotFrameworkAdapter;
@@ -248,64 +248,22 @@ export class ClaudeCodeBot extends ActivityHandler {
   ): Promise<void> {
     const conversationId = ctx.activity.conversation.id;
 
-    if (action === "handoff_pickup") {
+    if (action === "handoff_fork") {
       // Immediately acknowledge to avoid Teams "something went wrong" timeout
-      // Keep it short and language-neutral with emoji
-      await ctx.sendActivity(`🔄 📂 ${workDir}`);
+      await ctx.sendActivity(
+        `🔄 📂 ${workDir}\n\n⚠️ 完成后请 /handoff 切回，否则两边会各走各的`,
+      );
 
       setHandoffMode(conversationId, "pickup");
       clearSession(conversationId);
       if (workDir) setWorkDir(conversationId, workDir);
 
-      console.log(`[HANDOFF] Pickup: sessionId=${sessionId}, workDir=${workDir}`);
-      const summary = sessionId ? getSessionSummary(sessionId) : undefined;
-      console.log(`[HANDOFF] Summary: ${summary ? summary.length + ' chars' : 'none'}`);
-      const prompt = summary
-        ? `The user handed off from Terminal to Teams. Here is their recent Terminal conversation:\n\n${summary}\n\nYou MUST reply in the same language as the conversation above. Briefly welcome the user to Teams and summarize what they were working on. Be concise.`
-        : `The user handed off from Terminal to Teams (project: ${workDir ?? "unknown"}). Welcome them and ask what they need help with.`;
+      console.log(`[HANDOFF] Fork: sessionId=${sessionId}, workDir=${workDir}`);
+      const prompt = `The user handed off from Terminal to Teams (project: ${workDir ?? "unknown"}). Welcome them and ask what they need help with.`;
 
-      await this.runClaudeAndRespond(ctx, conversationId, prompt);
-    } else if (action === "handoff_resume") {
-      setHandoffMode(conversationId, "resume");
-      if (sessionId) setSession(conversationId, sessionId);
-      if (workDir) setWorkDir(conversationId, workDir);
-
-      const typingController = new AbortController();
-      const typingLoop = this.startTypingLoop(ctx, typingController.signal);
-      const progress = this.createProgressNotifier(ctx);
-      try {
-        const result = await runClaude(
-          "The user just handed off this session from their Terminal to Teams mobile. Briefly welcome them and summarize what you were working on.",
-          getSession(conversationId),
-          getWorkDir(conversationId),
-          getModel(conversationId),
-          getThinkingTokens(conversationId),
-          getPermissionMode(conversationId),
-          undefined,
-          progress.onProgress,
-        );
-        typingController.abort();
-        await typingLoop;
-
-        if (result.error) {
-          await progress.finalize(["Could not resume session. Is your Terminal still open?\n\n" +
-            "Close it with `/exit`, then try again.\n" +
-            "Or use **Quick Pickup** instead — it works without closing Terminal."]);
-          clearSession(conversationId);
-          clearHandoffMode(conversationId);
-        } else {
-          if (result.sessionId) setSession(conversationId, result.sessionId);
-          await progress.finalize(splitMessage(formatResponse(result)));
-        }
-      } catch (err) {
-        typingController.abort();
-        await typingLoop;
-        await progress.finalize(["Could not resume session. Is your Terminal still open?\n\n" +
-          "Close it with `/exit`, then try again.\n" +
-          "Or use **Quick Pickup** instead."]);
-        clearSession(conversationId);
-        clearHandoffMode(conversationId);
-      }
+      await this.runClaudeAndRespond(ctx, conversationId, prompt, undefined, {
+        resume: "fork",
+      });
     }
   }
 
@@ -314,6 +272,7 @@ export class ClaudeCodeBot extends ActivityHandler {
     conversationId: string,
     prompt: string,
     images?: ImageInput[],
+    runOptions?: RunClaudeOptions,
   ): Promise<void> {
     const typingController = new AbortController();
     const typingLoop = this.startTypingLoop(ctx, typingController.signal);
@@ -329,6 +288,7 @@ export class ClaudeCodeBot extends ActivityHandler {
         getPermissionMode(conversationId),
         images,
         progress.onProgress,
+        runOptions,
       );
       typingController.abort();
       await typingLoop;
