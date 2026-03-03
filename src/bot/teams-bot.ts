@@ -1,4 +1,8 @@
-import { resolvePromptRequest } from "../claude/user-input.js";
+import {
+  resolvePromptRequest,
+  createPromptCard,
+  registerPromptRequest,
+} from "../claude/user-input.js";
 import {
   ActivityHandler,
   ActivityTypes,
@@ -335,6 +339,21 @@ export class ClaudeCodeBot extends ActivityHandler {
     // Create permission handler if not bypassing
     const permissionMode = getPermissionMode(conversationId);
     const finalRunOptions = { ...runOptions };
+
+    // Add prompt request handler
+    finalRunOptions.onPromptRequest = async (info) => {
+      const card = createPromptCard(info.requestId, info.message, info.options);
+      await ctx.sendActivity({
+        attachments: [
+          {
+            contentType: "application/vnd.microsoft.card.adaptive",
+            content: card,
+          },
+        ],
+      });
+      // Wait for user response
+      return registerPromptRequest(info.requestId);
+    };
 
     if (permissionMode !== "bypassPermissions") {
       const sendCard = async (req: {

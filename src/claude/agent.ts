@@ -25,9 +25,16 @@ export interface ProgressEvent {
   tool: ToolInfo;
 }
 
+export interface PromptRequestInfo {
+  requestId: string;
+  message: string;
+  options: Array<{ key: string; label: string; description?: string }>;
+}
+
 export interface RunClaudeOptions {
   resume?: "fork" | "continue";
   canUseTool?: CanUseTool;
+  onPromptRequest?: (info: PromptRequestInfo) => Promise<string>;
 }
 
 export type CanUseTool = (
@@ -132,6 +139,28 @@ export async function runClaude(
       ) {
         newSessionId = (message as Record<string, unknown>)
           .session_id as string;
+      }
+
+      // PromptRequest handling
+      if (
+        typeof message === "object" &&
+        message !== null &&
+        "prompt" in message &&
+        "message" in message &&
+        "options" in message
+      ) {
+        const req = message as {
+          prompt: string;
+          message: string;
+          options: Array<{ key: string; label: string; description?: string }>;
+        };
+        if (runOptions?.onPromptRequest) {
+          await runOptions.onPromptRequest({
+            requestId: req.prompt,
+            message: req.message,
+            options: req.options,
+          });
+        }
       }
 
       // tool_progress events
