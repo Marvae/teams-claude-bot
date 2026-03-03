@@ -9,6 +9,8 @@ interface SessionData {
   model?: string;
   thinkingTokens?: number | null;
   permissionMode?: string;
+  continueMode?: boolean;
+  history?: Array<{ sessionId: string; workDir: string; usedAt: string }>;
 }
 
 type SessionStore = Record<string, SessionData>;
@@ -40,6 +42,28 @@ function ensureEntry(conversationId: string): SessionData {
   return sessions[conversationId];
 }
 
+/** Push current session into history before switching away. */
+function pushHistory(conversationId: string): void {
+  const entry = sessions[conversationId];
+  if (!entry?.claudeSessionId) return;
+
+  if (!entry.history) entry.history = [];
+
+  // Don't duplicate
+  if (entry.history.some((h) => h.sessionId === entry.claudeSessionId)) return;
+
+  entry.history.push({
+    sessionId: entry.claudeSessionId,
+    workDir: entry.workDir ?? config.claudeWorkDir,
+    usedAt: new Date().toISOString(),
+  });
+
+  // Keep last 10
+  if (entry.history.length > 10) {
+    entry.history = entry.history.slice(-10);
+  }
+}
+
 export function getSession(conversationId: string): string | undefined {
   return sessions[conversationId]?.claudeSessionId;
 }
@@ -48,6 +72,7 @@ export function setSession(
   conversationId: string,
   claudeSessionId: string,
 ): void {
+  pushHistory(conversationId);
   ensureEntry(conversationId).claudeSessionId = claudeSessionId;
   persist();
 }
@@ -55,9 +80,68 @@ export function setSession(
 export function clearSession(conversationId: string): void {
   const entry = sessions[conversationId];
   if (entry) {
+    pushHistory(conversationId);
     delete entry.claudeSessionId;
     persist();
   }
+}
+
+export function setContinueMode(conversationId: string, workDir: string): void {
+  pushHistory(conversationId);
+  const entry = ensureEntry(conversationId);
+  delete entry.claudeSessionId;
+  entry.workDir = workDir;
+  entry.continueMode = true;
+  persist();
+}
+
+export function consumeContinueMode(conversationId: string): boolean {
+  const entry = sessions[conversationId];
+  if (entry?.continueMode) {
+    delete entry.continueMode;
+    persist();
+    return true;
+  }
+  return false;
+}
+
+export interface PastSession {
+  index: number;
+  sessionId: string;
+  workDir: string;
+  usedAt: string;
+}
+
+export function listPastSessions(conversationId: string): PastSession[] {
+  const history = sessions[conversationId]?.history ?? [];
+  return history.map((h, i) => ({
+    index: i,
+    sessionId: h.sessionId,
+    workDir: h.workDir,
+    usedAt: h.usedAt,
+  }));
+}
+
+export function switchToSession(
+  conversationId: string,
+  index: number,
+): PastSession | null {
+  const history = sessions[conversationId]?.history;
+  if (!history || index < 0 || index >= history.length) return null;
+
+  const target = history[index];
+
+  // Save current to history, restore target
+  pushHistory(conversationId);
+  const entry = ensureEntry(conversationId);
+  entry.claudeSessionId = target.sessionId;
+  entry.workDir = target.workDir;
+
+  // Remove from history since it's now active
+  history.splice(index, 1);
+
+  persist();
+  return { index, ...target };
 }
 
 export function getWorkDir(conversationId: string): string {

@@ -52,6 +52,7 @@ export async function runClaude(
   thinkingTokens?: number | null,
   permissionMode?: string,
   images?: ImageInput[],
+  continueSession?: boolean,
 ): Promise<ClaudeResult> {
   const tools: ToolInfo[] = [];
   let resultText: string | undefined;
@@ -70,7 +71,8 @@ export async function runClaude(
       options.maxThinkingTokens = thinkingTokens;
     }
     if (workDir) options.cwd = workDir;
-    if (sessionId) options.resume = sessionId;
+    if (continueSession) options.continue = true;
+    else if (sessionId) options.resume = sessionId;
 
     // Save images to tmp files and prepend paths to prompt
     let finalPrompt = prompt;

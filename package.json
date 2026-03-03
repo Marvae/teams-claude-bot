@@ -4,6 +4,9 @@
   "description": "Microsoft Teams bot that bridges to Claude Code",
   "type": "module",
   "main": "dist/index.js",
+  "bin": {
+    "teams-bot": "./scripts/ctl.sh"
+  },
   "scripts": {
     "dev": "concurrently -k -n bot,tunnel -c blue,green \"tsx watch src/index.ts\" \"devtunnel host peaceful-plane-fm228kq\"",
     "dev:local": "tsx watch src/index.ts",
