@@ -1,3 +1,4 @@
+import { resolvePromptRequest } from "../claude/user-input.js";
 import {
   ActivityHandler,
   ActivityTypes,
@@ -6,6 +7,7 @@ import {
 } from "botbuilder";
 import { stripMention } from "./mention.js";
 import { handleCommand } from "./commands.js";
+import { resolvePromptRequest } from "../claude/user-input.js";
 import {
   clearSession,
   // clearHandoffMode, // TODO: use in handoff cleanup
@@ -20,6 +22,7 @@ import {
   setPermissionMode,
   setHandoffMode,
 } from "../session/manager.js";
+import { resolvePromptRequest } from "../claude/user-input.js";
 import {
   runClaude,
   type ImageInput,
@@ -27,6 +30,7 @@ import {
   type RunClaudeOptions,
 } from "../claude/agent.js";
 import { formatResponse, splitMessage } from "../claude/formatter.js";
+import { resolvePromptRequest } from "../claude/user-input.js";
 import {
   resolvePermission,
   createPermissionHandler,
@@ -176,6 +180,18 @@ export class ClaudeCodeBot extends ActivityHandler {
         const mode = value.mode as string;
         setPermissionMode(conversationId, mode);
         await ctx.sendActivity(`Permission mode set to \`${mode}\``);
+        return;
+      }
+
+      if (value.action === "prompt_response") {
+        const requestId = value.requestId as string;
+        const key = value.key as string;
+        const resolved = resolvePromptRequest(requestId, key);
+        if (resolved) {
+          await ctx.sendActivity(`Selected: ${key}`);
+        } else {
+          await ctx.sendActivity("Prompt request expired or not found.");
+        }
         return;
       }
 

@@ -11,9 +11,12 @@ A lightweight Microsoft Teams bot that bridges to Claude Code on your local mach
 - **Full Claude Code access** — Read, Write, Edit, Bash, Glob, Grep tools via Teams messages
 - **Image & file upload** — Send screenshots for Claude to analyze, or upload code files for review
 - **Handoff** — Seamlessly switch between Terminal and Teams with `/handoff` skill
-  - **Quick Pickup** — New session with conversation summary (both sides work independently)
-  - **Resume Session** — Take over the exact Terminal session (requires closing Terminal first)
-  - **Handoff Back** — Return session to Terminal with `/handoff back`
+  - Terminal → Teams: Fork session to Teams, both sides can work independently
+  - `/handoff back`: Return to Terminal-only workflow
+- **Permission control** — Interactive tool approval via Adaptive Cards
+  - Default mode: Ask before risky operations
+  - Accept Edits: Auto-allow file edits, ask for others
+  - Bypass: Allow everything (fast but risky)
 - **Access control** — Restrict usage to authorized users via Azure AD object ID or email
 - **Session management** — Per-conversation session, working directory, model, and thinking budget
   - Session history with `/sessions` (Adaptive Card with Resume buttons)
@@ -44,14 +47,16 @@ src/
 │   ├── commands.ts          # Slash command handling
 │   ├── attachments.ts       # Download & process Teams file/image attachments
 │   ├── mention.ts           # Strip @mentions in group chats
-│   └── cards.ts             # Adaptive card builders
+│   └── cards.ts             # Adaptive card builders (help, permission, etc.)
 ├── claude/
-│   ├── agent.ts             # Claude Agent SDK integration (query, session lookup, summary)
-│   └── formatter.ts         # Response formatting & message splitting
+│   ├── agent.ts             # Claude Agent SDK integration (query, permissions)
+│   ├── formatter.ts         # Response formatting & message splitting
+│   ├── permissions.ts       # Tool permission handler (canUseTool callback)
+│   └── user-input.ts        # User input handler (PromptRequest/PromptResponse)
 ├── handoff/
 │   └── store.ts             # Conversation reference storage (for proactive messages)
 └── session/
-    └── manager.ts           # Session persistence, history, handoff mode tracking
+    └── manager.ts           # Session persistence, history, permission mode tracking
 
 .claude/
 ├── skills/handoff/
@@ -64,23 +69,25 @@ src/
 ### Handoff Flow
 
 ```
-Terminal → Teams (Quick Pickup):
+Terminal → Teams:
 1. User runs /handoff in Terminal
 2. Skill extracts session ID, calls POST /api/handoff
-3. Bot sends Adaptive Card to Teams with Quick Pickup / Resume buttons
-4. User taps Quick Pickup → Bot reads Terminal transcript summary
-5. Bot starts new session with summary injected as context
-6. Both Terminal and Teams can work independently
-
-Terminal → Teams (Resume):
-1. Same as above, but user taps Resume
-2. User must /exit Terminal first
-3. Bot resumes the exact same session with full context
+3. Bot forks session to Teams (SDK native forkSession)
+4. Both Terminal and Teams can work independently
 
 Teams → Terminal:
 1. User sends /handoff back in Teams
-2. Pickup mode: Teams session stays, Terminal is still active
-3. Resume mode: Bot shows `claude -r <id>` command, clears Teams session
+2. Clears handoff mode, Teams session stays active
+3. User can continue in Terminal
+```
+
+### Permission Flow
+
+```
+1. Claude requests tool use (e.g., Bash "rm -rf /tmp/test")
+2. Bot sends Adaptive Card with tool details + Allow/Deny buttons
+3. User taps Allow or Deny
+4. Bot resolves permission, Claude continues or aborts
 ```
 
 ### Message Flow
@@ -89,14 +96,14 @@ Teams → Terminal:
 1. User sends message in Teams (text, image, or file)
 2. Save conversation reference (for proactive handoff notifications)
 3. Access control check (ALLOWED_USERS whitelist)
-4. Handle Adaptive Card button clicks (handoff, session switch)
+4. Handle Adaptive Card button clicks (permission, handoff, session switch)
 5. Process attachments:
    - Images → base64 → Claude vision content block
    - Text/code files → prepend to prompt as code block
    - Unsupported → notify user, skip
 6. Route slash commands
 7. Start typing indicator loop (3s interval)
-8. Call Claude Agent SDK query() with prompt + images
+8. Call Claude Agent SDK query() with prompt + images + canUseTool callback
 9. Collect session ID, tool usage, and result
 10. Format response (tools used + result)
 11. Split into chunks, send back to Teams
@@ -187,13 +194,23 @@ ALLOWED_USERS=user1@contoso.com,user2@contoso.com
 | `/model [name]` | Show or set model (sonnet/opus/haiku) |
 | `/models` | List available models |
 | `/thinking [tokens\|off]` | Set extended thinking budget |
-| `/permission [mode]` | Set permission mode |
+| `/permission [mode]` | Set permission mode (shows picker card) |
 | `/sessions` | View session history (Adaptive Card with Resume buttons) |
 | `/handoff back` | Hand session back to Terminal |
 | `/status` | Show current session config |
 | `/help` | Show command card |
 
 Any other message is sent to Claude Code as a prompt.
+
+### Permission Modes
+
+| Mode | Behavior |
+|------|----------|
+| `default` | Ask before risky operations (recommended) |
+| `acceptEdits` | Auto-allow file edits, ask for others |
+| `bypassPermissions` | Allow everything without asking |
+
+Use `/permission` to show a picker card, or `/permission <mode>` to set directly.
 
 ### Handoff Skill (Terminal → Teams)
 
@@ -207,9 +224,7 @@ teams-bot uninstall-skill  # Remove skill and hook
 Then in any Claude Code session:
 
 ```
-/handoff              # Teams shows choice card (Quick Pickup or Resume)
-/handoff pickup       # Direct quick pickup (no card)
-/handoff resume       # Direct resume (no card)
+/handoff    # Fork session to Teams
 ```
 
 ## Service Management
@@ -234,13 +249,16 @@ npm run build      # Production build (esbuild)
 npm start          # Run production build
 npm test           # Run tests (vitest)
 npm run test:watch # Watch mode tests
+npm run lint       # ESLint
+npm run format     # Prettier
 ```
 
 ## Tech Stack
 
 - **TypeScript** — Strict mode, ESM
 - **Bot Framework SDK** (`botbuilder` v4.23) — Teams message handling
-- **Claude Agent SDK** (`@anthropic-ai/claude-agent-sdk` v0.1) — Claude Code integration
+- **Claude Agent SDK** (`@anthropic-ai/claude-agent-sdk` v0.2) — Claude Code integration
 - **Express** — HTTP server
 - **esbuild** — Bundler (single-file output, Node 22 target)
 - **vitest** — Testing
+- **ESLint + Prettier** — Code quality
