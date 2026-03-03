@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { homedir } from "os";
 import { resolve } from "path";
+import { existsSync } from "fs";
 
 function required(name: string): string {
   const value = process.env[name];
@@ -29,7 +30,13 @@ export const config = {
   microsoftAppPassword: required("MICROSOFT_APP_PASSWORD"),
   microsoftAppTenantId: required("MICROSOFT_APP_TENANT_ID"),
   port: parseInt(process.env.PORT ?? "3978", 10),
-  claudeWorkDir: expandHome(process.env.CLAUDE_WORK_DIR ?? "~/Work"),
+  claudeWorkDir: (() => {
+    const dir = expandHome(required("CLAUDE_WORK_DIR"));
+    if (!existsSync(dir)) {
+      throw new Error(`CLAUDE_WORK_DIR does not exist: ${dir}`);
+    }
+    return dir;
+  })(),
   allowedUsers: parseAllowedUsers(process.env.ALLOWED_USERS),
   handoffToken: process.env.HANDOFF_TOKEN ?? "",
   sessionInitPrompt: process.env.SESSION_INIT_PROMPT,
