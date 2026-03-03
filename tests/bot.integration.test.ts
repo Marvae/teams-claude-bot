@@ -314,3 +314,83 @@ describe("permission card interactions", () => {
       });
   });
 });
+
+describe("user input (PromptRequest) flow", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("handles prompt_response action", async () => {
+    const adapter = createAdapter();
+    await adapter
+      .send({
+        type: ActivityTypes.Message,
+        value: {
+          action: "prompt_response",
+          requestId: "nonexistent-prompt",
+          key: "yes",
+        },
+      })
+      .assertReply((reply) => {
+        // Should say expired/not found since we didn't register it
+        expect(reply.text).toContain("expired");
+      });
+  });
+
+  it("handles prompt_response with valid pending request", async () => {
+    const { registerPromptRequest } =
+      await import("../src/claude/user-input.js");
+
+    // Register a pending prompt first
+    const promptPromise = registerPromptRequest("test-prompt-123", {
+      timeoutMs: 5000,
+    });
+
+    const adapter = createAdapter();
+    await adapter
+      .send({
+        type: ActivityTypes.Message,
+        value: {
+          action: "prompt_response",
+          requestId: "test-prompt-123",
+          key: "confirm",
+        },
+      })
+      .assertReply((reply) => {
+        expect(reply.text).toContain("confirm");
+      });
+
+    // Prompt should resolve
+    const result = await promptPromise;
+    expect(result).toBe("confirm");
+  });
+});
+
+describe("handoff flow", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    runClaudeMock.mockReset();
+  });
+
+  // Note: handoff_fork uses continueConversation which doesn't work in TestAdapter
+  // The actual handler is tested via handleHandoff unit tests
+
+  it("handles /handoff back command", async () => {
+    // Set handoff mode first
+    sessionState.handoffMode = "pickup";
+
+    const adapter = createAdapter();
+    await adapter.send("/handoff back").assertReply((reply) => {
+      expect(reply.text).toContain("Handed back");
+    });
+  });
+
+  it("handles /handoff back when no active handoff", async () => {
+    sessionState.handoffMode = undefined;
+
+    const adapter = createAdapter();
+    await adapter.send("/handoff back").assertReply((reply) => {
+      expect(reply.text).toContain("No active handoff");
+    });
+  });
+});
