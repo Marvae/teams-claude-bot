@@ -17,6 +17,7 @@ import {
   getThinkingTokens,
   getPermissionMode,
   switchToSession,
+  setPermissionMode,
   setHandoffMode,
 } from "../session/manager.js";
 import {
@@ -168,6 +169,13 @@ export class ClaudeCodeBot extends ActivityHandler {
         } else {
           await ctx.sendActivity("Permission request expired or not found.");
         }
+        return;
+      }
+
+      if (value.action === "set_permission_mode") {
+        const mode = value.mode as string;
+        setPermissionMode(conversationId, mode);
+        await ctx.sendActivity(`Permission mode set to \`${mode}\``);
         return;
       }
 

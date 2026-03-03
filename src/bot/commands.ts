@@ -15,7 +15,7 @@ import {
   getHandoffMode,
   clearHandoffMode,
 } from "../session/manager.js";
-import { buildHelpCard } from "./cards.js";
+import { buildHelpCard, buildPermissionModeCard } from "./cards.js";
 
 function formatAge(iso: string): string {
   const ms = Date.now() - new Date(iso).getTime();
@@ -152,11 +152,15 @@ export async function handleCommand(
     case "/permission": {
       if (!arg) {
         const current = getPermissionMode(conversationId);
-        await ctx.sendActivity(
-          current
-            ? `Permission mode: \`${current}\``
-            : "No permission mode override set (using `bypassPermissions`).\n\nUsage: `/permission <mode>`\nModes: `default`, `acceptEdits`, `bypassPermissions`",
-        );
+        const card = buildPermissionModeCard(current);
+        await ctx.sendActivity({
+          attachments: [
+            {
+              contentType: "application/vnd.microsoft.card.adaptive",
+              content: card,
+            },
+          ],
+        });
         return true;
       }
 
@@ -171,7 +175,6 @@ export async function handleCommand(
       await ctx.sendActivity(`Permission mode set to \`${arg}\``);
       return true;
     }
-
     case "/status": {
       const sessionId = getSession(conversationId);
       const workDir = getWorkDir(conversationId);
