@@ -353,3 +353,61 @@ describe("canUseTool callback", () => {
     expect(call.options.canUseTool).toBeUndefined();
   });
 });
+
+describe("PromptRequest handling", () => {
+  it("calls onPromptRequest when SDK emits prompt request", async () => {
+    const onPromptRequest = vi.fn().mockResolvedValue("yes");
+
+    mockQuery.mockImplementation(async function* () {
+      yield { type: "system", subtype: "init", session_id: "sess-prompt" };
+      yield {
+        prompt: "confirm-123",
+        message: "Do you want to continue?",
+        options: [
+          { key: "yes", label: "Yes" },
+          { key: "no", label: "No" },
+        ],
+      };
+      yield { result: "Continued!" };
+    });
+
+    const result = await runClaude(
+      "do something",
+      undefined, // sessionId
+      undefined, // workDir
+      undefined, // model
+      undefined, // thinkingTokens
+      undefined, // permissionMode
+      undefined, // images
+      undefined, // onProgress
+      { onPromptRequest },
+    );
+
+    expect(onPromptRequest).toHaveBeenCalledOnce();
+    expect(onPromptRequest).toHaveBeenCalledWith({
+      requestId: "confirm-123",
+      message: "Do you want to continue?",
+      options: [
+        { key: "yes", label: "Yes" },
+        { key: "no", label: "No" },
+      ],
+    });
+    expect(result.result).toBe("Continued!");
+  });
+
+  it("skips prompt request if no callback provided", async () => {
+    mockQuery.mockImplementation(async function* () {
+      yield { type: "system", subtype: "init", session_id: "sess-no-cb" };
+      yield {
+        prompt: "confirm-456",
+        message: "Continue?",
+        options: [{ key: "ok", label: "OK" }],
+      };
+      yield { result: "Done anyway" };
+    });
+
+    const result = await runClaude("test");
+
+    expect(result.result).toBe("Done anyway");
+  });
+});
