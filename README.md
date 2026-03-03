@@ -11,7 +11,7 @@ A lightweight Microsoft Teams bot that bridges to Claude Code on your local mach
 - **Full Claude Code access** — Read, Write, Edit, Bash, Glob, Grep tools via Teams messages
 - **Image & file upload** — Send screenshots for Claude to analyze, or upload code files for review
 - **Handoff** — Seamlessly switch between Terminal and Teams with `/handoff` skill
-  - Terminal → Teams: Fork session to Teams, both sides can work independently
+  - Terminal → Teams: Hand off to Teams, both sides can continue working
   - `/handoff back`: Return to Terminal-only workflow
 - **Permission control** — Interactive tool approval via Adaptive Cards
   - Default mode: Ask before risky operations
@@ -72,7 +72,7 @@ src/
 Terminal → Teams:
 1. User runs /handoff in Terminal
 2. Skill extracts session ID, calls POST /api/handoff
-3. Bot forks session to Teams (SDK native forkSession)
+3. Bot transfers session context to Teams
 4. Both Terminal and Teams can work independently
 
 Teams → Terminal:
@@ -224,7 +224,7 @@ teams-bot uninstall-skill  # Remove skill and hook
 Then in any Claude Code session:
 
 ```
-/handoff    # Fork session to Teams
+/handoff    # Hand off to Teams
 ```
 
 ## Service Management

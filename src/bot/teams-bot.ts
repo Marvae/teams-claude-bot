@@ -7,7 +7,6 @@ import {
 } from "botbuilder";
 import { stripMention } from "./mention.js";
 import { handleCommand } from "./commands.js";
-import { resolvePromptRequest } from "../claude/user-input.js";
 import {
   clearSession,
   // clearHandoffMode, // TODO: use in handoff cleanup
@@ -22,7 +21,6 @@ import {
   setPermissionMode,
   setHandoffMode,
 } from "../session/manager.js";
-import { resolvePromptRequest } from "../claude/user-input.js";
 import {
   runClaude,
   type ImageInput,
@@ -30,7 +28,6 @@ import {
   type RunClaudeOptions,
 } from "../claude/agent.js";
 import { formatResponse, splitMessage } from "../claude/formatter.js";
-import { resolvePromptRequest } from "../claude/user-input.js";
 import {
   resolvePermission,
   createPermissionHandler,
