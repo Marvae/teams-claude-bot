@@ -1,5 +1,5 @@
 import { config } from "./config.js";
-import { BotFrameworkAdapter, CardFactory, TurnContext } from "botbuilder";
+import { BotFrameworkAdapter, TurnContext } from "botbuilder";
 import express from "express";
 import { ClaudeCodeBot } from "./bot/teams-bot.js";
 import { loadSessions } from "./session/manager.js";
@@ -70,54 +70,7 @@ app.post("/api/handoff", async (req, res) => {
     await adapter.continueConversation(
       ref,
       async (ctx: TurnContext) => {
-        // Direct mode: skip card, call handoff handler directly
-        if (mode === "pickup" || mode === "resume") {
-          const action = mode === "pickup" ? "handoff_pickup" : "handoff_resume";
-          await bot.handleHandoff(ctx, action, workDir, sessionId);
-          return;
-        }
-
-        // Default: show Adaptive Card with both options
-        const card = CardFactory.adaptiveCard({
-          type: "AdaptiveCard",
-          version: "1.4",
-          body: [
-            {
-              type: "TextBlock",
-              text: "Handoff Ready",
-              size: "large",
-              weight: "bolder",
-            },
-            {
-              type: "FactSet",
-              facts: [
-                { title: "Project", value: workDir ?? "unknown" },
-                { title: "Time", value: new Date().toLocaleTimeString() },
-              ],
-            },
-            {
-              type: "TextBlock",
-              text: "Quick Pickup: new session with context summary. Both sides can work independently.\nResume: same session takeover. Close Terminal first (/exit).",
-              size: "small",
-              isSubtle: true,
-              wrap: true,
-              spacing: "small",
-            },
-          ],
-          actions: [
-            {
-              type: "Action.Submit",
-              title: "▶️ Quick Pickup (recommended)",
-              data: { action: "handoff_pickup", workDir, sessionId },
-            },
-            {
-              type: "Action.Submit",
-              title: "🔄 Resume (close Terminal first)",
-              data: { action: "handoff_resume", workDir, sessionId },
-            },
-          ],
-        });
-        await ctx.sendActivity({ attachments: [card] });
+        await bot.handleHandoff(ctx, "handoff_fork", workDir, sessionId);
       },
     );
 

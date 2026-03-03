@@ -1,111 +1,5 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
-import { tmpdir, homedir } from "os";
-import { readdirSync, existsSync, readFileSync } from "fs";
-import { join } from "path";
-
-/** Find the jsonl file path for a session. */
-export function findSessionFile(
-  sessionId: string,
-  projectsDir = join(homedir(), ".claude", "projects"),
-): string | undefined {
-  if (!existsSync(projectsDir)) return undefined;
-
-  for (const dir of readdirSync(projectsDir)) {
-    const sessionFile = join(projectsDir, dir, `${sessionId}.jsonl`);
-    if (existsSync(sessionFile)) return sessionFile;
-  }
-  return undefined;
-}
-
-/** Find the cwd for a session by scanning its jsonl file for the cwd field. */
-export function findSessionCwd(
-  sessionId: string,
-  projectsDir = join(homedir(), ".claude", "projects"),
-): string | undefined {
-  const file = findSessionFile(sessionId, projectsDir);
-  if (!file) return undefined;
-
-  try {
-    const chunk = readFileSync(file, "utf-8").slice(0, 10000);
-    for (const line of chunk.split("\n")) {
-      if (!line.includes('"cwd"')) continue;
-      const data = JSON.parse(line);
-      if (data.cwd) return data.cwd;
-    }
-  } catch {}
-  return undefined;
-}
-
-const MAX_SUMMARY_CHARS = 4000;
-
-/** Extract a conversation summary from a session's transcript. */
-export function getSessionSummary(
-  sessionId: string,
-  projectsDir = join(homedir(), ".claude", "projects"),
-): string | undefined {
-  const file = findSessionFile(sessionId, projectsDir);
-  if (!file) return undefined;
-
-  try {
-    const content = readFileSync(file, "utf-8");
-    const lines = content.split("\n");
-    const messages: Array<{ role: string; text: string }> = [];
-
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      try {
-        const data = JSON.parse(line);
-
-        // User messages (string or array content)
-        if (data.type === "user") {
-          if (typeof data.message?.content === "string") {
-            messages.push({ role: "user", text: data.message.content });
-          } else if (Array.isArray(data.message?.content)) {
-            const textParts: string[] = [];
-            for (const block of data.message.content) {
-              if (block.type === "text" && typeof block.text === "string") {
-                textParts.push(block.text);
-              }
-            }
-            if (textParts.length > 0) {
-              messages.push({ role: "user", text: textParts.join("\n") });
-            }
-          }
-        }
-
-        // Assistant messages — only extract text blocks, skip tool_use
-        if (data.type === "assistant" && Array.isArray(data.message?.content)) {
-          const textParts: string[] = [];
-          for (const block of data.message.content) {
-            if (block.type === "text" && typeof block.text === "string") {
-              textParts.push(block.text);
-            }
-          }
-          if (textParts.length > 0) {
-            messages.push({ role: "assistant", text: textParts.join("\n") });
-          }
-        }
-      } catch {}
-    }
-
-    if (messages.length === 0) return undefined;
-
-    // Take the last ~10 messages
-    const recent = messages.slice(-10);
-    let summary = recent
-      .map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.text}`)
-      .join("\n\n");
-
-    // Truncate
-    if (summary.length > MAX_SUMMARY_CHARS) {
-      summary = "..." + summary.slice(-MAX_SUMMARY_CHARS);
-    }
-
-    return summary;
-  } catch {}
-  return undefined;
-}
-
+import { tmpdir } from "os";
 
 export interface ToolInfo {
   name: string;
@@ -129,6 +23,10 @@ export interface ImageInput {
 export interface ProgressEvent {
   type: "tool_use";
   tool: ToolInfo;
+}
+
+export interface RunClaudeOptions {
+  resume?: "fork" | "continue";
 }
 
 const EXT_MAP: Record<string, string> = {
@@ -164,6 +62,7 @@ export async function runClaude(
   permissionMode?: string,
   images?: ImageInput[],
   onProgress?: (event: ProgressEvent) => void,
+  runOptions?: RunClaudeOptions,
 ): Promise<ClaudeResult> {
   const tools: ToolInfo[] = [];
   let resultText: string | undefined;
@@ -183,12 +82,10 @@ export async function runClaude(
       options.maxThinkingTokens = thinkingTokens;
     }
     if (sessionId) {
-      const sessionCwd = findSessionCwd(sessionId);
-      if (!sessionCwd) {
-        return { error: `Session not found: ${sessionId}`, tools };
-      }
       options.resume = sessionId;
-      options.cwd = sessionCwd;
+      if (runOptions?.resume === "fork") {
+        options.forkSession = true;
+      }
     } else {
       if (workDir) options.cwd = workDir;
     }
@@ -216,6 +113,29 @@ export async function runClaude(
       ) {
         newSessionId = (message as Record<string, unknown>)
           .session_id as string;
+      }
+
+      // tool_progress events
+      if (
+        typeof message === "object" &&
+        message !== null &&
+        "type" in message &&
+        (message as Record<string, unknown>).type === "tool_progress"
+      ) {
+        const progress = message as Record<string, unknown>;
+        const toolName = progress.tool as string | undefined;
+        if (toolName) {
+          const toolInfo: ToolInfo = { name: toolName };
+          const input = progress.input as Record<string, unknown> | undefined;
+          if (input) {
+            if (typeof input.file_path === "string") toolInfo.file = input.file_path;
+            if (typeof input.command === "string") {
+              toolInfo.command = input.command.slice(0, 100);
+            }
+            if (typeof input.pattern === "string") toolInfo.pattern = input.pattern;
+          }
+          onProgress?.({ type: "tool_use", tool: toolInfo });
+        }
       }
 
       // Collect tool usage from assistant messages
@@ -250,7 +170,6 @@ export async function runClaude(
                   toolInfo.pattern = input.pattern;
               }
               tools.push(toolInfo);
-              onProgress?.({ type: "tool_use", tool: toolInfo });
             }
           }
         }
