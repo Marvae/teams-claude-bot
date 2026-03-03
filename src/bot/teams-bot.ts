@@ -26,6 +26,11 @@ import {
   type RunClaudeOptions,
 } from "../claude/agent.js";
 import { formatResponse, splitMessage } from "../claude/formatter.js";
+import {
+  resolvePermission,
+  createPermissionHandler,
+} from "../claude/permissions.js";
+import { buildPermissionCard } from "./cards.js";
 import { processAttachments } from "./attachments.js";
 import { config } from "../config.js";
 import { saveConversationRef } from "../handoff/store.js";
@@ -148,6 +153,21 @@ export class ClaudeCodeBot extends ActivityHandler {
             );
           })
           .catch((err) => console.error("[HANDOFF] Background error:", err));
+        return;
+      }
+
+      if (
+        value.action === "permission_allow" ||
+        value.action === "permission_deny"
+      ) {
+        const toolUseID = value.toolUseID as string;
+        const allow = value.action === "permission_allow";
+        const resolved = resolvePermission(toolUseID, allow);
+        if (resolved) {
+          await ctx.sendActivity(allow ? "✅ Allowed" : "❌ Denied");
+        } else {
+          await ctx.sendActivity("Permission request expired or not found.");
+        }
         return;
       }
 
@@ -291,6 +311,35 @@ export class ClaudeCodeBot extends ActivityHandler {
     const typingLoop = this.startTypingLoop(ctx, typingController.signal);
     const progress = this.createProgressNotifier(ctx);
 
+    // Create permission handler if not bypassing
+    const permissionMode = getPermissionMode(conversationId);
+    const finalRunOptions = { ...runOptions };
+
+    if (permissionMode && permissionMode !== "bypassPermissions") {
+      const sendCard = async (req: {
+        toolName: string;
+        input: Record<string, unknown>;
+        toolUseID: string;
+        decisionReason?: string;
+      }) => {
+        const card = buildPermissionCard(
+          req.toolName,
+          req.input,
+          req.toolUseID,
+          req.decisionReason,
+        );
+        await ctx.sendActivity({
+          attachments: [
+            {
+              contentType: "application/vnd.microsoft.card.adaptive",
+              content: card,
+            },
+          ],
+        });
+      };
+      finalRunOptions.canUseTool = createPermissionHandler(sendCard);
+    }
+
     try {
       const result = await runClaude(
         prompt,
@@ -298,10 +347,10 @@ export class ClaudeCodeBot extends ActivityHandler {
         getWorkDir(conversationId),
         getModel(conversationId),
         getThinkingTokens(conversationId),
-        getPermissionMode(conversationId),
+        permissionMode,
         images,
         progress.onProgress,
-        runOptions,
+        finalRunOptions,
       );
       typingController.abort();
       await typingLoop;
