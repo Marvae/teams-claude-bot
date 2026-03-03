@@ -223,10 +223,11 @@ export async function runClaude(
         typeof message === "object" &&
         message !== null &&
         "type" in message &&
-        (message as Record<string, unknown>).type === "assistant" &&
-        "content" in message
+        (message as Record<string, unknown>).type === "assistant"
       ) {
-        const content = (message as Record<string, unknown>).content;
+        const msg = message as Record<string, unknown>;
+        const inner = msg.message as Record<string, unknown> | undefined;
+        const content = inner?.content ?? msg.content;
         if (Array.isArray(content)) {
           for (const block of content) {
             if (
