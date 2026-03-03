@@ -10,8 +10,20 @@ import {
   setThinkingTokens,
   getPermissionMode,
   setPermissionMode,
+  listPastSessions,
+  switchToSession,
 } from "../session/manager.js";
 import { buildHelpCard } from "./cards.js";
+
+function formatAge(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(ms / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
 
 const MODEL_SHORTCUTS: Record<string, string> = {
   sonnet: "claude-sonnet-4-6",
@@ -175,6 +187,61 @@ export async function handleCommand(
         `**Permission:** \`${permission ?? "bypassPermissions"}\``,
       ];
       await ctx.sendActivity(lines.join("\n\n"));
+      return true;
+    }
+
+    case "/sessions": {
+      const currentId = getSession(conversationId);
+      const past = listPastSessions(conversationId);
+
+      if (!currentId && past.length === 0) {
+        await ctx.sendActivity("No sessions. Start chatting to create one.");
+        return true;
+      }
+
+      const bodyItems: unknown[] = [];
+
+      if (currentId) {
+        bodyItems.push({
+          type: "TextBlock",
+          text: `Active: ${getWorkDir(conversationId)}`,
+          weight: "bolder",
+        });
+      }
+
+      const actions: unknown[] = [];
+
+      if (past.length > 0) {
+        bodyItems.push({
+          type: "TextBlock",
+          text: "Past sessions:",
+          spacing: "medium",
+          separator: true,
+        });
+
+        for (const s of past) {
+          const dirName = s.workDir.split("/").pop() ?? s.workDir;
+          bodyItems.push({
+            type: "TextBlock",
+            text: `${dirName} — ${formatAge(s.usedAt)}`,
+            spacing: "small",
+          });
+          actions.push({
+            type: "Action.Submit",
+            title: `Resume: ${dirName}`,
+            data: { action: "resume_session", index: s.index },
+          });
+        }
+      }
+
+      const card = CardFactory.adaptiveCard({
+        type: "AdaptiveCard",
+        version: "1.4",
+        body: bodyItems,
+        actions,
+      });
+
+      await ctx.sendActivity({ attachments: [card] });
       return true;
     }
 

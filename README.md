@@ -119,14 +119,15 @@ ALLOWED_USERS=user1@contoso.com,user2@contoso.com
    npm run dev
    ```
 
-4. **Expose via dev tunnel**
+4. **Upload the Teams app manifest** from `manifest/` to Teams admin center.
+
+5. **Update messaging endpoint** in Azure Bot registration → `<tunnel-url>/api/messages`.
+
+6. **Install as background service**
    ```bash
-   devtunnel host -p 3978 --allow-anonymous
+   npm link          # Register the CLI command
+   teams-bot install # Install service + auto-start on login
    ```
-
-5. **Upload the Teams app manifest** from `manifest/` to Teams admin center.
-
-6. **Update messaging endpoint** in Azure Bot registration → `<tunnel-url>/api/messages`.
 
 ## Commands
 
@@ -144,6 +145,17 @@ ALLOWED_USERS=user1@contoso.com,user2@contoso.com
 | `/help` | Show command card |
 
 Any other message is sent to Claude Code as a prompt.
+
+## Service Management
+
+```bash
+teams-bot install     # Install + auto-start on login
+teams-bot status      # Check if running
+teams-bot logs        # Tail logs
+teams-bot restart     # Rebuild + restart
+teams-bot stop        # Stop service
+teams-bot uninstall   # Remove service
+```
 
 ## Development
 
