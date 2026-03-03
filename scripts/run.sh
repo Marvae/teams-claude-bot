@@ -6,7 +6,17 @@ set -a
 source .env 2>/dev/null
 set +a
 
-TUNNEL_ID="${DEVTUNNEL_ID:-YOUR_TUNNEL_ID}"
+if [ -z "$DEVTUNNEL_ID" ]; then
+  echo "[run.sh] ERROR: DEVTUNNEL_ID is not set in .env"
+  echo ""
+  echo "  Create a persistent tunnel:"
+  echo "  1. devtunnel create --id <your-tunnel-name> --allow-anonymous"
+  echo "  2. devtunnel port create <your-tunnel-name> -p 3978"
+  echo "  3. Set DEVTUNNEL_ID in .env to the tunnel ID"
+  exit 1
+fi
+
+TUNNEL_ID="$DEVTUNNEL_ID"
 
 cleanup() {
   echo "[run.sh] Shutting down..."
@@ -40,24 +50,6 @@ if ! kill -0 $TUNNEL_PID 2>/dev/null; then
     echo "  Fix steps:"
     echo "  1. devtunnel user logout && devtunnel user login"
     echo "  2. Try again: teams-bot restart"
-    echo ""
-    echo "  If still failing, create a new tunnel:"
-    echo "  1. devtunnel create --allow-anonymous"
-    echo "  2. devtunnel port create -p 3978"
-    echo "  3. Update DEVTUNNEL_ID in .env with the new tunnel ID"
-    echo "  4. Update Azure Bot messaging endpoint with the new URL"
-    echo "     ${AZURE_BOT_CONFIG_URL:-Azure Portal → Bot registration → Configuration → Messaging endpoint}"
-    echo "  5. teams-bot restart"
-  elif grep -q "not found" "$TUNNEL_LOG"; then
-    echo "[run.sh] Tunnel '$TUNNEL_ID' not found (expired or deleted)."
-    echo ""
-    echo "  Fix steps:"
-    echo "  1. devtunnel create --allow-anonymous"
-    echo "  2. devtunnel port create -p 3978"
-    echo "  3. Update DEVTUNNEL_ID in .env with the new tunnel ID"
-    echo "  4. Update Azure Bot messaging endpoint with the new URL"
-    echo "     ${AZURE_BOT_CONFIG_URL:-Azure Portal → Bot registration → Configuration → Messaging endpoint}"
-    echo "  5. teams-bot restart"
   fi
   rm -f "$TUNNEL_LOG"
   cleanup

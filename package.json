@@ -8,7 +8,7 @@
     "teams-bot": "./scripts/ctl.sh"
   },
   "scripts": {
-    "dev": "concurrently -k -n bot,tunnel -c blue,green \"tsx watch src/index.ts\" \"devtunnel host peaceful-plane-fm228kq\"",
+    "dev": "concurrently -k -n bot,tunnel -c blue,green \"tsx watch src/index.ts\" \"node scripts/tunnel.mjs\"",
     "dev:local": "tsx watch src/index.ts",
     "build": "esbuild src/index.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/index.js --external:@anthropic-ai/claude-agent-sdk --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\"",
     "start": "node dist/index.js",
