@@ -257,6 +257,51 @@ export class ClaudeCodeBot extends ActivityHandler {
     const typingLoop = this.startTypingLoop(ctx, typingController.signal);
     const progress = this.createProgressNotifier(ctx);
 
+    // Build runOptions with permission + prompt handlers
+    const permissionMode = getPermissionMode(conversationId);
+    const runOptions: RunClaudeOptions = {};
+
+    // Add prompt request handler
+    runOptions.onPromptRequest = async (info) => {
+      const response = registerPromptRequest(info.requestId);
+      const card = createPromptCard(info.requestId, info.message, info.options);
+      await ctx.sendActivity({
+        attachments: [
+          {
+            contentType: "application/vnd.microsoft.card.adaptive",
+            content: card,
+          },
+        ],
+      });
+      return response;
+    };
+
+    // Add permission handler (unless bypassing)
+    if (permissionMode !== "bypassPermissions") {
+      const sendCard = async (req: {
+        toolName: string;
+        input: Record<string, unknown>;
+        toolUseID: string;
+        decisionReason?: string;
+      }) => {
+        const card = buildPermissionCard(
+          req.toolName,
+          req.input,
+          req.toolUseID,
+          req.decisionReason,
+        );
+        void ctx.sendActivity({
+          attachments: [
+            {
+              contentType: "application/vnd.microsoft.card.adaptive",
+              content: card,
+            },
+          ],
+        });
+      };
+      runOptions.canUseTool = createPermissionHandler(sendCard);
+    }
+
     try {
       console.log("[BOT] Calling runClaude...");
       const result = await runClaude(
@@ -265,9 +310,10 @@ export class ClaudeCodeBot extends ActivityHandler {
         getWorkDir(conversationId),
         getModel(conversationId),
         getThinkingTokens(conversationId),
-        getPermissionMode(conversationId),
+        permissionMode,
         images,
         progress.onProgress,
+        runOptions,
       );
 
       console.log("[BOT] runClaude completed, stopping typing");

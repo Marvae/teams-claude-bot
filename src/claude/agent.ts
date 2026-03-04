@@ -1,4 +1,12 @@
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import {
+  query,
+  type CanUseTool as SDKCanUseTool,
+  type PromptRequestOption,
+  type PromptResponse,
+  type Query,
+  type SDKMessage,
+  type SDKUserMessage,
+} from "@anthropic-ai/claude-agent-sdk";
 import { tmpdir } from "os";
 
 export interface ToolInfo {
@@ -28,7 +36,7 @@ export interface ProgressEvent {
 export interface PromptRequestInfo {
   requestId: string;
   message: string;
-  options: Array<{ key: string; label: string; description?: string }>;
+  options: PromptRequestOption[];
 }
 
 export interface RunClaudeOptions {
@@ -37,20 +45,22 @@ export interface RunClaudeOptions {
   onPromptRequest?: (info: PromptRequestInfo) => Promise<string>;
 }
 
-export type CanUseTool = (
-  toolName: string,
-  input: Record<string, unknown>,
-  options: {
-    signal: AbortSignal;
-    toolUseID: string;
-    decisionReason?: string;
-    blockedPath?: string;
-  },
-) => Promise<{
-  behavior: "allow" | "deny";
-  message?: string;
-  toolUseID?: string;
-}>;
+export type CanUseTool = SDKCanUseTool;
+
+async function sendPromptResponse(
+  activeQuery: Query,
+  response: PromptResponse,
+): Promise<void> {
+  if (typeof activeQuery.streamInput !== "function") {
+    return;
+  }
+
+  async function* stream(): AsyncIterable<SDKUserMessage> {
+    yield response as unknown as SDKUserMessage;
+  }
+
+  await activeQuery.streamInput(stream());
+}
 
 const EXT_MAP: Record<string, string> = {
   "image/png": ".png",
@@ -93,9 +103,17 @@ export async function runClaude(
 
   try {
     const options: Record<string, unknown> = {
-      allowedTools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
+      allowedTools: [
+        "Read",
+        "Write",
+        "Edit",
+        "Bash",
+        "Glob",
+        "Grep",
+        "AskUserQuestion",
+      ],
       permissionMode: permissionMode ?? "default",
-      allowDangerouslySkipPermissions: true,
+      allowDangerouslySkipPermissions: permissionMode === "bypassPermissions",
       maxTurns: 50,
       executable: process.execPath,
     };
@@ -126,7 +144,9 @@ export async function runClaude(
       finalPrompt = `The user sent the following image(s). Use the Read tool to view them:\n${imageRefs}\n\n${prompt}`;
     }
 
-    for await (const message of query({ prompt: finalPrompt, options })) {
+    const activeQuery = query({ prompt: finalPrompt, options });
+
+    for await (const message of activeQuery as AsyncIterable<SDKMessage>) {
       // Capture session ID from init message
       if (
         typeof message === "object" &&
@@ -152,13 +172,18 @@ export async function runClaude(
         const req = message as {
           prompt: string;
           message: string;
-          options: Array<{ key: string; label: string; description?: string }>;
+          options: PromptRequestOption[];
         };
         if (runOptions?.onPromptRequest) {
-          await runOptions.onPromptRequest({
+          const selected = await runOptions.onPromptRequest({
             requestId: req.prompt,
             message: req.message,
             options: req.options,
+          });
+
+          await sendPromptResponse(activeQuery, {
+            prompt_response: req.prompt,
+            selected,
           });
         }
       }
@@ -171,7 +196,9 @@ export async function runClaude(
         (message as Record<string, unknown>).type === "tool_progress"
       ) {
         const progress = message as Record<string, unknown>;
-        const toolName = progress.tool as string | undefined;
+        const toolName =
+          (progress.tool_name as string | undefined) ??
+          (progress.tool as string | undefined);
         if (toolName) {
           const toolInfo: ToolInfo = { name: toolName };
           const input = progress.input as Record<string, unknown> | undefined;

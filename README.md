@@ -208,6 +208,8 @@ Any other message is sent to Claude Code as a prompt.
 |------|----------|
 | `default` | Ask before risky operations (recommended) |
 | `acceptEdits` | Auto-allow file edits, ask for others |
+| `plan` | Planning only, no tool execution |
+| `dontAsk` | Deny if not pre-approved |
 | `bypassPermissions` | Allow everything without asking |
 
 Use `/permission` to show a picker card, or `/permission <mode>` to set directly.
