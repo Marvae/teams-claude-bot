@@ -220,6 +220,9 @@ export function buildPermissionCard(
 
   const inputDisplay = JSON.stringify(input, null, 2).slice(0, 500);
 
+  // Build a short summary for the main card
+  const summary = buildPermissionSummary(toolName, input);
+
   const body: Record<string, unknown>[] = [
     {
       type: "TextBlock",
@@ -232,13 +235,17 @@ export function buildPermissionCard(
       text: `Tool: **${toolName}**`,
       wrap: true,
     },
-    {
+  ];
+
+  if (summary) {
+    body.push({
       type: "TextBlock",
-      text: `\`\`\`\n${inputDisplay}\n\`\`\``,
+      text: summary,
       wrap: true,
       fontType: "monospace",
-    },
-  ];
+      size: "small",
+    });
+  }
 
   if (decisionReason) {
     body.push({
@@ -264,31 +271,43 @@ export function buildPermissionCard(
     };
   }
 
+  const actions: Record<string, unknown>[] = [
+    {
+      type: "Action.Submit",
+      title: "✅ Allow",
+      style: "positive",
+      data: { action: "permission_allow", toolUseID },
+    },
+    {
+      type: "Action.Submit",
+      title: "❌ Deny",
+      style: "destructive",
+      data: { action: "permission_deny", toolUseID },
+    },
+    {
+      type: "Action.ShowCard",
+      title: "Details",
+      card: {
+        type: "AdaptiveCard",
+        body: [
+          {
+            type: "TextBlock",
+            text: `\`\`\`\n${inputDisplay}\n\`\`\``,
+            wrap: true,
+            fontType: "monospace",
+            size: "small",
+          },
+        ],
+      },
+    },
+  ];
+
   return {
     type: "AdaptiveCard",
     version: "1.4",
     $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
     body,
-    actions: [
-      {
-        type: "Action.Submit",
-        title: "✅ Allow",
-        style: "positive",
-        data: {
-          action: "permission_allow",
-          toolUseID,
-        },
-      },
-      {
-        type: "Action.Submit",
-        title: "❌ Deny",
-        style: "destructive",
-        data: {
-          action: "permission_deny",
-          toolUseID,
-        },
-      },
-    ],
+    actions,
   };
 }
 
@@ -446,4 +465,26 @@ export function buildPermissionModeCard(
     body,
     actions,
   };
+}
+
+/** Build a short one-line summary for common tool inputs. */
+function buildPermissionSummary(
+  toolName: string,
+  input: Record<string, unknown>,
+): string | undefined {
+  if (toolName === "Bash" && typeof input.command === "string") {
+    return input.command.length > 120
+      ? input.command.slice(0, 117) + "..."
+      : input.command;
+  }
+  if (
+    (toolName === "Edit" || toolName === "Write" || toolName === "Read") &&
+    typeof input.file_path === "string"
+  ) {
+    return input.file_path;
+  }
+  if (toolName === "Grep" && typeof input.pattern === "string") {
+    return `pattern: ${input.pattern}`;
+  }
+  return undefined;
 }
