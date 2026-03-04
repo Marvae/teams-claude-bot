@@ -1,9 +1,13 @@
 import { ConversationSession } from "./session.js";
+import type { ImageInput } from "./agent.js";
+
+export type PendingMessage = { text: string; images?: ImageInput[] };
 
 export interface ManagedSession {
   session: ConversationSession;
   /** Update the TurnContext reference for callbacks (canUseTool, elicitation, prompts). */
   setCtx: (ctx: unknown) => void;
+  pendingMessages: PendingMessage[];
 }
 
 const sessions = new Map<string, ManagedSession>();

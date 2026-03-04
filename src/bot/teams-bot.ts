@@ -73,10 +73,7 @@ function friendlyError(error: string, stopReason?: string | null): string {
   return `Something went wrong: ${error.slice(0, 200)}`;
 }
 
-type PendingMessage = { text: string; images?: ImageInput[] };
-
 export class ClaudeCodeBot extends ActivityHandler {
-  private pendingMessages = new Map<string, PendingMessage[]>();
 
   constructor() {
     super();
@@ -301,14 +298,12 @@ export class ClaudeCodeBot extends ActivityHandler {
     );
 
     if (managed.session.isBusy) {
-      const queue = this.pendingMessages.get(conversationId) ?? [];
-      queue.push({ text: text || "What is in this image?", images });
-      this.pendingMessages.set(conversationId, queue);
+      managed.pendingMessages.push({ text: text || "What is in this image?", images });
       console.log(
-        `[BOT] Message queued (${queue.length} pending) for ${conversationId}`,
+        `[BOT] Message queued (${managed.pendingMessages.length} pending) for ${conversationId}`,
       );
       await ctx.sendActivity(
-        `⏳ Queued (${queue.length}) — will process after the current task. Send \`/stop\` to cancel.`,
+        `⏳ Queued (${managed.pendingMessages.length}) — will process after the current task. Send \`/stop\` to cancel.`,
       );
       return;
     }
@@ -326,10 +321,8 @@ export class ClaudeCodeBot extends ActivityHandler {
     );
 
     // Drain pending messages that arrived while we were busy
-    while (this.pendingMessages.has(conversationId)) {
-      const queue = this.pendingMessages.get(conversationId)!;
-      const next = queue.shift()!;
-      if (queue.length === 0) this.pendingMessages.delete(conversationId);
+    while (managed.pendingMessages.length > 0) {
+      const next = managed.pendingMessages.shift()!;
       console.log(`[BOT] Processing queued message for ${conversationId}`);
       await this.processUserMessage(
         managed,
@@ -376,7 +369,6 @@ export class ClaudeCodeBot extends ActivityHandler {
       if (result.error) {
         console.error(`[BOT] Error from session: ${result.error}`);
         sessionStore.destroy(conversationId);
-        this.pendingMessages.delete(conversationId);
         await progress.finalize([
           friendlyError(result.error, result.stopReason),
         ]);
@@ -401,7 +393,6 @@ export class ClaudeCodeBot extends ActivityHandler {
       typingController.abort();
       await typingLoop;
       sessionStore.destroy(conversationId);
-      this.pendingMessages.delete(conversationId);
       const msg = err instanceof Error ? err.message : String(err);
       await progress.finalize([friendlyError(msg)]);
     }
@@ -510,6 +501,7 @@ export class ClaudeCodeBot extends ActivityHandler {
       setCtx: (ctx: unknown) => {
         currentCtx = ctx as TurnContext;
       },
+      pendingMessages: [],
     };
   }
 

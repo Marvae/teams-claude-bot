@@ -71,8 +71,12 @@ export async function handleCommand(
     case "/cancel": {
       const managed = sessionStore.get(conversationId);
       if (managed?.session.isBusy) {
-        // Reply first, then interrupt (don't block on SDK confirmation)
+        const dropped = managed.pendingMessages.splice(0);
         await ctx.sendActivity("🛑 Stopping...");
+        if (dropped.length > 0) {
+          const list = dropped.map((m, i) => `${i + 1}. ${m.text.slice(0, 80)}`).join("\n");
+          await ctx.sendActivity(`Dropped ${dropped.length} pending message(s):\n${list}`);
+        }
         managed.session.interrupt().catch(() => {});
       } else {
         await ctx.sendActivity("Nothing to interrupt.");
