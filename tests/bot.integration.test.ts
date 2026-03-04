@@ -107,6 +107,14 @@ function createAdapter(): TestAdapter {
   });
 }
 
+/** Extract the user text from the async generator prompt passed to SDK query. */
+async function extractPromptText(
+  prompt: AsyncGenerator<{ message: { content: string } }>,
+): Promise<string> {
+  const first = await prompt.next();
+  return first.value.message.content;
+}
+
 /** Helper: set up mockQuery to yield init + result messages */
 function setupMockQuery(result: string, sessionId = "sess-123") {
   mockQuery.mockImplementation(async function* () {
@@ -148,7 +156,7 @@ describe("ClaudeCodeBot e2e (TestAdapter)", () => {
 
     expect(mockQuery).toHaveBeenCalledOnce();
     const call = mockQuery.mock.calls[0][0];
-    expect(call.prompt).toBe("Hello");
+    expect(await extractPromptText(call.prompt)).toBe("Hello");
     expect(call.options.cwd).toBe("/work/test");
     expect(call.options.permissionMode).toBe("bypassPermissions");
 

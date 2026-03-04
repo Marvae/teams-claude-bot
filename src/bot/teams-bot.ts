@@ -298,7 +298,7 @@ export class ClaudeCodeBot extends ActivityHandler {
 
     if (managed.session.isBusy) {
       await ctx.sendActivity(
-        "Still working on the previous message. Please wait.",
+        "Still working on the previous message. Please wait, or send `/stop` to cancel.",
       );
       return;
     }
@@ -454,6 +454,7 @@ export class ClaudeCodeBot extends ActivityHandler {
       permissionMode: getPermissionMode(conversationId),
       resume: overrides?.resume,
       forkSession: overrides?.forkSession,
+      continue: !overrides?.resume,
       canUseTool: createPermissionHandler(sendPermCard),
       onElicitation,
       onPromptRequest,

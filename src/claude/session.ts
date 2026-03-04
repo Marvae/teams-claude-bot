@@ -6,6 +6,7 @@ import {
   type SDKMessage,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
+import { AsyncQueue } from "../session/async-queue.js";
 import type {
   ClaudeResult,
   ImageInput,
@@ -30,6 +31,9 @@ export interface SessionConfig {
   resume?: string;
   forkSession?: boolean;
 
+  // Continue most recent session in cwd (cross-restart memory)
+  continue?: boolean;
+
   // SDK callbacks — closures over mutable ctx, set once
   canUseTool?: CanUseTool;
   onElicitation?: OnElicitation;
@@ -50,12 +54,14 @@ export interface TurnOptions {
 
 export class ConversationSession {
   private activeQuery: Query | null = null;
+  private inputQueue: AsyncQueue<SDKUserMessage> | null = null;
   private sessionId: string | undefined;
   private _isBusy = false;
   private eventConsumer: Promise<void> | null = null;
   private turnResolver: TurnResolver | null = null;
   private _lastActivity = Date.now();
   private closed = false;
+  private idleWaiters: Array<() => void> = [];
 
   constructor(private config: SessionConfig) {}
 
@@ -103,7 +109,7 @@ export class ConversationSession {
     return new Promise<ClaudeResult>((resolve) => {
       const wrappedResolve = (result: ClaudeResult) => {
         console.log(
-          `[SESSION] Turn completed in ${Date.now() - sendStart}ms (${this.activeQuery ? "streamInput" : "new query"})`,
+          `[SESSION] Turn completed in ${Date.now() - sendStart}ms (${this.activeQuery ? "queue push" : "new query"})`,
         );
         resolve(result);
       };
@@ -134,9 +140,21 @@ export class ConversationSession {
     }
   }
 
+  /** Wait until the session is no longer busy (current turn resolves). */
+  waitForIdle(): Promise<void> {
+    if (!this._isBusy) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      this.idleWaiters.push(resolve);
+    });
+  }
+
   /** Close the query and clean up. */
   close(): void {
     this.closed = true;
+    if (this.inputQueue) {
+      this.inputQueue.end();
+      this.inputQueue = null;
+    }
     if (this.activeQuery) {
       try {
         this.activeQuery.close();
@@ -166,7 +184,22 @@ export class ConversationSession {
     const finalPrompt = await preparePrompt(prompt, images);
     const options = this.buildQueryOptions();
 
-    this.activeQuery = sdkQuery({ prompt: finalPrompt, options });
+    // Create queue and push first message
+    this.inputQueue = new AsyncQueue<SDKUserMessage>();
+    this.inputQueue.push({
+      type: "user",
+      message: { role: "user", content: finalPrompt },
+      parent_tool_use_id: null,
+      session_id: "",
+    });
+
+    // Pass async generator as prompt — SDK reads messages from the queue
+    const queue = this.inputQueue;
+    async function* promptGenerator() {
+      yield* queue;
+    }
+
+    this.activeQuery = sdkQuery({ prompt: promptGenerator(), options });
 
     this.eventConsumer = this.consumeEvents().catch((err) => {
       console.error("[SESSION] Event consumer error:", err);
@@ -181,29 +214,15 @@ export class ConversationSession {
     prompt: string,
     images?: ImageInput[],
   ): Promise<void> {
-    console.log("[SESSION] Streaming message to existing query (streamInput)");
+    console.log("[SESSION] Pushing message to input queue");
     const finalPrompt = await preparePrompt(prompt, images);
 
-    const msg: SDKUserMessage = {
+    this.inputQueue!.push({
       type: "user",
       message: { role: "user", content: finalPrompt },
       parent_tool_use_id: null,
       session_id: this.sessionId ?? "",
-    };
-
-    async function* gen() {
-      yield msg;
-    }
-
-    try {
-      await this.activeQuery!.streamInput(gen());
-    } catch (err) {
-      console.error("[SESSION] streamInput error:", err);
-      this.resolveCurrentTurn({
-        error: err instanceof Error ? err.message : String(err),
-        tools: this.turnResolver?.tools ?? [],
-      });
-    }
+    });
   }
 
   private async consumeEvents(): Promise<void> {
@@ -407,21 +426,12 @@ export class ConversationSession {
       options: req.options,
     });
 
-    // Send response back via streamInput
-    const response = {
-      prompt_response: req.prompt,
-      selected,
-    } as unknown as SDKUserMessage;
-
-    async function* gen() {
-      yield response;
-    }
-
-    if (
-      this.activeQuery &&
-      typeof this.activeQuery.streamInput === "function"
-    ) {
-      await this.activeQuery.streamInput(gen());
+    // Send response back via input queue
+    if (this.inputQueue) {
+      this.inputQueue.push({
+        prompt_response: req.prompt,
+        selected,
+      } as unknown as SDKUserMessage);
     }
   }
 
@@ -433,6 +443,9 @@ export class ConversationSession {
       this.turnResolver = null;
       resolver.resolve(result);
     }
+    // Wake up anyone waiting for idle
+    for (const w of this.idleWaiters) w();
+    this.idleWaiters.length = 0;
   }
 
   private buildQueryOptions(): Record<string, unknown> {
@@ -470,6 +483,8 @@ export class ConversationSession {
     if (this.config.resume) {
       opts.resume = this.config.resume;
       if (this.config.forkSession) opts.forkSession = true;
+    } else if (this.config.continue) {
+      opts.continue = true;
     }
     if (this.config.canUseTool) opts.canUseTool = this.config.canUseTool;
     if (this.config.onElicitation)

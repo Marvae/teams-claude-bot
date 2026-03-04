@@ -26,6 +26,14 @@ function makeConfig(overrides: Partial<SessionConfig> = {}): SessionConfig {
   };
 }
 
+/** Extract the user text from the async generator prompt passed to SDK query. */
+async function extractPromptText(
+  prompt: AsyncGenerator<{ message: { content: string } }>,
+): Promise<string> {
+  const first = await prompt.next();
+  return first.value.message.content;
+}
+
 describe("ConversationSession", () => {
   beforeEach(() => {
     mockQuery.mockReset();
@@ -45,7 +53,7 @@ describe("ConversationSession", () => {
 
       expect(mockQuery).toHaveBeenCalledOnce();
       const call = mockQuery.mock.calls[0][0];
-      expect(call.prompt).toBe("hello world");
+      expect(await extractPromptText(call.prompt)).toBe("hello world");
       expect(result.result).toBe("Done!");
       expect(onSessionId).toHaveBeenCalledWith("sess-123");
     });
@@ -336,7 +344,6 @@ describe("ConversationSession", () => {
           async throw(e: unknown) {
             throw e;
           },
-          streamInput: vi.fn().mockResolvedValue(undefined),
           interrupt: vi.fn().mockResolvedValue(undefined),
           close: vi.fn(),
         };
@@ -601,7 +608,6 @@ describe("ConversationSession", () => {
           async throw(e: unknown) {
             throw e;
           },
-          streamInput: vi.fn(),
           interrupt: vi.fn(),
           close: vi.fn(() => {
             closeQuery?.();
