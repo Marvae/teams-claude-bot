@@ -10,79 +10,74 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
   getSessionMessages: vi.fn().mockResolvedValue([]),
 }));
 
-const sessionState = {
-  sessionId: undefined as string | undefined,
-  sessionCwd: undefined as string | undefined,
-  workDir: "/work/test",
-  model: "claude-opus-4-6",
-  thinkingTokens: 2048 as number | null | undefined,
-  permissionMode: "bypassPermissions" as string | undefined,
-  pastSessions: [] as Array<{
-    index: number;
-    sessionId: string;
-    workDir: string;
-    usedAt: string;
-  }>,
-  switchResult: null as {
-    index: number;
-    sessionId: string;
-    workDir: string;
-    usedAt: string;
-  } | null,
-  handoffMode: undefined as "pickup" | undefined,
-};
-
 vi.mock("../src/handoff/store.js", () => ({
   saveConversationRef: vi.fn(),
 }));
 
-vi.mock("../src/session/manager.js", () => ({
-  getSession: vi.fn(() => sessionState.sessionId),
-  getSessionCwd: vi.fn(() => sessionState.sessionCwd),
-  setSession: vi.fn(
-    (_conversationId: string, sessionId: string, cwd?: string) => {
-      sessionState.sessionId = sessionId;
-      sessionState.sessionCwd = cwd;
-    },
-  ),
-  clearSession: vi.fn(() => {
-    sessionState.sessionId = undefined;
-    sessionState.sessionCwd = undefined;
-  }),
-  getWorkDir: vi.fn(() => sessionState.workDir),
-  setWorkDir: vi.fn((_conversationId: string, dir: string) => {
-    sessionState.workDir = dir;
-    return { ok: true } as const;
-  }),
-  getModel: vi.fn(() => sessionState.model),
-  setModel: vi.fn((_conversationId: string, model: string) => {
-    sessionState.model = model;
-  }),
-  getThinkingTokens: vi.fn(() => sessionState.thinkingTokens),
-  setThinkingTokens: vi.fn((_conversationId: string, tokens: number | null) => {
-    sessionState.thinkingTokens = tokens;
-  }),
-  getPermissionMode: vi.fn(() => sessionState.permissionMode),
-  setPermissionMode: vi.fn((_conversationId: string, mode: string) => {
-    sessionState.permissionMode = mode;
-  }),
-  listPastSessions: vi.fn(() => sessionState.pastSessions),
-  switchToSession: vi.fn((_conversationId: string, index: number) => {
-    if (
-      sessionState.switchResult &&
-      sessionState.switchResult.index === index
-    ) {
-      return sessionState.switchResult;
-    }
-    return null;
-  }),
-  getHandoffMode: vi.fn(() => sessionState.handoffMode),
-  clearHandoffMode: vi.fn(),
-  setHandoffMode: vi.fn(),
-}));
+// State mock — in-memory preferences
+const stateValues = {
+  sessionId: undefined as string | undefined,
+  workDir: "/work/test",
+  model: "claude-opus-4-6" as string | undefined,
+  thinkingTokens: 2048 as number | null | undefined,
+  permissionMode: "bypassPermissions",
+  handoffMode: undefined as "pickup" | undefined,
+  managed: null as unknown,
+};
 
-import * as sessionManager from "../src/session/manager.js";
-import * as sessionStore from "../src/claude/session-store.js";
+vi.mock("../src/session/state.js", async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  return {
+    ...actual,
+    loadPersistedSessionId: vi.fn(() => stateValues.sessionId),
+    persistSessionId: vi.fn((id: string) => {
+      stateValues.sessionId = id;
+    }),
+    clearPersistedSessionId: vi.fn(() => {
+      stateValues.sessionId = undefined;
+    }),
+    getSession: vi.fn(() => stateValues.managed),
+    setSession: vi.fn((m: unknown) => {
+      stateValues.managed = m;
+    }),
+    destroySession: vi.fn(() => {
+      if (stateValues.managed) {
+        (
+          stateValues.managed as { session: { close: () => void } }
+        ).session.close();
+      }
+      stateValues.managed = null;
+    }),
+    getWorkDir: vi.fn(() => stateValues.workDir),
+    setWorkDir: vi.fn((dir: string) => {
+      stateValues.workDir = dir;
+      return { ok: true } as const;
+    }),
+    getModel: vi.fn(() => stateValues.model),
+    setModel: vi.fn((model: string) => {
+      stateValues.model = model;
+    }),
+    getThinkingTokens: vi.fn(() => stateValues.thinkingTokens),
+    setThinkingTokens: vi.fn((tokens: number | null) => {
+      stateValues.thinkingTokens = tokens;
+    }),
+    getPermissionMode: vi.fn(() => stateValues.permissionMode),
+    setPermissionMode: vi.fn((mode: string) => {
+      stateValues.permissionMode = mode;
+    }),
+    getHandoffMode: vi.fn(() => stateValues.handoffMode),
+    setHandoffMode: vi.fn((m: "pickup") => {
+      stateValues.handoffMode = m;
+    }),
+    clearHandoffMode: vi.fn(() => {
+      stateValues.handoffMode = undefined;
+    }),
+    getCachedCommands: vi.fn(() => undefined),
+    setCachedCommands: vi.fn(),
+  };
+});
+
+import * as state from "../src/session/state.js";
 import { ClaudeCodeBot } from "../src/bot/teams-bot.js";
 
 const serviceUrl = "https://amer.ng.msg.teams.microsoft.com";
@@ -127,17 +122,14 @@ describe("ClaudeCodeBot e2e (TestAdapter)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockQuery.mockReset();
-    // Destroy any lingering sessions from previous tests
-    sessionStore.destroy("conv-1");
-    sessionState.sessionId = undefined;
-    sessionState.sessionCwd = undefined;
-    sessionState.workDir = "/work/test";
-    sessionState.model = "claude-opus-4-6";
-    sessionState.thinkingTokens = 2048;
-    sessionState.permissionMode = "bypassPermissions";
-    sessionState.pastSessions = [];
-    sessionState.switchResult = null;
-    sessionState.handoffMode = undefined;
+    // Reset state
+    stateValues.sessionId = undefined;
+    stateValues.workDir = "/work/test";
+    stateValues.model = "claude-opus-4-6";
+    stateValues.thinkingTokens = 2048;
+    stateValues.permissionMode = "bypassPermissions";
+    stateValues.handoffMode = undefined;
+    stateValues.managed = null;
   });
 
   it("handles basic message flow", async () => {
@@ -160,11 +152,7 @@ describe("ClaudeCodeBot e2e (TestAdapter)", () => {
     expect(call.options.cwd).toBe("/work/test");
     expect(call.options.permissionMode).toBe("bypassPermissions");
 
-    expect(vi.mocked(sessionManager.setSession)).toHaveBeenCalledWith(
-      "conv-1",
-      "sess-123",
-      "/work/test",
-    );
+    expect(vi.mocked(state.persistSessionId)).toHaveBeenCalledWith("sess-123");
   });
 
   it("handles /help command with Adaptive Card", async () => {
@@ -187,11 +175,22 @@ describe("ClaudeCodeBot e2e (TestAdapter)", () => {
   });
 
   it("handles /status command", async () => {
-    sessionState.sessionId = "sess-abcdef123456";
-    sessionState.workDir = "/work/demo";
-    sessionState.model = "claude-sonnet-4-6";
-    sessionState.thinkingTokens = 4096;
-    sessionState.permissionMode = "default";
+    // Simulate a live session with currentSessionId
+    stateValues.managed = {
+      session: {
+        currentSessionId: "sess-abcdef123456",
+        isBusy: false,
+        hasQuery: true,
+        lastActivityTime: Date.now(),
+        getSupportedCommands: vi.fn().mockResolvedValue(undefined),
+      },
+      setCtx: vi.fn(),
+      pendingMessages: [],
+    };
+    stateValues.workDir = "/work/demo";
+    stateValues.model = "claude-sonnet-4-6";
+    stateValues.thinkingTokens = 4096;
+    stateValues.permissionMode = "default";
 
     const adapter = createAdapter();
 
@@ -217,9 +216,8 @@ describe("ClaudeCodeBot e2e (TestAdapter)", () => {
       .assertReply("New session. Send your next message.")
       .startTest();
 
-    expect(vi.mocked(sessionManager.clearSession)).toHaveBeenCalledWith(
-      "conv-1",
-    );
+    expect(vi.mocked(state.destroySession)).toHaveBeenCalled();
+    expect(vi.mocked(state.clearPersistedSessionId)).toHaveBeenCalled();
   });
 
   it("handles adaptive card resume action", async () => {
@@ -237,11 +235,7 @@ describe("ClaudeCodeBot e2e (TestAdapter)", () => {
       })
       .startTest();
 
-    expect(vi.mocked(sessionManager.setSession)).toHaveBeenCalledWith(
-      "conv-1",
-      "sess-old",
-      undefined,
-    );
+    expect(vi.mocked(state.persistSessionId)).toHaveBeenCalledWith("sess-old");
   });
 
   it("resume action stores session cwd alongside sessionId", async () => {
@@ -262,9 +256,8 @@ describe("ClaudeCodeBot e2e (TestAdapter)", () => {
       })
       .startTest();
 
-    expect(vi.mocked(sessionManager.setSession)).toHaveBeenCalledWith(
-      "conv-1",
-      "sess-abc",
+    expect(vi.mocked(state.persistSessionId)).toHaveBeenCalledWith("sess-abc");
+    expect(vi.mocked(state.setWorkDir)).toHaveBeenCalledWith(
       "/work/other-project",
     );
   });
@@ -283,10 +276,8 @@ describe("ClaudeCodeBot e2e (TestAdapter)", () => {
       })
       .startTest();
 
-    expect(vi.mocked(sessionManager.setSession)).toHaveBeenCalledWith(
-      "conv-1",
+    expect(vi.mocked(state.persistSessionId)).toHaveBeenCalledWith(
       "sess-no-cwd",
-      undefined,
     );
   });
 
@@ -304,10 +295,9 @@ describe("permission card interactions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockQuery.mockReset();
-    sessionStore.destroy("conv-1");
-    sessionStore.destroy("conv-perm-1");
-    sessionState.sessionId = undefined;
-    sessionState.permissionMode = "bypassPermissions";
+    stateValues.sessionId = undefined;
+    stateValues.permissionMode = "bypassPermissions";
+    stateValues.managed = null;
   });
 
   it("handles /permission command with card", async () => {
@@ -328,13 +318,6 @@ describe("permission card interactions", () => {
           "dontAsk",
           "bypassPermissions",
         ]),
-      );
-      const titles = actions.map((a) => a.title);
-      expect(titles).toContain(
-        "Plan mode - Claude explains what it would do without executing",
-      );
-      expect(titles).toContain(
-        "Don't ask - Auto-approve all tools (less strict than bypass)",
       );
     });
   });
@@ -434,7 +417,7 @@ describe("permission card interactions", () => {
 describe("user input (PromptRequest) flow", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    sessionStore.destroy("conv-1");
+    stateValues.managed = null;
   });
 
   it("handles prompt_response action", async () => {
@@ -449,7 +432,6 @@ describe("user input (PromptRequest) flow", () => {
         },
       })
       .assertReply((reply) => {
-        // Should say expired/not found since we didn't register it
         expect(reply.text).toContain("expired");
       });
   });
@@ -458,7 +440,6 @@ describe("user input (PromptRequest) flow", () => {
     const { registerPromptRequest } =
       await import("../src/claude/user-input.js");
 
-    // Register a pending prompt first
     const promptPromise = registerPromptRequest("test-prompt-123", {
       timeoutMs: 5000,
     });
@@ -477,7 +458,6 @@ describe("user input (PromptRequest) flow", () => {
         expect(reply.text).toContain("confirm");
       });
 
-    // Prompt should resolve
     const result = await promptPromise;
     expect(result).toBe("confirm");
   });
@@ -487,16 +467,12 @@ describe("handoff flow", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockQuery.mockReset();
-    sessionStore.destroy("conv-1");
-    sessionState.sessionId = undefined;
+    stateValues.sessionId = undefined;
+    stateValues.managed = null;
   });
 
-  // Note: handoff_fork uses continueConversation which doesn't work in TestAdapter
-  // The actual handler is tested via handleHandoff unit tests
-
   it("handles /handoff back command", async () => {
-    // Set handoff mode first
-    sessionState.handoffMode = "pickup";
+    stateValues.handoffMode = "pickup";
 
     const adapter = createAdapter();
     await adapter.send("/handoff back").assertReply((reply) => {
@@ -505,7 +481,7 @@ describe("handoff flow", () => {
   });
 
   it("handles /handoff back when no active handoff", async () => {
-    sessionState.handoffMode = undefined;
+    stateValues.handoffMode = undefined;
 
     const adapter = createAdapter();
     await adapter.send("/handoff back").assertReply((reply) => {

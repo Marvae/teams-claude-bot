@@ -284,6 +284,21 @@ export class ConversationSession {
       }
     }
 
+    // ── Rate limit event (claude.ai subscription users) ──
+    if (msg.type === "rate_limit_event") {
+      const info = msg.rate_limit_info as Record<string, unknown> | undefined;
+      if (
+        info &&
+        (info.status === "allowed_warning" || info.status === "rejected")
+      ) {
+        this.turnResolver?.onProgress?.({
+          type: "rate_limit",
+          status: info.status,
+          resetsAt: info.resetsAt as number | undefined,
+        });
+      }
+    }
+
     // ── Tool use summary ──
     if (msg.type === "tool_use_summary" && typeof msg.summary === "string") {
       this.turnResolver?.onProgress?.({

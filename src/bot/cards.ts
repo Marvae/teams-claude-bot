@@ -36,6 +36,11 @@ const COMMAND_GROUPS: CommandGroup[] = [
         command: "/status",
         description: "Show session info",
       },
+      {
+        title: "/sessions",
+        command: "/sessions",
+        description: "List recent sessions",
+      },
     ],
   },
   {
@@ -121,8 +126,14 @@ export function buildHelpCard(
     body.push({ type: "ColumnSet", columns });
   }
 
-  // SDK slash commands (dynamically fetched from running query)
+  // SDK slash commands — show first row inline, rest in expandable card
+  const actions: Record<string, unknown>[] = [];
   if (sdkCommands && sdkCommands.length > 0) {
+    const COLS_PER_ROW = 4;
+    const pinned = ["compact", "cost", "review", "init"];
+    const pinnedCmds = sdkCommands.filter((c) => pinned.includes(c.name));
+    const restCmds = sdkCommands.filter((c) => !pinned.includes(c.name));
+
     body.push({
       type: "TextBlock",
       text: "Claude Code",
@@ -131,9 +142,9 @@ export function buildHelpCard(
       spacing: "large",
     });
 
-    const sdkColumns: Record<string, unknown>[] = [];
-    for (const cmd of sdkCommands) {
-      sdkColumns.push({
+    // Pinned row — always visible
+    if (pinnedCmds.length > 0) {
+      const row = pinnedCmds.map((cmd) => ({
         type: "Column",
         width: "auto",
         items: [
@@ -150,9 +161,41 @@ export function buildHelpCard(
             ],
           },
         ],
+      }));
+      body.push({ type: "ColumnSet", columns: row });
+    }
+
+    // Rest — expandable
+    if (restCmds.length > 0) {
+      const restBody: Record<string, unknown>[] = [];
+      for (let i = 0; i < restCmds.length; i += COLS_PER_ROW) {
+        const row = restCmds.slice(i, i + COLS_PER_ROW).map((cmd) => ({
+          type: "Column",
+          width: "auto",
+          items: [
+            {
+              type: "ActionSet",
+              actions: [
+                {
+                  type: "Action.Submit",
+                  title: `/${cmd.name}`,
+                  data: {
+                    msteams: { type: "imBack", value: `/${cmd.name}` },
+                  },
+                },
+              ],
+            },
+          ],
+        }));
+        restBody.push({ type: "ColumnSet", columns: row });
+      }
+
+      actions.push({
+        type: "Action.ShowCard",
+        title: `More (${restCmds.length})`,
+        card: { type: "AdaptiveCard", body: restBody },
       });
     }
-    body.push({ type: "ColumnSet", columns: sdkColumns, wrap: true });
   }
 
   return {
@@ -160,6 +203,7 @@ export function buildHelpCard(
     $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
     version: "1.4",
     body,
+    ...(actions.length > 0 ? { actions } : {}),
   };
 }
 
@@ -290,6 +334,51 @@ export function buildElicitationUrlCard(
     $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
     body: card.body,
     actions: card.actions,
+  };
+}
+
+export function buildHandoffCard(
+  workDir: string,
+  sessionId?: string,
+): Record<string, unknown> {
+  const dirName = workDir.split("/").pop() ?? workDir;
+
+  return {
+    type: "AdaptiveCard",
+    version: "1.4",
+    $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+    body: [
+      {
+        type: "TextBlock",
+        text: "Handoff from Terminal",
+        weight: "bolder",
+        size: "medium",
+      },
+      {
+        type: "TextBlock",
+        text: `📂 ${dirName}`,
+        spacing: "small",
+      },
+      {
+        type: "TextBlock",
+        text: "Accept to fork the terminal session here. Terminal keeps working independently.",
+        wrap: true,
+        size: "small",
+        isSubtle: true,
+        spacing: "small",
+      },
+    ],
+    actions: [
+      {
+        type: "Action.Submit",
+        title: "Accept Handoff",
+        data: {
+          action: "handoff_accept",
+          workDir,
+          sessionId,
+        },
+      },
+    ],
   };
 }
 

@@ -6,26 +6,36 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
   listSessions: (...args: unknown[]) => listSessionsMock(...args),
 }));
 
-const sessionState = {
-  sessionId: undefined as string | undefined,
+const stateValues = {
+  managed: null as unknown,
   workDir: "/work/test",
 };
 
-vi.mock("../src/session/manager.js", () => ({
-  getSession: vi.fn(() => sessionState.sessionId),
-  setSession: vi.fn(),
-  clearSession: vi.fn(),
-  getWorkDir: vi.fn(() => sessionState.workDir),
-  setWorkDir: vi.fn(() => ({ ok: true })),
-  getModel: vi.fn(),
-  setModel: vi.fn(),
-  getThinkingTokens: vi.fn(),
-  setThinkingTokens: vi.fn(),
-  getPermissionMode: vi.fn(),
-  setPermissionMode: vi.fn(),
-  getHandoffMode: vi.fn(),
-  clearHandoffMode: vi.fn(),
-}));
+vi.mock("../src/session/state.js", async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  return {
+    ...actual,
+    getSession: vi.fn(() => stateValues.managed),
+    setSession: vi.fn(),
+    destroySession: vi.fn(),
+    loadPersistedSessionId: vi.fn(),
+    persistSessionId: vi.fn(),
+    clearPersistedSessionId: vi.fn(),
+    getWorkDir: vi.fn(() => stateValues.workDir),
+    setWorkDir: vi.fn(() => ({ ok: true })),
+    getModel: vi.fn(),
+    setModel: vi.fn(),
+    getThinkingTokens: vi.fn(),
+    setThinkingTokens: vi.fn(),
+    getPermissionMode: vi.fn(() => "bypassPermissions"),
+    setPermissionMode: vi.fn(),
+    getHandoffMode: vi.fn(),
+    setHandoffMode: vi.fn(),
+    clearHandoffMode: vi.fn(),
+    getCachedCommands: vi.fn(() => undefined),
+    setCachedCommands: vi.fn(),
+  };
+});
 
 import { handleCommand } from "../src/bot/commands.js";
 
@@ -37,7 +47,7 @@ function makeMockCtx() {
         sent.push(activity);
         return { id: "msg-1" };
       }),
-    } as unknown as Parameters<typeof handleCommand>[2],
+    } as unknown as Parameters<typeof handleCommand>[1],
     sent,
   };
 }
@@ -59,15 +69,15 @@ describe("/sessions command", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     listSessionsMock.mockReset();
-    sessionState.sessionId = undefined;
-    sessionState.workDir = "/work/test";
+    stateValues.managed = null;
+    stateValues.workDir = "/work/test";
   });
 
   it("shows empty message when no sessions", async () => {
     listSessionsMock.mockResolvedValue([]);
     const { ctx, sent } = makeMockCtx();
 
-    const handled = await handleCommand("/sessions", "conv-1", ctx);
+    const handled = await handleCommand("/sessions", ctx);
 
     expect(handled).toBe(true);
     expect(sent[0]).toBe("No sessions. Start chatting to create one.");
@@ -77,7 +87,7 @@ describe("/sessions command", () => {
     listSessionsMock.mockRejectedValue(new Error("SDK error"));
     const { ctx, sent } = makeMockCtx();
 
-    const handled = await handleCommand("/sessions", "conv-1", ctx);
+    const handled = await handleCommand("/sessions", ctx);
 
     expect(handled).toBe(true);
     expect(sent[0]).toBe(
@@ -100,7 +110,7 @@ describe("/sessions command", () => {
     ]);
     const { ctx, sent } = makeMockCtx();
 
-    await handleCommand("/sessions", "conv-1", ctx);
+    await handleCommand("/sessions", ctx);
 
     const activity = sent[0] as {
       attachments: Array<{ content: Record<string, unknown> }>;
@@ -110,14 +120,18 @@ describe("/sessions command", () => {
 
     const body = card.body as Array<{ text: string }>;
     expect(body[0].text).toBe("Sessions");
-    // Two sessions × 2 text blocks each + header = 5
     expect(body.length).toBe(5);
     expect(body[1].text).toContain("First session");
     expect(body[3].text).toContain("Second session");
   });
 
   it("highlights active session with ▶ and no button", async () => {
-    sessionState.sessionId = "s1";
+    // Set a live session with currentSessionId
+    stateValues.managed = {
+      session: { currentSessionId: "s1" },
+      setCtx: vi.fn(),
+      pendingMessages: [],
+    };
     listSessionsMock.mockResolvedValue([
       makeSession({
         sessionId: "s1",
@@ -132,7 +146,7 @@ describe("/sessions command", () => {
     ]);
     const { ctx, sent } = makeMockCtx();
 
-    await handleCommand("/sessions", "conv-1", ctx);
+    await handleCommand("/sessions", ctx);
 
     const card = (
       sent[0] as { attachments: Array<{ content: Record<string, unknown> }> }
@@ -143,15 +157,12 @@ describe("/sessions command", () => {
       data: Record<string, unknown>;
     }>;
 
-    // Active session has ▶ prefix
     expect(body[1].text).toContain("▶");
     expect(body[1].text).toContain("Active one");
 
-    // Non-active session has number prefix
     expect(body[3].text).toContain("2.");
     expect(body[3].text).toContain("Other one");
 
-    // Only one button (for the non-active session)
     expect(actions.length).toBe(1);
     expect(actions[0].title).toBe("#2");
     expect(actions[0].data.sessionId).toBe("s2");
@@ -163,7 +174,7 @@ describe("/sessions command", () => {
     ]);
     const { ctx, sent } = makeMockCtx();
 
-    await handleCommand("/sessions", "conv-1", ctx);
+    await handleCommand("/sessions", ctx);
 
     const card = (
       sent[0] as { attachments: Array<{ content: Record<string, unknown> }> }
@@ -183,7 +194,7 @@ describe("/sessions command", () => {
     ]);
     const { ctx, sent } = makeMockCtx();
 
-    await handleCommand("/sessions", "conv-1", ctx);
+    await handleCommand("/sessions", ctx);
 
     const card = (
       sent[0] as { attachments: Array<{ content: Record<string, unknown> }> }
@@ -199,7 +210,7 @@ describe("/sessions command", () => {
     ]);
     const { ctx, sent } = makeMockCtx();
 
-    await handleCommand("/sessions", "conv-1", ctx);
+    await handleCommand("/sessions", ctx);
 
     const card = (
       sent[0] as { attachments: Array<{ content: Record<string, unknown> }> }
@@ -208,7 +219,6 @@ describe("/sessions command", () => {
     const meta = body[2].text;
     expect(meta).toContain("my-app");
     expect(meta).toContain("feat/login");
-    // Should NOT contain full path
     expect(meta).not.toContain("/home/user/my-app");
   });
 
@@ -227,13 +237,12 @@ describe("/sessions command", () => {
     ]);
     const { ctx, sent } = makeMockCtx();
 
-    await handleCommand("/sessions", "conv-1", ctx);
+    await handleCommand("/sessions", ctx);
 
     const card = (
       sent[0] as { attachments: Array<{ content: Record<string, unknown> }> }
     ).attachments[0].content;
     const body = card.body as Array<{ text: string }>;
-    // Newer session should be first (after header)
     expect(body[1].text).toContain("New");
     expect(body[3].text).toContain("Old");
   });

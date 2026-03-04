@@ -1,20 +1,6 @@
 import { CardFactory, type TurnContext } from "botbuilder";
 import { listSessions } from "@anthropic-ai/claude-agent-sdk";
-import {
-  clearSession,
-  getSession,
-  getWorkDir,
-  setWorkDir,
-  getModel,
-  setModel,
-  getThinkingTokens,
-  setThinkingTokens,
-  getPermissionMode,
-  setPermissionMode,
-  getHandoffMode,
-  clearHandoffMode,
-} from "../session/manager.js";
-import * as sessionStore from "../claude/session-store.js";
+import * as state from "../session/state.js";
 import { buildHelpCard, buildPermissionModeCard } from "./cards.js";
 
 function formatAge(iso: string): string {
@@ -49,7 +35,6 @@ const VALID_PERMISSION_MODES = [
 
 export async function handleCommand(
   text: string,
-  conversationId: string,
   ctx: TurnContext,
 ): Promise<boolean> {
   if (!text.startsWith("/")) return false;
@@ -61,21 +46,25 @@ export async function handleCommand(
   switch (cmd) {
     case "/new":
     case "/clear": {
-      sessionStore.destroy(conversationId);
-      clearSession(conversationId);
+      state.destroySession();
+      state.clearPersistedSessionId();
       await ctx.sendActivity("New session. Send your next message.");
       return true;
     }
 
     case "/stop":
     case "/cancel": {
-      const managed = sessionStore.get(conversationId);
+      const managed = state.getSession();
       if (managed?.session.isBusy) {
         const dropped = managed.pendingMessages.splice(0);
         await ctx.sendActivity("🛑 Stopping...");
         if (dropped.length > 0) {
-          const list = dropped.map((m, i) => `${i + 1}. ${m.text.slice(0, 80)}`).join("\n");
-          await ctx.sendActivity(`Dropped ${dropped.length} pending message(s):\n${list}`);
+          const list = dropped
+            .map((m, i) => `${i + 1}. ${m.text.slice(0, 80)}`)
+            .join("\n");
+          await ctx.sendActivity(
+            `Dropped ${dropped.length} pending message(s):\n${list}`,
+          );
         }
         managed.session.interrupt().catch(() => {});
       } else {
@@ -86,9 +75,8 @@ export async function handleCommand(
 
     case "/project": {
       if (!arg) {
-        const wd = getWorkDir(conversationId);
         await ctx.sendActivity(
-          `Current: \`${wd}\`\n\nUsage: \`/project <path>\``,
+          `Current: \`${state.getWorkDir()}\`\n\nUsage: \`/project <path>\``,
         );
         return true;
       }
@@ -97,23 +85,23 @@ export async function handleCommand(
         ? arg.replace("~", process.env.HOME ?? "~")
         : arg;
 
-      const result = setWorkDir(conversationId, expanded);
+      const result = state.setWorkDir(expanded);
       if (!result.ok) {
         await ctx.sendActivity(result.error);
         return true;
       }
 
-      sessionStore.destroy(conversationId);
-      clearSession(conversationId);
+      state.destroySession();
+      state.clearPersistedSessionId();
       await ctx.sendActivity(
-        `Project: \`${getWorkDir(conversationId)}\` (new session)`,
+        `Project: \`${state.getWorkDir()}\` (new session)`,
       );
       return true;
     }
 
     case "/model": {
       if (!arg) {
-        const current = getModel(conversationId);
+        const current = state.getModel();
         await ctx.sendActivity(
           current
             ? `Current model: \`${current}\``
@@ -123,13 +111,13 @@ export async function handleCommand(
       }
 
       const resolved = MODEL_SHORTCUTS[arg.toLowerCase()] ?? arg;
-      setModel(conversationId, resolved);
+      state.setModel(resolved);
       await ctx.sendActivity(`Model set to \`${resolved}\``);
       return true;
     }
 
     case "/models": {
-      const current = getModel(conversationId);
+      const current = state.getModel();
       const lines = AVAILABLE_MODELS.map(
         (m) =>
           `- \`${m.shortcut}\` → \`${m.id}\`${m.id === current ? " (active)" : ""}`,
@@ -140,7 +128,7 @@ export async function handleCommand(
 
     case "/thinking": {
       if (!arg) {
-        const current = getThinkingTokens(conversationId);
+        const current = state.getThinkingTokens();
         await ctx.sendActivity(
           current !== undefined && current !== null
             ? `Thinking budget: \`${current}\` tokens`
@@ -150,7 +138,7 @@ export async function handleCommand(
       }
 
       if (arg.toLowerCase() === "off") {
-        setThinkingTokens(conversationId, null);
+        state.setThinkingTokens(null);
         await ctx.sendActivity("Thinking budget override removed.");
         return true;
       }
@@ -163,14 +151,14 @@ export async function handleCommand(
         return true;
       }
 
-      setThinkingTokens(conversationId, tokens);
+      state.setThinkingTokens(tokens);
       await ctx.sendActivity(`Thinking budget set to \`${tokens}\` tokens`);
       return true;
     }
 
     case "/permission": {
       if (!arg) {
-        const current = getPermissionMode(conversationId);
+        const current = state.getPermissionMode();
         const card = buildPermissionModeCard(current);
         await ctx.sendActivity({
           attachments: [
@@ -190,33 +178,32 @@ export async function handleCommand(
         return true;
       }
 
-      setPermissionMode(conversationId, arg);
+      state.setPermissionMode(arg);
       await ctx.sendActivity(`Permission mode set to \`${arg}\``);
       return true;
     }
     case "/status": {
-      const sessionId = getSession(conversationId);
-      const workDir = getWorkDir(conversationId);
-      const model = getModel(conversationId);
-      const thinking = getThinkingTokens(conversationId);
-      const permission = getPermissionMode(conversationId);
+      const managed = state.getSession();
+      const sessionId = managed?.session.currentSessionId;
 
       const lines = [
         `**Session:** ${sessionId ? `\`${sessionId.slice(0, 12)}…\`` : "none"}`,
-        `**Work dir:** \`${workDir}\``,
-        `**Model:** ${model ? `\`${model}\`` : "default"}`,
-        `**Thinking:** ${thinking !== undefined && thinking !== null ? `\`${thinking}\` tokens` : "default"}`,
-        `**Permission:** \`${permission ?? "bypassPermissions"}\``,
+        `**Work dir:** \`${state.getWorkDir()}\``,
+        `**Model:** ${state.getModel() ? `\`${state.getModel()}\`` : "default"}`,
+        `**Thinking:** ${(() => {
+          const t = state.getThinkingTokens();
+          return t !== undefined && t !== null ? `\`${t}\` tokens` : "default";
+        })()}`,
+        `**Permission:** \`${state.getPermissionMode()}\``,
       ];
       await ctx.sendActivity(lines.join("\n\n"));
       return true;
     }
 
     case "/sessions": {
-      const currentId = getSession(conversationId);
+      const currentId = state.getSession()?.session.currentSessionId;
       const MAX_SESSIONS = 8;
 
-      // Use SDK listSessions as primary data source
       let sdkSessions: Awaited<ReturnType<typeof listSessions>>;
       try {
         sdkSessions = await listSessions({ limit: MAX_SESSIONS });
@@ -295,16 +282,15 @@ export async function handleCommand(
 
     case "/handoff": {
       if (arg === "back") {
-        const mode = getHandoffMode(conversationId);
-        const sessionId = getSession(conversationId);
+        const mode = state.getHandoffMode();
+        const sessionId = state.getSession()?.session.currentSessionId;
 
         if (!mode && !sessionId) {
           await ctx.sendActivity("No active handoff to hand back.");
           return true;
         }
 
-        // Always-fork: just clear handoff state, both sides keep working
-        clearHandoffMode(conversationId);
+        state.clearHandoffMode();
         await ctx.sendActivity(
           "Handed back. Your Terminal session is still active.\n\nYou can keep working here.",
         );
@@ -318,9 +304,13 @@ export async function handleCommand(
     }
 
     case "/help": {
-      // Try to fetch SDK slash commands from running session
-      const managed = sessionStore.get(conversationId);
-      const sdkCommands = await managed?.session.getSupportedCommands();
+      const managed = state.getSession();
+      let sdkCommands = await managed?.session.getSupportedCommands();
+      if (sdkCommands && sdkCommands.length > 0) {
+        state.setCachedCommands(sdkCommands);
+      } else {
+        sdkCommands = state.getCachedCommands();
+      }
       const card = buildHelpCard(sdkCommands);
       await ctx.sendActivity({
         attachments: [CardFactory.adaptiveCard(card)],
@@ -330,7 +320,6 @@ export async function handleCommand(
 
     default: {
       // Unknown bot command — forward to SDK as a slash command
-      // (e.g. /compact, /cost, /voice, etc.)
       return false;
     }
   }

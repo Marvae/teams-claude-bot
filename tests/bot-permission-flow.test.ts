@@ -1,13 +1,5 @@
 /**
  * Integration test: Full Teams permission + user-input flow
- *
- * Simulates the real Teams conversation:
- * 1. User sends message → Claude runs → needs permission → sends card
- * 2. User clicks Allow/Deny button → permission resolves → Claude continues
- * 3. SDK emits PromptRequest → bot sends prompt card → user selects option
- *
- * These tests verify that handleMessage correctly wires canUseTool,
- * onPromptRequest, and onElicitation into the ConversationSession.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { TestAdapter, ActivityTypes, type Activity } from "botbuilder";
@@ -16,12 +8,13 @@ import { TestAdapter, ActivityTypes, type Activity } from "botbuilder";
 
 const mockQuery = vi.fn();
 
-const sessionState = {
+const stateValues = {
   sessionId: undefined as string | undefined,
   workDir: "/work/test",
-  model: "claude-opus-4-6",
+  model: "claude-opus-4-6" as string | undefined,
   thinkingTokens: 2048 as number | null | undefined,
-  permissionMode: "default" as string | undefined,
+  permissionMode: "default",
+  managed: null as unknown,
 };
 
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
@@ -34,29 +27,46 @@ vi.mock("../src/handoff/store.js", () => ({
   saveConversationRef: vi.fn(),
 }));
 
-vi.mock("../src/session/manager.js", () => ({
-  getSession: vi.fn(() => sessionState.sessionId),
-  getSessionCwd: vi.fn(() => undefined),
-  setSession: vi.fn((_cid: string, sid: string) => {
-    sessionState.sessionId = sid;
-  }),
-  clearSession: vi.fn(),
-  getWorkDir: vi.fn(() => sessionState.workDir),
-  setWorkDir: vi.fn(),
-  getModel: vi.fn(() => sessionState.model),
-  setModel: vi.fn(),
-  getThinkingTokens: vi.fn(() => sessionState.thinkingTokens),
-  setThinkingTokens: vi.fn(),
-  getPermissionMode: vi.fn(() => sessionState.permissionMode),
-  setPermissionMode: vi.fn(),
-  listPastSessions: vi.fn(() => []),
-  switchToSession: vi.fn(() => null),
-  getHandoffMode: vi.fn(() => undefined),
-  clearHandoffMode: vi.fn(),
-  setHandoffMode: vi.fn(),
-}));
+vi.mock("../src/session/state.js", async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  return {
+    ...actual,
+    loadPersistedSessionId: vi.fn(() => stateValues.sessionId),
+    persistSessionId: vi.fn((id: string) => {
+      stateValues.sessionId = id;
+    }),
+    clearPersistedSessionId: vi.fn(() => {
+      stateValues.sessionId = undefined;
+    }),
+    getSession: vi.fn(() => stateValues.managed),
+    setSession: vi.fn((m: unknown) => {
+      stateValues.managed = m;
+    }),
+    destroySession: vi.fn(() => {
+      if (stateValues.managed) {
+        (
+          stateValues.managed as { session: { close: () => void } }
+        ).session.close();
+      }
+      stateValues.managed = null;
+    }),
+    getWorkDir: vi.fn(() => stateValues.workDir),
+    setWorkDir: vi.fn(),
+    getModel: vi.fn(() => stateValues.model),
+    setModel: vi.fn(),
+    getThinkingTokens: vi.fn(() => stateValues.thinkingTokens),
+    setThinkingTokens: vi.fn(),
+    getPermissionMode: vi.fn(() => stateValues.permissionMode),
+    setPermissionMode: vi.fn(),
+    getHandoffMode: vi.fn(() => undefined),
+    setHandoffMode: vi.fn(),
+    clearHandoffMode: vi.fn(),
+    getCachedCommands: vi.fn(() => undefined),
+    setCachedCommands: vi.fn(),
+  };
+});
 
-import * as sessionStore from "../src/claude/session-store.js";
+import * as state from "../src/session/state.js";
 import { ClaudeCodeBot } from "../src/bot/teams-bot.js";
 
 const serviceUrl = "https://amer.ng.msg.teams.microsoft.com";
@@ -92,12 +102,12 @@ describe("handleMessage passes permission + prompt handlers", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockQuery.mockReset();
-    sessionStore.destroy("conv-perm-1");
-    sessionState.sessionId = "existing-session";
-    sessionState.workDir = "/work/test";
-    sessionState.model = "claude-opus-4-6";
-    sessionState.thinkingTokens = 2048;
-    sessionState.permissionMode = "default";
+    stateValues.managed = null;
+    stateValues.sessionId = "existing-session";
+    stateValues.workDir = "/work/test";
+    stateValues.model = "claude-opus-4-6";
+    stateValues.thinkingTokens = 2048;
+    stateValues.permissionMode = "default";
   });
 
   it("passes canUseTool to SDK when permissionMode is default", async () => {
@@ -138,7 +148,7 @@ describe("handleMessage passes permission + prompt handlers", () => {
   });
 
   it("still passes canUseTool when permissionMode is bypassPermissions", async () => {
-    sessionState.permissionMode = "bypassPermissions";
+    stateValues.permissionMode = "bypassPermissions";
     setupMockQuery("Done fast", "sess-3");
 
     const adapter = createAdapter();
@@ -152,12 +162,10 @@ describe("handleMessage passes permission + prompt handlers", () => {
       .startTest();
 
     const call = mockQuery.mock.calls[0][0];
-    // canUseTool is always passed - SDK decides when to call it
     expect(call.options.canUseTool).toBeDefined();
   });
 
   it("canUseTool callback sends permission card and resolves on Allow", async () => {
-    // Use a more controlled mock that lets us intercept canUseTool
     let capturedCanUseTool:
       | ((...args: unknown[]) => Promise<unknown>)
       | undefined;
@@ -167,11 +175,9 @@ describe("handleMessage passes permission + prompt handlers", () => {
         capturedCanUseTool = args.options
           .canUseTool as typeof capturedCanUseTool;
 
-        // Return an async generator that yields init + result
         return (async function* () {
           yield { type: "system", subtype: "init", session_id: "sess-perm" };
 
-          // Simulate calling canUseTool if captured
           if (capturedCanUseTool) {
             const { resolvePermission } =
               await import("../src/claude/permissions.js");
@@ -184,7 +190,6 @@ describe("handleMessage passes permission + prompt handlers", () => {
                 decisionReason: "potentially dangerous",
               },
             );
-            // Wait a tick so the pending permission gets registered before resolving
             await new Promise((r) => setTimeout(r, 50));
             resolvePermission("tool-perm-1", true);
             const result = await resultPromise;

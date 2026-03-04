@@ -2,11 +2,10 @@ import { config } from "./config.js";
 import { BotFrameworkAdapter, TurnContext } from "botbuilder";
 import express from "express";
 import { ClaudeCodeBot } from "./bot/teams-bot.js";
-import { loadSessions } from "./session/manager.js";
+import { buildHandoffCard } from "./bot/cards.js";
 import { loadConversationRefs, getConversationRef } from "./handoff/store.js";
 
-// Load persisted state
-loadSessions();
+// Load persisted state (conversation refs only — session created lazily on first message)
 loadConversationRefs();
 
 // Bot Framework adapter
@@ -65,11 +64,20 @@ app.post("/api/handoff", async (req, res) => {
   }
 
   try {
+    // Send handoff card to Teams — user must click Accept to switch
     await adapter.continueConversation(ref, async (ctx: TurnContext) => {
-      await bot.handleHandoff(ctx, "handoff_fork", workDir, sessionId);
+      const card = buildHandoffCard(workDir, sessionId);
+      await ctx.sendActivity({
+        attachments: [
+          {
+            contentType: "application/vnd.microsoft.card.adaptive",
+            content: card,
+          },
+        ],
+      });
     });
 
-    console.log("[HANDOFF] Proactive notification sent");
+    console.log("[HANDOFF] Handoff card sent to Teams");
     res.json({ success: true });
   } catch (err) {
     console.error(`[HANDOFF] ${err}`);

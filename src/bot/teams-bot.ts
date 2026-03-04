@@ -11,22 +11,9 @@ import {
 } from "botbuilder";
 import { stripMention } from "./mention.js";
 import { handleCommand } from "./commands.js";
-import {
-  clearSession,
-  getSessionCwd,
-  setSession,
-  setWorkDir,
-  getWorkDir,
-  getModel,
-  getThinkingTokens,
-  getPermissionMode,
-  setPermissionMode,
-  setHandoffMode,
-} from "../session/manager.js";
+import * as state from "../session/state.js";
 import { type ImageInput, type ProgressEvent } from "../claude/agent.js";
 import { ConversationSession, type SessionConfig } from "../claude/session.js";
-import * as sessionStore from "../claude/session-store.js";
-import type { ManagedSession } from "../claude/session-store.js";
 import { formatResponse, splitMessage } from "../claude/formatter.js";
 import {
   resolvePermission,
@@ -35,6 +22,7 @@ import {
 import {
   buildElicitationFormCard,
   buildElicitationUrlCard,
+  buildHandoffCard,
   buildPermissionCard,
 } from "./cards.js";
 import { resolveAskUserQuestion } from "../claude/user-questions.js";
@@ -84,9 +72,29 @@ export class ClaudeCodeBot extends ActivityHandler {
     }
   >();
 
+  /** Dedup: track recently processed activity IDs to ignore Teams duplicate webhooks. */
+  private processedActivities = new Map<string, number>();
+
   constructor() {
     super();
     this.onMessage(async (ctx, next) => {
+      // Deduplicate: Teams sometimes sends the same message twice
+      const activityId = ctx.activity.id;
+      if (activityId && this.processedActivities.has(activityId)) {
+        console.log(`[BOT] Ignoring duplicate activity: ${activityId}`);
+        await next();
+        return;
+      }
+      if (activityId) {
+        this.processedActivities.set(activityId, Date.now());
+        if (this.processedActivities.size > 100) {
+          const cutoff = Date.now() - 60_000;
+          for (const [id, ts] of this.processedActivities) {
+            if (ts < cutoff) this.processedActivities.delete(id);
+          }
+        }
+      }
+
       saveConversationRef(ctx);
       await this.handleMessage(ctx);
       await next();
@@ -103,11 +111,9 @@ export class ClaudeCodeBot extends ActivityHandler {
   }
 
   private isValidTeamsRequest(ctx: TurnContext): boolean {
-    // Verify request comes from legitimate Teams service
     const serviceUrl = ctx.activity.serviceUrl;
     if (!serviceUrl) return false;
 
-    // Known Teams service URLs
     const validDomains = [
       "https://smba.trafficmanager.net",
       "https://amer.ng.msg.teams.microsoft.com",
@@ -133,14 +139,12 @@ export class ClaudeCodeBot extends ActivityHandler {
   }
 
   private async handleMessage(ctx: TurnContext): Promise<void> {
-    // Security: Log request origin (validation handled by Bot Framework JWT)
     if (!this.isValidTeamsRequest(ctx)) {
       console.warn(
         "[SECURITY] Unknown service origin - allowing (JWT already validated by adapter)",
       );
     }
 
-    // Access control check
     if (!this.isUserAllowed(ctx)) {
       await ctx.sendActivity("Sorry, you are not authorized to use this bot.");
       return;
@@ -149,15 +153,21 @@ export class ClaudeCodeBot extends ActivityHandler {
     // Handle Adaptive Card button clicks
     const value = ctx.activity.value as Record<string, unknown> | undefined;
     if (value?.action) {
-      const conversationId = ctx.activity.conversation.id;
-
       if (value.action === "resume_session") {
         const sessionId = value.sessionId as string;
         if (sessionId) {
           const cwd = value.cwd as string | undefined;
-          // Destroy existing streaming session so next message starts fresh
-          sessionStore.destroy(conversationId);
-          setSession(conversationId, sessionId, cwd);
+          if (cwd) {
+            const r = state.setWorkDir(cwd);
+            if (!r.ok) {
+              await ctx.sendActivity(
+                `Cannot resume — \`${cwd}\` is outside the allowed work directory.`,
+              );
+              return;
+            }
+          }
+          state.destroySession();
+          state.persistSessionId(sessionId);
           const dirLabel = cwd ? `\n\n📂 ${cwd}` : "";
           await ctx.sendActivity(
             `🔄 Resumed session \`${sessionId.slice(0, 8)}…\`${dirLabel}`,
@@ -169,16 +179,32 @@ export class ClaudeCodeBot extends ActivityHandler {
       }
 
       if (value.action === "handoff_fork") {
-        // Save ref for background use (ctx gets revoked after HTTP response)
+        // Show confirmation card — don't switch yet
+        const card = buildHandoffCard(
+          value.workDir as string,
+          value.sessionId as string | undefined,
+        );
+        await ctx.sendActivity({
+          attachments: [
+            {
+              contentType: "application/vnd.microsoft.card.adaptive",
+              content: card,
+            },
+          ],
+        });
+        return;
+      }
+
+      if (value.action === "handoff_accept") {
+        // User confirmed — do the actual handoff in background
         const ref = TurnContext.getConversationReference(ctx.activity);
         const adapter = ctx.adapter as BotFrameworkAdapter;
 
-        // Don't await — run in background so Teams gets HTTP 200 quickly
         adapter
           .continueConversation(ref, async (bgCtx) => {
             await this.handleHandoff(
               bgCtx,
-              value.action as string,
+              "handoff_accept",
               value.workDir as string,
               value.sessionId as string | undefined,
             );
@@ -277,7 +303,7 @@ export class ClaudeCodeBot extends ActivityHandler {
 
       if (value.action === "set_permission_mode") {
         const mode = value.mode as string;
-        setPermissionMode(conversationId, mode);
+        state.setPermissionMode(mode);
         await ctx.sendActivity(`Permission mode set to \`${mode}\``);
         return;
       }
@@ -298,8 +324,6 @@ export class ClaudeCodeBot extends ActivityHandler {
     }
 
     let text = (ctx.activity.text ?? "").trim();
-
-    const conversationId = ctx.activity.conversation.id;
 
     // Process attachments (images, text files)
     let images: ImageInput[] | undefined;
@@ -327,18 +351,23 @@ export class ClaudeCodeBot extends ActivityHandler {
     text = stripMention(text);
     if (!text && !images) return;
 
-    // Handle slash commands (only for text-only messages)
-    if (!images && (await handleCommand(text, conversationId, ctx))) return;
+    // Handle slash commands
+    if (!images && (await handleCommand(text, ctx))) return;
 
-    // Get or create the managed session (single lookup)
-    const managed = sessionStore.getOrCreate(conversationId, () =>
-      this.createManagedSession(conversationId),
-    );
+    // Get or create the managed session
+    let managed = state.getSession();
+    if (!managed) {
+      managed = this.createManagedSession();
+      state.setSession(managed);
+    }
 
     if (managed.session.isBusy) {
-      managed.pendingMessages.push({ text: text || "What is in this image?", images });
+      managed.pendingMessages.push({
+        text: text || "What is in this image?",
+        images,
+      });
       console.log(
-        `[BOT] Message queued (${managed.pendingMessages.length} pending) for ${conversationId}`,
+        `[BOT] Message queued (${managed.pendingMessages.length} pending)`,
       );
       await ctx.sendActivity(
         `⏳ Queued (${managed.pendingMessages.length}) — will process after the current task. Send \`/stop\` to cancel.`,
@@ -346,13 +375,12 @@ export class ClaudeCodeBot extends ActivityHandler {
       return;
     }
 
-    // Update ctx reference for this turn (so callbacks can send cards)
+    // Update ctx reference for this turn
     managed.setCtx(ctx);
 
     // Process current message, then drain any queued messages
     await this.processUserMessage(
       managed,
-      conversationId,
       ctx,
       text || "What is in this image?",
       images,
@@ -361,20 +389,13 @@ export class ClaudeCodeBot extends ActivityHandler {
     // Drain pending messages that arrived while we were busy
     while (managed.pendingMessages.length > 0) {
       const next = managed.pendingMessages.shift()!;
-      console.log(`[BOT] Processing queued message for ${conversationId}`);
-      await this.processUserMessage(
-        managed,
-        conversationId,
-        ctx,
-        next.text,
-        next.images,
-      );
+      console.log("[BOT] Processing queued message");
+      await this.processUserMessage(managed, ctx, next.text, next.images);
     }
   }
 
   private async processUserMessage(
-    managed: ManagedSession,
-    conversationId: string,
+    managed: state.ManagedSession,
     ctx: TurnContext,
     text: string,
     images?: ImageInput[],
@@ -405,8 +426,10 @@ export class ClaudeCodeBot extends ActivityHandler {
       await typingLoop;
 
       if (result.error) {
+        // result.error means SDK returned a result message with is_error=true.
+        // The query process is still alive — don't destroy it.
+        // Only the catch block (exception/crash) should destroy.
         console.error(`[BOT] Error from session: ${result.error}`);
-        sessionStore.destroy(conversationId);
         await progress.finalize([
           friendlyError(result.error, result.stopReason),
         ]);
@@ -430,18 +453,18 @@ export class ClaudeCodeBot extends ActivityHandler {
       console.error("[BOT] Error in handleMessage:", err);
       typingController.abort();
       await typingLoop;
-      sessionStore.destroy(conversationId);
+      state.destroySession();
       const msg = err instanceof Error ? err.message : String(err);
       await progress.finalize([friendlyError(msg)]);
     }
   }
 
-  /** Create a ManagedSession for a conversation with all callbacks wired up. */
-  private createManagedSession(
-    conversationId: string,
-    overrides?: { resume?: string; forkSession?: boolean },
-  ): ManagedSession {
-    // Mutable ctx reference — updated before each send()
+  /** Create a ManagedSession with all callbacks wired up. */
+  private createManagedSession(overrides?: {
+    resume?: string;
+    forkSession?: boolean;
+    cwd?: string;
+  }): state.ManagedSession {
     let currentCtx: TurnContext;
 
     const sendActivity = async (
@@ -467,7 +490,6 @@ export class ClaudeCodeBot extends ActivityHandler {
       });
     };
 
-    // Permission handler
     const sendPermCard = async (req: {
       toolName: string;
       input: Record<string, unknown>;
@@ -498,7 +520,6 @@ export class ClaudeCodeBot extends ActivityHandler {
       }
     };
 
-    // Elicitation handler
     const onElicitation = async (
       request: Parameters<typeof handleElicitation>[0],
     ) => {
@@ -511,7 +532,6 @@ export class ClaudeCodeBot extends ActivityHandler {
       });
     };
 
-    // Prompt request handler
     const onPromptRequest = async (info: {
       requestId: string;
       message: string;
@@ -528,21 +548,34 @@ export class ClaudeCodeBot extends ActivityHandler {
       return response;
     };
 
-    const cwd = getSessionCwd(conversationId) ?? getWorkDir(conversationId);
+    const cwd = overrides?.cwd ?? state.getWorkDir();
+    const savedId = state.loadPersistedSessionId();
 
     const sessionConfig: SessionConfig = {
       cwd,
-      model: getModel(conversationId),
-      thinkingTokens: getThinkingTokens(conversationId),
-      permissionMode: getPermissionMode(conversationId),
-      resume: overrides?.resume,
+      model: state.getModel(),
+      thinkingTokens: state.getThinkingTokens(),
+      permissionMode: state.getPermissionMode(),
+      resume: overrides?.resume ?? savedId,
       forkSession: overrides?.forkSession,
-      continue: !overrides?.resume,
+      continue: !overrides?.resume && !savedId,
       canUseTool: createPermissionHandler(sendPermCard),
       onElicitation,
       onPromptRequest,
       onSessionId: (id) => {
-        setSession(conversationId, id, cwd);
+        state.persistSessionId(id);
+        // Cache SDK commands on first init (fire-and-forget)
+        setTimeout(async () => {
+          try {
+            const managed = state.getSession();
+            const cmds = await managed?.session.getSupportedCommands();
+            if (cmds && cmds.length > 0) {
+              state.setCachedCommands(cmds);
+            }
+          } catch {
+            // Ignore — commands will be fetched on next /help
+          }
+        }, 1000);
       },
     };
 
@@ -557,37 +590,37 @@ export class ClaudeCodeBot extends ActivityHandler {
     };
   }
 
-  /** Handle handoff action — callable from both Adaptive Card clicks and direct API. */
+  /** Handle handoff action. */
   public async handleHandoff(
     ctx: TurnContext,
     action: string,
     workDir: string,
     sessionId?: string,
   ): Promise<void> {
-    const conversationId = ctx.activity.conversation.id;
-
-    if (action === "handoff_fork") {
-      // Immediately acknowledge to avoid Teams "something went wrong" timeout
+    if (action === "handoff_accept") {
       await ctx.sendActivity(
         `🔄 📂 ${workDir}\n\n⚠️ 完成后请 /handoff 切回，否则两边会各走各的`,
       );
 
-      setHandoffMode(conversationId, "pickup");
-      // Destroy existing session so we start fresh
-      sessionStore.destroy(conversationId);
-      clearSession(conversationId);
-      if (workDir) setWorkDir(conversationId, workDir);
+      state.setHandoffMode("pickup");
+      state.destroySession();
+      state.clearPersistedSessionId();
+      if (workDir) {
+        const r = state.setWorkDir(workDir);
+        if (!r.ok) {
+          await ctx.sendActivity(`⚠️ Handoff rejected — ${r.error}`);
+          return;
+        }
+      }
 
       console.log(`[HANDOFF] Fork: sessionId=${sessionId}, workDir=${workDir}`);
 
-      // Create session — if we have a terminal sessionId, resume+fork it
-      // so Claude gets the full conversation history automatically
-      const managed = sessionStore.getOrCreate(conversationId, () =>
-        this.createManagedSession(conversationId, {
-          resume: sessionId,
-          forkSession: !!sessionId,
-        }),
-      );
+      const managed = this.createManagedSession({
+        resume: sessionId,
+        forkSession: !!sessionId,
+        cwd: workDir,
+      });
+      state.setSession(managed);
       managed.setCtx(ctx);
 
       const prompt = sessionId
@@ -649,13 +682,12 @@ export class ClaudeCodeBot extends ActivityHandler {
     typingController?: AbortController,
   ): {
     onProgress: (event: ProgressEvent) => void;
-    /** Replace the progress message with final content, or send new if no progress was shown. */
     finalize: (chunks: string[]) => Promise<void>;
   } {
     const MAX_LINES = 10;
     const TOOL_THROTTLE_MS = 2000;
     const TEXT_THROTTLE_MS = 1000;
-    const MAX_STREAMING_LEN = 4000; // Keep streaming preview short
+    const MAX_STREAMING_LEN = 4000;
     let activityId: string | undefined;
     let lastSentAt = 0;
     let timer: NodeJS.Timeout | undefined;
@@ -681,7 +713,6 @@ export class ClaudeCodeBot extends ActivityHandler {
     };
 
     const sendUpdate = async (): Promise<void> => {
-      // Serialize: wait for any previous sendUpdate to finish first
       if (inflightUpdate) {
         await inflightUpdate;
       }
@@ -732,6 +763,16 @@ export class ClaudeCodeBot extends ActivityHandler {
           return;
         }
 
+        if (event.type === "rate_limit") {
+          const msg =
+            event.status === "rejected"
+              ? `⚠️ Rate limited.${event.resetsAt ? ` Resets at ${new Date(event.resetsAt).toLocaleTimeString()}.` : ""}`
+              : `⚠️ Approaching rate limit.${event.resetsAt ? ` Resets at ${new Date(event.resetsAt).toLocaleTimeString()}.` : ""}`;
+          progressLines.push(msg);
+          scheduleUpdate(TOOL_THROTTLE_MS);
+          return;
+        }
+
         if (event.type === "text") {
           streamingText = event.text;
           scheduleUpdate(TEXT_THROTTLE_MS);
@@ -744,7 +785,6 @@ export class ClaudeCodeBot extends ActivityHandler {
           progressLines.shift();
         }
         progressLines.push(message);
-        // Clear streaming text when new tool starts (Claude is doing tool work)
         streamingText = undefined;
         scheduleUpdate(TOOL_THROTTLE_MS);
       },
@@ -753,14 +793,12 @@ export class ClaudeCodeBot extends ActivityHandler {
           clearTimeout(timer);
           timer = undefined;
         }
-        // Wait for any in-flight sendUpdate to complete (sets activityId)
         if (inflightUpdate) {
           await inflightUpdate;
           inflightUpdate = undefined;
         }
         if (chunks.length === 0) return;
 
-        // First chunk: update existing message or send new
         if (activityId) {
           try {
             await ctx.updateActivity({
@@ -769,14 +807,12 @@ export class ClaudeCodeBot extends ActivityHandler {
               text: chunks[0],
             });
           } catch {
-            // updateActivity failed — message already shows streaming content,
-            // don't send a duplicate
+            // updateActivity failed
           }
         } else {
           await ctx.sendActivity(chunks[0]);
         }
 
-        // Additional chunks as separate messages
         for (let i = 1; i < chunks.length; i++) {
           await ctx.sendActivity(chunks[i]);
         }

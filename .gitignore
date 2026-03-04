@@ -24,5 +24,8 @@ __pycache__/
 # Build artifacts
 teams-claude-bot.zip
 
+# Claude Code worktrees
+.claude/worktrees/
+
 # Temp assets
 manifest/claude-original.png

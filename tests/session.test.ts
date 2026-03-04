@@ -8,7 +8,7 @@ const SESSIONS_FILE = join(
   `teams-bot-test-sessions-${process.pid}.json`,
 );
 
-// Point the session manager at our temp file
+// Point the state module at our temp file
 process.env.BOT_SESSIONS_FILE = SESSIONS_FILE;
 
 function cleanup() {
@@ -17,7 +17,7 @@ function cleanup() {
   }
 }
 
-describe("session manager", () => {
+describe("session state persistence", () => {
   beforeEach(() => {
     cleanup();
   });
@@ -26,39 +26,36 @@ describe("session manager", () => {
     cleanup();
   });
 
-  it("returns undefined for unknown conversation", async () => {
-    const { loadSessions, getSession } =
-      await import("../src/session/manager.js");
-    loadSessions();
-    expect(getSession("unknown-conv")).toBeUndefined();
+  it("returns undefined when no persisted session", async () => {
+    const { loadPersistedSessionId } = await import("../src/session/state.js");
+    expect(loadPersistedSessionId()).toBeUndefined();
   });
 
-  it("persists and retrieves session", async () => {
-    const { loadSessions, setSession, getSession } =
-      await import("../src/session/manager.js");
-    loadSessions();
-    setSession("conv-1", "session-abc");
-    expect(getSession("conv-1")).toBe("session-abc");
+  it("persists and retrieves sessionId", async () => {
+    const { persistSessionId, loadPersistedSessionId } =
+      await import("../src/session/state.js");
+    persistSessionId("session-abc");
+    expect(loadPersistedSessionId()).toBe("session-abc");
     expect(existsSync(SESSIONS_FILE)).toBe(true);
   });
 
-  it("clears session", async () => {
-    const { loadSessions, setSession, clearSession, getSession } =
-      await import("../src/session/manager.js");
-    loadSessions();
-    setSession("conv-1", "session-abc");
-    clearSession("conv-1");
-    expect(getSession("conv-1")).toBeUndefined();
+  it("clears persisted sessionId", async () => {
+    const {
+      persistSessionId,
+      clearPersistedSessionId,
+      loadPersistedSessionId,
+    } = await import("../src/session/state.js");
+    persistSessionId("session-abc");
+    clearPersistedSessionId();
+    expect(loadPersistedSessionId()).toBeUndefined();
   });
 
-  it("loads sessions from file on startup", async () => {
+  it("loads sessionId from file on startup", async () => {
     writeFileSync(
       SESSIONS_FILE,
-      JSON.stringify({ "conv-x": { claudeSessionId: "saved-session" } }),
+      JSON.stringify({ sessionId: "saved-session" }),
     );
-    const { loadSessions, getSession } =
-      await import("../src/session/manager.js");
-    loadSessions();
-    expect(getSession("conv-x")).toBe("saved-session");
+    const { loadPersistedSessionId } = await import("../src/session/state.js");
+    expect(loadPersistedSessionId()).toBe("saved-session");
   });
 });

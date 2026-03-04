@@ -19,11 +19,12 @@ A lightweight Microsoft Teams bot that bridges to Claude Code on your local mach
   - Bypass: Allow everything (fast but risky)
 - **Access control** — Restrict usage to authorized users via Azure AD object ID or email
 - **Streaming responses** — Real-time text updates as Claude generates (via Teams message editing)
-- **Session management** — Per-conversation session, working directory, model, and thinking budget
-  - Session browser with `/sessions` — lists all SDK sessions with summary, project, branch, age
-  - Resume any session via numbered buttons (stores session's own `cwd` for correct SDK lookup)
-  - Session persistence across bot restarts (`~/.claude/teams-bot/sessions.json`)
-  - Auto-retry on stale sessions (clears and starts fresh if resume fails)
+- **Session management** — Single-session design optimized for 1:1 private chat
+  - Only sessionId persisted to disk (`~/.claude/teams-bot/session.json`) — auto-resume on restart
+  - Preferences (model, thinking, permission, workDir) are in-memory, reset on restart
+  - Session browser with `/sessions` — lists SDK sessions with summary, project, branch, age
+  - Resume any session via numbered buttons (path-validated against allowed work directory)
+  - Message queuing — messages sent while busy are queued, not dropped
 - **Slash commands** — `/model`, `/project`, `/thinking`, `/permission`, `/new`, `/status`, `/sessions`, `/handoff`, `/help`
 - **Typing indicators** — Shows "typing..." while Claude is working, stops when text starts streaming
 - **Message chunking** — Auto-splits long responses to fit Teams' 25KB limit
@@ -52,15 +53,18 @@ src/
 │   ├── mention.ts           # Strip @mentions in group chats
 │   └── cards.ts             # Adaptive card builders (help, permission, etc.)
 ├── claude/
-│   ├── agent.ts             # Claude Agent SDK integration (query, streaming, permissions)
+│   ├── agent.ts             # Claude Agent SDK types & helpers (ToolInfo, ProgressEvent, images)
+│   ├── session.ts           # ConversationSession — long-lived SDK query wrapper
 │   ├── formatter.ts         # Response formatting & message splitting
 │   ├── permissions.ts       # Tool permission handler (canUseTool callback)
 │   ├── elicitation.ts       # MCP server elicitation (form + URL auth flows)
+│   ├── user-input.ts        # PromptRequest handler
 │   └── user-questions.ts    # AskUserQuestion tool handler
 ├── handoff/
 │   └── store.ts             # Conversation reference storage (for proactive messages)
 └── session/
-    └── manager.ts           # Session persistence, history, permission mode tracking
+    ├── state.ts             # Unified session state (persistence, preferences, live session)
+    └── async-queue.ts       # AsyncQueue for streaming input to SDK
 
 .claude/
 ├── skills/handoff/
@@ -157,7 +161,7 @@ ALLOWED_USERS=user1@contoso.com,user2@contoso.com
    CLAUDE_WORK_DIR=~/Work                   # required, must exist
    ALLOWED_USERS=                           # optional, comma-separated whitelist
    HANDOFF_TOKEN=                           # optional, shared secret for /api/handoff
-   BOT_SESSIONS_FILE=                       # optional, default ~/.claude/teams-bot/sessions.json
+   BOT_SESSIONS_FILE=                       # optional, default ~/.claude/teams-bot/session.json
    SESSION_INIT_PROMPT=                     # optional, run on new session start
    ```
 
@@ -195,8 +199,7 @@ ALLOWED_USERS=user1@contoso.com,user2@contoso.com
 | Command | Description |
 |---------|-------------|
 | `/new` | Start a fresh Claude session |
-| `/clear` | Clear current session |
-| `/compact` | Compact session history |
+| `/stop` | Interrupt current task, clear pending queue |
 | `/project <path>` | Set working directory |
 | `/model [name]` | Show or set model (sonnet/opus/haiku) |
 | `/models` | List available models |

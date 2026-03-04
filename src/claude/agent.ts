@@ -30,6 +30,11 @@ export type ProgressEvent =
   | { type: "tool_use"; tool: ToolInfo }
   | { type: "tool_summary"; summary: string }
   | { type: "task_status"; taskId: string; status: string; summary: string }
+  | {
+      type: "rate_limit";
+      status: "allowed_warning" | "rejected";
+      resetsAt?: number;
+    }
   | { type: "text"; text: string }
   | { type: "done" };
 
