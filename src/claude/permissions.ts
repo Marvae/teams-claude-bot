@@ -1,3 +1,8 @@
+import type {
+  CanUseTool as SDKCanUseTool,
+  PermissionResult as SDKPermissionResult,
+} from "@anthropic-ai/claude-agent-sdk";
+
 export type PermissionRequest = {
   toolName: string;
   input: Record<string, unknown>;
@@ -6,16 +11,7 @@ export type PermissionRequest = {
   blockedPath?: string;
 };
 
-export type PermissionResult =
-  | {
-      behavior: "allow";
-      toolUseID?: string;
-    }
-  | {
-      behavior: "deny";
-      message: string;
-      toolUseID?: string;
-    };
+export type PermissionResult = SDKPermissionResult;
 
 export type PermissionHandlerOptions = {
   timeoutMs?: number;
@@ -25,6 +21,7 @@ type PendingPermission = {
   resolve: (result: PermissionResult) => void;
   timeout: NodeJS.Timeout;
   toolUseID: string;
+  input: Record<string, unknown>;
 };
 
 const pendingPermissions = new Map<string, PendingPermission>();
@@ -37,15 +34,10 @@ export function createPermissionHandler(
 ) {
   const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
-  return async (
+  return (async (
     toolName: string,
     input: Record<string, unknown>,
-    opts: {
-      signal: AbortSignal;
-      toolUseID: string;
-      decisionReason?: string;
-      blockedPath?: string;
-    },
+    opts: Parameters<SDKCanUseTool>[2],
   ): Promise<PermissionResult> => {
     const { toolUseID, decisionReason, blockedPath } = opts;
 
@@ -63,9 +55,14 @@ export function createPermissionHandler(
         });
       }, timeoutMs);
 
-      pendingPermissions.set(toolUseID, { resolve, timeout, toolUseID });
+      pendingPermissions.set(toolUseID, {
+        resolve,
+        timeout,
+        toolUseID,
+        input,
+      });
     });
-  };
+  }) satisfies SDKCanUseTool;
 }
 
 export function resolvePermission(toolUseID: string, allow: boolean): boolean {
@@ -76,7 +73,11 @@ export function resolvePermission(toolUseID: string, allow: boolean): boolean {
   pendingPermissions.delete(toolUseID);
 
   if (allow) {
-    pending.resolve({ behavior: "allow", toolUseID });
+    pending.resolve({
+      behavior: "allow",
+      updatedInput: pending.input,
+      toolUseID,
+    });
   } else {
     pending.resolve({
       behavior: "deny",

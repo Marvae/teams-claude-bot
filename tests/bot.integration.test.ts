@@ -143,6 +143,9 @@ describe("ClaudeCodeBot e2e (TestAdapter)", () => {
       "bypassPermissions",
       undefined,
       expect.any(Function),
+      expect.objectContaining({
+        onPromptRequest: expect.any(Function),
+      }),
     );
     expect(vi.mocked(sessionManager.setSession)).toHaveBeenCalledWith(
       "conv-1",
