@@ -1,3 +1,9 @@
+import {
+  type AskUserQuestionInput,
+  buildAskUserQuestionCardData,
+  isAskUserQuestionInput,
+} from "../claude/user-questions.js";
+
 interface CommandDef {
   title: string;
   command: string;
@@ -122,6 +128,10 @@ export function buildPermissionCard(
   toolUseID: string,
   decisionReason?: string,
 ): Record<string, unknown> {
+  if (toolName === "AskUserQuestion" && isAskUserQuestionInput(input)) {
+    return buildAskUserQuestionCard(input, toolUseID);
+  }
+
   const inputDisplay = JSON.stringify(input, null, 2).slice(0, 500);
 
   const body: Record<string, unknown>[] = [
@@ -178,6 +188,21 @@ export function buildPermissionCard(
         },
       },
     ],
+  };
+}
+
+export function buildAskUserQuestionCard(
+  input: AskUserQuestionInput,
+  toolUseID: string,
+): Record<string, unknown> {
+  const questionCard = buildAskUserQuestionCardData(input, toolUseID);
+
+  return {
+    type: "AdaptiveCard",
+    version: "1.4",
+    $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+    body: questionCard.body,
+    actions: questionCard.actions,
   };
 }
 

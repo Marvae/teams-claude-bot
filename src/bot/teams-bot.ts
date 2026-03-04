@@ -37,6 +37,7 @@ import {
   createPermissionHandler,
 } from "../claude/permissions.js";
 import { buildPermissionCard } from "./cards.js";
+import { resolveAskUserQuestion } from "../claude/user-questions.js";
 import { processAttachments } from "./attachments.js";
 import { config } from "../config.js";
 import { saveConversationRef } from "../handoff/store.js";
@@ -173,6 +174,17 @@ export class ClaudeCodeBot extends ActivityHandler {
           await ctx.sendActivity(allow ? "✅ Allowed" : "❌ Denied");
         } else {
           await ctx.sendActivity("Permission request expired or not found.");
+        }
+        return;
+      }
+
+      if (value.action === "ask_user_question_submit") {
+        const toolUseID = value.toolUseID as string;
+        const resolved = resolveAskUserQuestion(toolUseID, value);
+        if (resolved) {
+          await ctx.sendActivity("✅ Submitted");
+        } else {
+          await ctx.sendActivity("Question request expired or not found.");
         }
         return;
       }

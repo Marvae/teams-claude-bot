@@ -2,6 +2,7 @@ import type {
   CanUseTool as SDKCanUseTool,
   PermissionResult as SDKPermissionResult,
 } from "@anthropic-ai/claude-agent-sdk";
+import { handleAskUserQuestion } from "./user-questions.js";
 
 export type PermissionRequest = {
   toolName: string;
@@ -40,6 +41,14 @@ export function createPermissionHandler(
     opts: Parameters<SDKCanUseTool>[2],
   ): Promise<PermissionResult> => {
     const { toolUseID, decisionReason, blockedPath } = opts;
+
+    if (toolName === "AskUserQuestion") {
+      return handleAskUserQuestion(input, {
+        toolUseID,
+        sendCard,
+        timeoutMs,
+      });
+    }
 
     // Send card to user
     await sendCard({ toolName, input, toolUseID, decisionReason, blockedPath });
