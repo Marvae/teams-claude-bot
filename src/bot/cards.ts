@@ -25,11 +25,10 @@ const COMMAND_GROUPS: CommandGroup[] = [
     label: "Session",
     commands: [
       { title: "/new", command: "/new", description: "Start a fresh session" },
-      { title: "/clear", command: "/clear", description: "Alias for /new" },
       {
-        title: "/compact",
-        command: "/compact",
-        description: "Clear with fresh context",
+        title: "/stop",
+        command: "/stop",
+        description: "Interrupt current task",
       },
       {
         title: "/status",
@@ -71,7 +70,9 @@ const COMMAND_GROUPS: CommandGroup[] = [
   },
 ];
 
-export function buildHelpCard(): Record<string, unknown> {
+export function buildHelpCard(
+  sdkCommands?: Array<{ name: string; description: string }>,
+): Record<string, unknown> {
   const body: Record<string, unknown>[] = [
     {
       type: "TextBlock",
@@ -117,6 +118,40 @@ export function buildHelpCard(): Record<string, unknown> {
     }
 
     body.push({ type: "ColumnSet", columns });
+  }
+
+  // SDK slash commands (dynamically fetched from running query)
+  if (sdkCommands && sdkCommands.length > 0) {
+    body.push({
+      type: "TextBlock",
+      text: "Claude Code",
+      weight: "bolder",
+      size: "medium",
+      spacing: "large",
+    });
+
+    const sdkColumns: Record<string, unknown>[] = [];
+    for (const cmd of sdkCommands) {
+      sdkColumns.push({
+        type: "Column",
+        width: "auto",
+        items: [
+          {
+            type: "ActionSet",
+            actions: [
+              {
+                type: "Action.Submit",
+                title: `/${cmd.name}`,
+                data: {
+                  msteams: { type: "imBack", value: `/${cmd.name}` },
+                },
+              },
+            ],
+          },
+        ],
+      });
+    }
+    body.push({ type: "ColumnSet", columns: sdkColumns, wrap: true });
   }
 
   return {

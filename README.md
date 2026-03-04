@@ -18,11 +18,14 @@ A lightweight Microsoft Teams bot that bridges to Claude Code on your local mach
   - Accept Edits: Auto-allow file edits, ask for others
   - Bypass: Allow everything (fast but risky)
 - **Access control** — Restrict usage to authorized users via Azure AD object ID or email
+- **Streaming responses** — Real-time text updates as Claude generates (via Teams message editing)
 - **Session management** — Per-conversation session, working directory, model, and thinking budget
-  - Session history with `/sessions` (Adaptive Card with Resume buttons)
-  - Session persistence across bot restarts (`.sessions.json`)
+  - Session browser with `/sessions` — lists all SDK sessions with summary, project, branch, age
+  - Resume any session via numbered buttons (stores session's own `cwd` for correct SDK lookup)
+  - Session persistence across bot restarts (`~/.claude/teams-bot/sessions.json`)
+  - Auto-retry on stale sessions (clears and starts fresh if resume fails)
 - **Slash commands** — `/model`, `/project`, `/thinking`, `/permission`, `/new`, `/status`, `/sessions`, `/handoff`, `/help`
-- **Typing indicators** — Shows "typing..." while Claude is processing
+- **Typing indicators** — Shows "typing..." while Claude is working, stops when text starts streaming
 - **Message chunking** — Auto-splits long responses to fit Teams' 25KB limit
 - **Friendly error handling** — User-friendly error messages instead of raw stack traces
 
@@ -49,10 +52,11 @@ src/
 │   ├── mention.ts           # Strip @mentions in group chats
 │   └── cards.ts             # Adaptive card builders (help, permission, etc.)
 ├── claude/
-│   ├── agent.ts             # Claude Agent SDK integration (query, permissions)
+│   ├── agent.ts             # Claude Agent SDK integration (query, streaming, permissions)
 │   ├── formatter.ts         # Response formatting & message splitting
 │   ├── permissions.ts       # Tool permission handler (canUseTool callback)
-│   └── user-input.ts        # User input handler (PromptRequest/PromptResponse)
+│   ├── elicitation.ts       # MCP server elicitation (form + URL auth flows)
+│   └── user-questions.ts    # AskUserQuestion tool handler
 ├── handoff/
 │   └── store.ts             # Conversation reference storage (for proactive messages)
 └── session/
@@ -103,10 +107,11 @@ Teams → Terminal:
    - Unsupported → notify user, skip
 6. Route slash commands
 7. Start typing indicator loop (3s interval)
-8. Call Claude Agent SDK query() with prompt + images + canUseTool callback
-9. Collect session ID, tool usage, and result
-10. Format response (tools used + result)
-11. Split into chunks, send back to Teams
+8. Call Claude Agent SDK query() with prompt + images + canUseTool + streaming
+9. Stream partial text to Teams via updateActivity (1s throttle)
+10. On completion, format final response (tools used + result)
+11. Replace streaming message with final formatted response
+12. Split into chunks if needed, send back to Teams
 ```
 
 ### Access Control
@@ -152,6 +157,8 @@ ALLOWED_USERS=user1@contoso.com,user2@contoso.com
    CLAUDE_WORK_DIR=~/Work                   # required, must exist
    ALLOWED_USERS=                           # optional, comma-separated whitelist
    HANDOFF_TOKEN=                           # optional, shared secret for /api/handoff
+   BOT_SESSIONS_FILE=                       # optional, default ~/.claude/teams-bot/sessions.json
+   SESSION_INIT_PROMPT=                     # optional, run on new session start
    ```
 
 3. **Create a persistent dev tunnel**

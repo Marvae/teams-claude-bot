@@ -1,11 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { existsSync, unlinkSync, writeFileSync } from "fs";
-import { resolve } from "path";
+import { join } from "path";
+import { tmpdir } from "os";
 
-// We need to mock config before importing the session manager
-// Use dynamic imports to control module loading order
+const SESSIONS_FILE = join(
+  tmpdir(),
+  `teams-bot-test-sessions-${process.pid}.json`,
+);
 
-const SESSIONS_FILE = resolve(process.cwd(), ".sessions.json");
+// Point the session manager at our temp file
+process.env.BOT_SESSIONS_FILE = SESSIONS_FILE;
 
 function cleanup() {
   if (existsSync(SESSIONS_FILE)) {

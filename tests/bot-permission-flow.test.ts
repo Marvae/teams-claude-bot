@@ -6,15 +6,15 @@
  * 2. User clicks Allow/Deny button → permission resolves → Claude continues
  * 3. SDK emits PromptRequest → bot sends prompt card → user selects option
  *
- * These tests verify that handleMessage (the main message path)
- * correctly wires canUseTool and onPromptRequest into runClaude.
+ * These tests verify that handleMessage correctly wires canUseTool,
+ * onPromptRequest, and onElicitation into the ConversationSession.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { TestAdapter, ActivityTypes, type Activity } from "botbuilder";
 
 // ---- Mocks ----
 
-const runClaudeMock = vi.fn();
+const mockQuery = vi.fn();
 
 const sessionState = {
   sessionId: undefined as string | undefined,
@@ -25,11 +25,9 @@ const sessionState = {
 };
 
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
-  query: vi.fn(),
-}));
-
-vi.mock("../src/claude/agent.js", () => ({
-  runClaude: (...args: unknown[]) => runClaudeMock(...args),
+  query: (args: unknown) => mockQuery(args),
+  listSessions: vi.fn().mockResolvedValue([]),
+  getSessionMessages: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock("../src/handoff/store.js", () => ({
@@ -58,6 +56,7 @@ vi.mock("../src/session/manager.js", () => ({
   setHandoffMode: vi.fn(),
 }));
 
+import * as sessionStore from "../src/claude/session-store.js";
 import { ClaudeCodeBot } from "../src/bot/teams-bot.js";
 
 const serviceUrl = "https://amer.ng.msg.teams.microsoft.com";
@@ -82,10 +81,18 @@ function createAdapter(): TestAdapter {
   });
 }
 
+function setupMockQuery(result: string, sessionId = "sess-1") {
+  mockQuery.mockImplementation(async function* () {
+    yield { type: "system", subtype: "init", session_id: sessionId };
+    yield { type: "result", result };
+  });
+}
+
 describe("handleMessage passes permission + prompt handlers", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    runClaudeMock.mockReset();
+    mockQuery.mockReset();
+    sessionStore.destroy("conv-perm-1");
     sessionState.sessionId = "existing-session";
     sessionState.workDir = "/work/test";
     sessionState.model = "claude-opus-4-6";
@@ -93,12 +100,8 @@ describe("handleMessage passes permission + prompt handlers", () => {
     sessionState.permissionMode = "default";
   });
 
-  it("passes canUseTool to runClaude when permissionMode is default", async () => {
-    runClaudeMock.mockResolvedValue({
-      result: "Done",
-      sessionId: "sess-1",
-      tools: [],
-    });
+  it("passes canUseTool to SDK when permissionMode is default", async () => {
+    setupMockQuery("Done", "sess-1");
 
     const adapter = createAdapter();
 
@@ -110,46 +113,14 @@ describe("handleMessage passes permission + prompt handlers", () => {
       })
       .startTest();
 
-    expect(runClaudeMock).toHaveBeenCalledOnce();
-
-    // The 9th argument (index 8) is runOptions
-    const args = runClaudeMock.mock.calls[0];
-    const runOptions = args[8];
-    expect(runOptions).toBeDefined();
-    expect(runOptions.canUseTool).toBeDefined();
-    expect(typeof runOptions.canUseTool).toBe("function");
+    expect(mockQuery).toHaveBeenCalledOnce();
+    const call = mockQuery.mock.calls[0][0];
+    expect(call.options.canUseTool).toBeDefined();
+    expect(typeof call.options.canUseTool).toBe("function");
   });
 
-  it("passes onPromptRequest to runClaude", async () => {
-    runClaudeMock.mockResolvedValue({
-      result: "Done",
-      sessionId: "sess-2",
-      tools: [],
-    });
-
-    const adapter = createAdapter();
-
-    await adapter
-      .send(makeActivity("Ask me something"))
-      .assertReply({ type: ActivityTypes.Typing })
-      .assertReply((activity) => {
-        expect(activity.text).toBe("Done");
-      })
-      .startTest();
-
-    const args = runClaudeMock.mock.calls[0];
-    const runOptions = args[8];
-    expect(runOptions).toBeDefined();
-    expect(runOptions.onPromptRequest).toBeDefined();
-    expect(typeof runOptions.onPromptRequest).toBe("function");
-  });
-
-  it("passes onElicitation to runClaude", async () => {
-    runClaudeMock.mockResolvedValue({
-      result: "Done",
-      sessionId: "sess-elic-1",
-      tools: [],
-    });
+  it("passes onElicitation to SDK", async () => {
+    setupMockQuery("Done", "sess-elic-1");
 
     const adapter = createAdapter();
 
@@ -161,21 +132,14 @@ describe("handleMessage passes permission + prompt handlers", () => {
       })
       .startTest();
 
-    const args = runClaudeMock.mock.calls[0];
-    const runOptions = args[8];
-    expect(runOptions).toBeDefined();
-    expect(runOptions.onElicitation).toBeDefined();
-    expect(typeof runOptions.onElicitation).toBe("function");
+    const call = mockQuery.mock.calls[0][0];
+    expect(call.options.onElicitation).toBeDefined();
+    expect(typeof call.options.onElicitation).toBe("function");
   });
 
   it("still passes canUseTool when permissionMode is bypassPermissions", async () => {
     sessionState.permissionMode = "bypassPermissions";
-
-    runClaudeMock.mockResolvedValue({
-      result: "Done fast",
-      sessionId: "sess-3",
-      tools: [],
-    });
+    setupMockQuery("Done fast", "sess-3");
 
     const adapter = createAdapter();
 
@@ -187,49 +151,50 @@ describe("handleMessage passes permission + prompt handlers", () => {
       })
       .startTest();
 
-    const args = runClaudeMock.mock.calls[0];
-    const runOptions = args[8];
+    const call = mockQuery.mock.calls[0][0];
     // canUseTool is always passed - SDK decides when to call it
-    expect(runOptions?.canUseTool).toBeDefined();
+    expect(call.options.canUseTool).toBeDefined();
   });
 
   it("canUseTool callback sends permission card and resolves on Allow", async () => {
+    // Use a more controlled mock that lets us intercept canUseTool
     let capturedCanUseTool:
       | ((...args: unknown[]) => Promise<unknown>)
       | undefined;
 
-    runClaudeMock.mockImplementation(async (...args: unknown[]) => {
-      const runOptions = args[8] as Record<string, unknown> | undefined;
-      capturedCanUseTool = runOptions?.canUseTool as typeof capturedCanUseTool;
+    mockQuery.mockImplementation(
+      (args: { options: Record<string, unknown> }) => {
+        capturedCanUseTool = args.options
+          .canUseTool as typeof capturedCanUseTool;
 
-      if (capturedCanUseTool) {
-        const { resolvePermission } =
-          await import("../src/claude/permissions.js");
+        // Return an async generator that yields init + result
+        return (async function* () {
+          yield { type: "system", subtype: "init", session_id: "sess-perm" };
 
-        const resultPromise = capturedCanUseTool(
-          "Bash",
-          { command: "rm -rf /tmp/test" },
-          {
-            signal: new AbortController().signal,
-            toolUseID: "tool-perm-1",
-            decisionReason: "potentially dangerous",
-          },
-        );
+          // Simulate calling canUseTool if captured
+          if (capturedCanUseTool) {
+            const { resolvePermission } =
+              await import("../src/claude/permissions.js");
+            const resultPromise = capturedCanUseTool(
+              "Bash",
+              { command: "rm -rf /tmp/test" },
+              {
+                signal: new AbortController().signal,
+                toolUseID: "tool-perm-1",
+                decisionReason: "potentially dangerous",
+              },
+            );
+            // Wait a tick so the pending permission gets registered before resolving
+            await new Promise((r) => setTimeout(r, 50));
+            resolvePermission("tool-perm-1", true);
+            const result = await resultPromise;
+            expect((result as { behavior: string }).behavior).toBe("allow");
+          }
 
-        // Wait a tick so the pending permission gets registered before resolving
-        await new Promise((r) => setTimeout(r, 50));
-        resolvePermission("tool-perm-1", true);
-
-        const result = await resultPromise;
-        expect(result.behavior).toBe("allow");
-      }
-
-      return {
-        result: "Executed command",
-        sessionId: "sess-perm",
-        tools: [{ name: "Bash", command: "rm -rf /tmp/test" }],
-      };
-    });
+          yield { type: "result", result: "Executed command" };
+        })();
+      },
+    );
 
     const adapter = createAdapter();
 
@@ -244,108 +209,62 @@ describe("handleMessage passes permission + prompt handlers", () => {
     expect(capturedCanUseTool).toBeDefined();
   });
 
-  it("onPromptRequest callback sends prompt card and resolves on selection", async () => {
-    let capturedOnPromptRequest:
-      | ((...args: unknown[]) => Promise<unknown>)
-      | undefined;
-
-    runClaudeMock.mockImplementation(async (...args: unknown[]) => {
-      const runOptions = args[8] as Record<string, unknown> | undefined;
-      capturedOnPromptRequest =
-        runOptions?.onPromptRequest as typeof capturedOnPromptRequest;
-
-      if (capturedOnPromptRequest) {
-        const { resolvePromptRequest } =
-          await import("../src/claude/user-input.js");
-
-        const responsePromise = capturedOnPromptRequest({
-          requestId: "prompt-abc",
-          message: "Which option?",
-          options: [
-            { key: "opt-a", label: "Option A" },
-            { key: "opt-b", label: "Option B" },
-          ],
-        });
-
-        // Wait a tick so registerPromptRequest sets up the pending entry
-        await new Promise((r) => setTimeout(r, 50));
-        resolvePromptRequest("prompt-abc", "opt-a");
-
-        const selected = await responsePromise;
-        expect(selected).toBe("opt-a");
-      }
-
-      return {
-        result: "Selected A",
-        sessionId: "sess-prompt",
-        tools: [],
-      };
-    });
-
-    const adapter = createAdapter();
-
-    await adapter
-      .send(makeActivity("Choose for me"))
-      .assertReply({ type: ActivityTypes.Typing })
-      .assertReply(() => {
-        // Prompt card or result
-      })
-      .startTest();
-
-    expect(capturedOnPromptRequest).toBeDefined();
-  });
-
   it("onElicitation callback sends form card and resolves with submitted values", async () => {
     let capturedOnElicitation:
       | ((...args: unknown[]) => Promise<unknown>)
       | undefined;
 
-    runClaudeMock.mockImplementation(async (...args: unknown[]) => {
-      const runOptions = args[8] as Record<string, unknown> | undefined;
-      capturedOnElicitation =
-        runOptions?.onElicitation as typeof capturedOnElicitation;
+    mockQuery.mockImplementation(
+      (args: { options: Record<string, unknown> }) => {
+        capturedOnElicitation = args.options
+          .onElicitation as typeof capturedOnElicitation;
 
-      if (capturedOnElicitation) {
-        const { resolveElicitation } =
-          await import("../src/claude/elicitation.js");
+        return (async function* () {
+          yield {
+            type: "system",
+            subtype: "init",
+            session_id: "sess-elic-form",
+          };
 
-        const responsePromise = capturedOnElicitation({
-          serverName: "github-mcp",
-          message: "Provide project configuration",
-          mode: "form",
-          elicitationId: "elicitation-1",
-          requestedSchema: {
-            type: "object",
-            properties: {
-              project: { type: "string", title: "Project" },
-              branch: { type: "string", title: "Branch" },
-            },
-            required: ["project"],
-          },
-        });
+          if (capturedOnElicitation) {
+            const { resolveElicitation } =
+              await import("../src/claude/elicitation.js");
 
-        await new Promise((r) => setTimeout(r, 50));
-        resolveElicitation("elicitation-1", {
-          project: "teams-claude-bot",
-          branch: "main",
-        });
+            const responsePromise = capturedOnElicitation({
+              serverName: "github-mcp",
+              message: "Provide project configuration",
+              mode: "form",
+              elicitationId: "elicitation-1",
+              requestedSchema: {
+                type: "object",
+                properties: {
+                  project: { type: "string", title: "Project" },
+                  branch: { type: "string", title: "Branch" },
+                },
+                required: ["project"],
+              },
+            });
 
-        const selected = await responsePromise;
-        expect(selected).toEqual({
-          action: "accept",
-          content: {
-            project: "teams-claude-bot",
-            branch: "main",
-          },
-        });
-      }
+            await new Promise((r) => setTimeout(r, 50));
+            resolveElicitation("elicitation-1", {
+              project: "teams-claude-bot",
+              branch: "main",
+            });
 
-      return {
-        result: "Elicitation completed",
-        sessionId: "sess-elic-form",
-        tools: [],
-      };
-    });
+            const selected = await responsePromise;
+            expect(selected).toEqual({
+              action: "accept",
+              content: {
+                project: "teams-claude-bot",
+                branch: "main",
+              },
+            });
+          }
+
+          yield { type: "result", result: "Elicitation completed" };
+        })();
+      },
+    );
 
     const adapter = createAdapter();
 

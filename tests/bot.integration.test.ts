@@ -1,7 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { TestAdapter, ActivityTypes, type Activity } from "botbuilder";
 
-const runClaudeMock = vi.fn();
+// ---- Mock SDK query to return controlled results ----
+const mockQuery = vi.fn();
+
+vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
+  query: (args: unknown) => mockQuery(args),
+  listSessions: vi.fn().mockResolvedValue([]),
+  getSessionMessages: vi.fn().mockResolvedValue([]),
+}));
 
 const sessionState = {
   sessionId: undefined as string | undefined,
@@ -25,14 +32,6 @@ const sessionState = {
   handoffMode: undefined as "pickup" | undefined,
 };
 
-vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
-  query: vi.fn(),
-}));
-
-vi.mock("../src/claude/agent.js", () => ({
-  runClaude: (...args: unknown[]) => runClaudeMock(...args),
-}));
-
 vi.mock("../src/handoff/store.js", () => ({
   saveConversationRef: vi.fn(),
 }));
@@ -40,10 +39,12 @@ vi.mock("../src/handoff/store.js", () => ({
 vi.mock("../src/session/manager.js", () => ({
   getSession: vi.fn(() => sessionState.sessionId),
   getSessionCwd: vi.fn(() => sessionState.sessionCwd),
-  setSession: vi.fn((_conversationId: string, sessionId: string, cwd?: string) => {
-    sessionState.sessionId = sessionId;
-    sessionState.sessionCwd = cwd;
-  }),
+  setSession: vi.fn(
+    (_conversationId: string, sessionId: string, cwd?: string) => {
+      sessionState.sessionId = sessionId;
+      sessionState.sessionCwd = cwd;
+    },
+  ),
   clearSession: vi.fn(() => {
     sessionState.sessionId = undefined;
     sessionState.sessionCwd = undefined;
@@ -81,6 +82,7 @@ vi.mock("../src/session/manager.js", () => ({
 }));
 
 import * as sessionManager from "../src/session/manager.js";
+import * as sessionStore from "../src/claude/session-store.js";
 import { ClaudeCodeBot } from "../src/bot/teams-bot.js";
 
 const serviceUrl = "https://amer.ng.msg.teams.microsoft.com";
@@ -105,10 +107,20 @@ function createAdapter(): TestAdapter {
   });
 }
 
+/** Helper: set up mockQuery to yield init + result messages */
+function setupMockQuery(result: string, sessionId = "sess-123") {
+  mockQuery.mockImplementation(async function* () {
+    yield { type: "system", subtype: "init", session_id: sessionId };
+    yield { type: "result", result };
+  });
+}
+
 describe("ClaudeCodeBot e2e (TestAdapter)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    runClaudeMock.mockReset();
+    mockQuery.mockReset();
+    // Destroy any lingering sessions from previous tests
+    sessionStore.destroy("conv-1");
     sessionState.sessionId = undefined;
     sessionState.sessionCwd = undefined;
     sessionState.workDir = "/work/test";
@@ -121,11 +133,7 @@ describe("ClaudeCodeBot e2e (TestAdapter)", () => {
   });
 
   it("handles basic message flow", async () => {
-    runClaudeMock.mockResolvedValue({
-      result: "Hello from Claude",
-      sessionId: "sess-123",
-      tools: [],
-    });
+    setupMockQuery("Hello from Claude", "sess-123");
 
     const adapter = createAdapter();
 
@@ -138,20 +146,12 @@ describe("ClaudeCodeBot e2e (TestAdapter)", () => {
       })
       .startTest();
 
-    expect(runClaudeMock).toHaveBeenCalledOnce();
-    expect(runClaudeMock).toHaveBeenCalledWith(
-      "Hello",
-      undefined,
-      "/work/test",
-      "claude-opus-4-6",
-      2048,
-      "bypassPermissions",
-      undefined,
-      expect.any(Function),
-      expect.objectContaining({
-        onPromptRequest: expect.any(Function),
-      }),
-    );
+    expect(mockQuery).toHaveBeenCalledOnce();
+    const call = mockQuery.mock.calls[0][0];
+    expect(call.prompt).toBe("Hello");
+    expect(call.options.cwd).toBe("/work/test");
+    expect(call.options.permissionMode).toBe("bypassPermissions");
+
     expect(vi.mocked(sessionManager.setSession)).toHaveBeenCalledWith(
       "conv-1",
       "sess-123",
@@ -175,7 +175,7 @@ describe("ClaudeCodeBot e2e (TestAdapter)", () => {
       })
       .startTest();
 
-    expect(runClaudeMock).not.toHaveBeenCalled();
+    expect(mockQuery).not.toHaveBeenCalled();
   });
 
   it("handles /status command", async () => {
@@ -295,6 +295,11 @@ describe("ClaudeCodeBot e2e (TestAdapter)", () => {
 describe("permission card interactions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockQuery.mockReset();
+    sessionStore.destroy("conv-1");
+    sessionStore.destroy("conv-perm-1");
+    sessionState.sessionId = undefined;
+    sessionState.permissionMode = "bypassPermissions";
   });
 
   it("handles /permission command with card", async () => {
@@ -327,11 +332,7 @@ describe("permission card interactions", () => {
   });
 
   it("handles /permission plan", async () => {
-    runClaudeMock.mockResolvedValue({
-      result: "Plan response",
-      sessionId: "sess-plan-1",
-      tools: [],
-    });
+    setupMockQuery("Plan response", "sess-plan-1");
 
     const adapter = createAdapter();
 
@@ -348,17 +349,13 @@ describe("permission card interactions", () => {
       })
       .startTest();
 
-    expect(runClaudeMock).toHaveBeenCalled();
-    const args = runClaudeMock.mock.calls.at(-1);
-    expect(args?.[5]).toBe("plan");
+    expect(mockQuery).toHaveBeenCalled();
+    const call = mockQuery.mock.calls[0][0];
+    expect(call.options.permissionMode).toBe("plan");
   });
 
   it("handles /permission dontAsk", async () => {
-    runClaudeMock.mockResolvedValue({
-      result: "Auto-approve response",
-      sessionId: "sess-dont-1",
-      tools: [],
-    });
+    setupMockQuery("Auto-approve response", "sess-dont-1");
 
     const adapter = createAdapter();
 
@@ -375,9 +372,9 @@ describe("permission card interactions", () => {
       })
       .startTest();
 
-    expect(runClaudeMock).toHaveBeenCalled();
-    const args = runClaudeMock.mock.calls.at(-1);
-    expect(args?.[5]).toBe("dontAsk");
+    expect(mockQuery).toHaveBeenCalled();
+    const call = mockQuery.mock.calls[0][0];
+    expect(call.options.permissionMode).toBe("dontAsk");
   });
 
   it("handles set_permission_mode action", async () => {
@@ -429,6 +426,7 @@ describe("permission card interactions", () => {
 describe("user input (PromptRequest) flow", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    sessionStore.destroy("conv-1");
   });
 
   it("handles prompt_response action", async () => {
@@ -480,7 +478,8 @@ describe("user input (PromptRequest) flow", () => {
 describe("handoff flow", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    runClaudeMock.mockReset();
+    mockQuery.mockReset();
+    sessionStore.destroy("conv-1");
     sessionState.sessionId = undefined;
   });
 

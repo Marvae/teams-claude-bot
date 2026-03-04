@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, afterAll } from "vitest";
-import { rmSync, existsSync, writeFileSync, mkdtempSync } from "fs";
-import { resolve, join } from "path";
+import { rmSync, existsSync, mkdtempSync, writeFileSync } from "fs";
+import { join, resolve } from "path";
 import { tmpdir } from "os";
 
-// Use a temp cwd per file to isolate .sessions.json
-const ORIGINAL_CWD = process.cwd();
+// Use a temp file to isolate sessions
 const TEMP_CWD = mkdtempSync(join(tmpdir(), "claude-bot-handoff-"));
-process.chdir(TEMP_CWD);
+const TEMP_SESSIONS = join(TEMP_CWD, "sessions.json");
+process.env.BOT_SESSIONS_FILE = TEMP_SESSIONS;
 
 // --- Handoff mode tests ---
 
@@ -39,7 +39,7 @@ describe("handoff mode", () => {
 
 // --- Session history tests ---
 
-const SESSIONS_FILE = resolve(process.cwd(), ".sessions.json");
+const SESSIONS_FILE = TEMP_SESSIONS;
 
 describe("session history", () => {
   beforeEach(async () => {
@@ -146,8 +146,6 @@ describe("conversation ref store", () => {
   });
 
   afterAll(() => {
-    if (existsSync(SESSIONS_FILE)) rmSync(SESSIONS_FILE);
-    process.chdir(ORIGINAL_CWD);
     rmSync(TEMP_CWD, { recursive: true, force: true });
   });
 

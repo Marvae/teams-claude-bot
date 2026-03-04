@@ -87,14 +87,24 @@ describe("/sessions command", () => {
 
   it("renders Adaptive Card with sessions", async () => {
     listSessionsMock.mockResolvedValue([
-      makeSession({ sessionId: "s1", summary: "First session", lastModified: NOW - 60_000 }),
-      makeSession({ sessionId: "s2", summary: "Second session", lastModified: NOW - 120_000 }),
+      makeSession({
+        sessionId: "s1",
+        summary: "First session",
+        lastModified: NOW - 60_000,
+      }),
+      makeSession({
+        sessionId: "s2",
+        summary: "Second session",
+        lastModified: NOW - 120_000,
+      }),
     ]);
     const { ctx, sent } = makeMockCtx();
 
     await handleCommand("/sessions", "conv-1", ctx);
 
-    const activity = sent[0] as { attachments: Array<{ content: Record<string, unknown> }> };
+    const activity = sent[0] as {
+      attachments: Array<{ content: Record<string, unknown> }>;
+    };
     const card = activity.attachments[0].content;
     expect(card.type).toBe("AdaptiveCard");
 
@@ -109,17 +119,29 @@ describe("/sessions command", () => {
   it("highlights active session with ▶ and no button", async () => {
     sessionState.sessionId = "s1";
     listSessionsMock.mockResolvedValue([
-      makeSession({ sessionId: "s1", summary: "Active one", lastModified: NOW }),
-      makeSession({ sessionId: "s2", summary: "Other one", lastModified: NOW - 60_000 }),
+      makeSession({
+        sessionId: "s1",
+        summary: "Active one",
+        lastModified: NOW,
+      }),
+      makeSession({
+        sessionId: "s2",
+        summary: "Other one",
+        lastModified: NOW - 60_000,
+      }),
     ]);
     const { ctx, sent } = makeMockCtx();
 
     await handleCommand("/sessions", "conv-1", ctx);
 
-    const card = (sent[0] as { attachments: Array<{ content: Record<string, unknown> }> })
-      .attachments[0].content;
+    const card = (
+      sent[0] as { attachments: Array<{ content: Record<string, unknown> }> }
+    ).attachments[0].content;
     const body = card.body as Array<{ text: string }>;
-    const actions = card.actions as Array<{ title: string; data: Record<string, unknown> }>;
+    const actions = card.actions as Array<{
+      title: string;
+      data: Record<string, unknown>;
+    }>;
 
     // Active session has ▶ prefix
     expect(body[1].text).toContain("▶");
@@ -143,8 +165,9 @@ describe("/sessions command", () => {
 
     await handleCommand("/sessions", "conv-1", ctx);
 
-    const card = (sent[0] as { attachments: Array<{ content: Record<string, unknown> }> })
-      .attachments[0].content;
+    const card = (
+      sent[0] as { attachments: Array<{ content: Record<string, unknown> }> }
+    ).attachments[0].content;
     const actions = card.actions as Array<{ data: Record<string, unknown> }>;
 
     expect(actions[0].data).toEqual({
@@ -162,8 +185,9 @@ describe("/sessions command", () => {
 
     await handleCommand("/sessions", "conv-1", ctx);
 
-    const card = (sent[0] as { attachments: Array<{ content: Record<string, unknown> }> })
-      .attachments[0].content;
+    const card = (
+      sent[0] as { attachments: Array<{ content: Record<string, unknown> }> }
+    ).attachments[0].content;
     const body = card.body as Array<{ text: string }>;
     expect(body[1].text).toContain("My Title");
     expect(body[1].text).not.toContain("auto summary");
@@ -177,8 +201,9 @@ describe("/sessions command", () => {
 
     await handleCommand("/sessions", "conv-1", ctx);
 
-    const card = (sent[0] as { attachments: Array<{ content: Record<string, unknown> }> })
-      .attachments[0].content;
+    const card = (
+      sent[0] as { attachments: Array<{ content: Record<string, unknown> }> }
+    ).attachments[0].content;
     const body = card.body as Array<{ text: string }>;
     const meta = body[2].text;
     expect(meta).toContain("my-app");
@@ -189,15 +214,24 @@ describe("/sessions command", () => {
 
   it("sorts by lastModified descending", async () => {
     listSessionsMock.mockResolvedValue([
-      makeSession({ sessionId: "old", summary: "Old", lastModified: NOW - 300_000 }),
-      makeSession({ sessionId: "new", summary: "New", lastModified: NOW - 10_000 }),
+      makeSession({
+        sessionId: "old",
+        summary: "Old",
+        lastModified: NOW - 300_000,
+      }),
+      makeSession({
+        sessionId: "new",
+        summary: "New",
+        lastModified: NOW - 10_000,
+      }),
     ]);
     const { ctx, sent } = makeMockCtx();
 
     await handleCommand("/sessions", "conv-1", ctx);
 
-    const card = (sent[0] as { attachments: Array<{ content: Record<string, unknown> }> })
-      .attachments[0].content;
+    const card = (
+      sent[0] as { attachments: Array<{ content: Record<string, unknown> }> }
+    ).attachments[0].content;
     const body = card.body as Array<{ text: string }>;
     // Newer session should be first (after header)
     expect(body[1].text).toContain("New");

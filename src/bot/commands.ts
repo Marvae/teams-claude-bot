@@ -14,6 +14,7 @@ import {
   getHandoffMode,
   clearHandoffMode,
 } from "../session/manager.js";
+import * as sessionStore from "../claude/session-store.js";
 import { buildHelpCard, buildPermissionModeCard } from "./cards.js";
 
 function formatAge(iso: string): string {
@@ -60,14 +61,22 @@ export async function handleCommand(
   switch (cmd) {
     case "/new":
     case "/clear": {
+      sessionStore.destroy(conversationId);
       clearSession(conversationId);
       await ctx.sendActivity("New session. Send your next message.");
       return true;
     }
 
-    case "/compact": {
-      clearSession(conversationId);
-      await ctx.sendActivity("Session cleared. Context will be managed fresh.");
+    case "/stop":
+    case "/cancel": {
+      const managed = sessionStore.get(conversationId);
+      if (managed?.session.isBusy) {
+        // Reply first, then interrupt (don't block on SDK confirmation)
+        await ctx.sendActivity("🛑 Stopping...");
+        managed.session.interrupt().catch(() => {});
+      } else {
+        await ctx.sendActivity("Nothing to interrupt.");
+      }
       return true;
     }
 
@@ -90,6 +99,7 @@ export async function handleCommand(
         return true;
       }
 
+      sessionStore.destroy(conversationId);
       clearSession(conversationId);
       await ctx.sendActivity(
         `Project: \`${getWorkDir(conversationId)}\` (new session)`,
@@ -203,7 +213,7 @@ export async function handleCommand(
       const MAX_SESSIONS = 8;
 
       // Use SDK listSessions as primary data source
-      let sdkSessions: Awaited<ReturnType<typeof listSessions>> = [];
+      let sdkSessions: Awaited<ReturnType<typeof listSessions>>;
       try {
         sdkSessions = await listSessions({ limit: MAX_SESSIONS });
         sdkSessions.sort((a, b) => b.lastModified - a.lastModified);
@@ -218,7 +228,6 @@ export async function handleCommand(
         await ctx.sendActivity("No sessions. Start chatting to create one.");
         return true;
       }
-
 
       const bodyItems: unknown[] = [
         {
@@ -237,11 +246,7 @@ export async function handleCommand(
         const label = s.customTitle || s.summary || "Untitled";
         const age = formatAge(new Date(s.lastModified).toISOString());
         const dirName = s.cwd?.split("/").pop() ?? "";
-        const meta = [
-          dirName ? `${dirName}` : null,
-          age,
-          s.gitBranch ?? null,
-        ]
+        const meta = [dirName ? `${dirName}` : null, age, s.gitBranch ?? null]
           .filter(Boolean)
           .join(" · ");
 
@@ -309,7 +314,10 @@ export async function handleCommand(
     }
 
     case "/help": {
-      const card = buildHelpCard();
+      // Try to fetch SDK slash commands from running session
+      const managed = sessionStore.get(conversationId);
+      const sdkCommands = await managed?.session.getSupportedCommands();
+      const card = buildHelpCard(sdkCommands);
       await ctx.sendActivity({
         attachments: [CardFactory.adaptiveCard(card)],
       });
@@ -317,8 +325,9 @@ export async function handleCommand(
     }
 
     default: {
-      await ctx.sendActivity(`Unknown: \`${cmd}\`. Try \`/help\``);
-      return true;
+      // Unknown bot command — forward to SDK as a slash command
+      // (e.g. /compact, /cost, /voice, etc.)
+      return false;
     }
   }
 }

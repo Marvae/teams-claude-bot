@@ -13,8 +13,6 @@ import { stripMention } from "./mention.js";
 import { handleCommand } from "./commands.js";
 import {
   clearSession,
-  // clearHandoffMode, // TODO: use in handoff cleanup
-  getSession,
   getSessionCwd,
   setSession,
   setWorkDir,
@@ -25,13 +23,10 @@ import {
   setPermissionMode,
   setHandoffMode,
 } from "../session/manager.js";
-import {
-  runClaude,
-  buildSessionContext,
-  type ImageInput,
-  type ProgressEvent,
-  type RunClaudeOptions,
-} from "../claude/agent.js";
+import { type ImageInput, type ProgressEvent } from "../claude/agent.js";
+import { ConversationSession, type SessionConfig } from "../claude/session.js";
+import * as sessionStore from "../claude/session-store.js";
+import type { ManagedSession } from "../claude/session-store.js";
 import { formatResponse, splitMessage } from "../claude/formatter.js";
 import {
   resolvePermission,
@@ -53,7 +48,10 @@ import { processAttachments } from "./attachments.js";
 import { config } from "../config.js";
 import { saveConversationRef } from "../handoff/store.js";
 
-function friendlyError(error: string): string {
+function friendlyError(error: string, stopReason?: string | null): string {
+  if (stopReason === "refusal") {
+    return "Claude declined this request.";
+  }
   if (error.includes("exited with code 1")) {
     return "Something went wrong with Claude Code. Try `/new` to start a fresh session.";
   }
@@ -147,6 +145,8 @@ export class ClaudeCodeBot extends ActivityHandler {
         const sessionId = value.sessionId as string;
         if (sessionId) {
           const cwd = value.cwd as string | undefined;
+          // Destroy existing streaming session so next message starts fresh
+          sessionStore.destroy(conversationId);
           setSession(conversationId, sessionId, cwd);
           const dirLabel = cwd ? `\n\n📂 ${cwd}` : "";
           await ctx.sendActivity(
@@ -291,21 +291,25 @@ export class ClaudeCodeBot extends ActivityHandler {
     // Handle slash commands (only for text-only messages)
     if (!images && (await handleCommand(text, conversationId, ctx))) return;
 
-    // Run session init prompt on new sessions
-    const isNewSession = !getSession(conversationId);
-    if (isNewSession && config.sessionInitPrompt) {
-      console.log("[BOT] Running session init prompt...");
-      const initResult = await runClaude(
-        config.sessionInitPrompt,
-        undefined,
-        getWorkDir(conversationId),
-        getModel(conversationId),
-        getThinkingTokens(conversationId),
-        getPermissionMode(conversationId),
+    // Get or create the managed session (single lookup)
+    const managed = sessionStore.getOrCreate(conversationId, () =>
+      this.createManagedSession(conversationId),
+    );
+
+    if (managed.session.isBusy) {
+      await ctx.sendActivity(
+        "Still working on the previous message. Please wait.",
       );
-      if (initResult.sessionId) {
-        setSession(conversationId, initResult.sessionId, getWorkDir(conversationId));
-      }
+      return;
+    }
+
+    // Update ctx reference for this turn (so callbacks can send cards)
+    managed.setCtx(ctx);
+
+    // Run init prompt on new sessions (first send starts the query)
+    if (!managed.session.hasQuery && config.sessionInitPrompt) {
+      console.log("[BOT] Running session init prompt...");
+      const initResult = await managed.session.send(config.sessionInitPrompt);
       if (initResult.error) {
         console.warn(`[BOT] Session init error: ${initResult.error}`);
       }
@@ -314,98 +318,41 @@ export class ClaudeCodeBot extends ActivityHandler {
     // Start typing indicator loop
     const typingController = new AbortController();
     const typingLoop = this.startTypingLoop(ctx, typingController.signal);
-    const progress = this.createProgressNotifier(ctx);
-
-    // Build runOptions with permission + prompt handlers
-    const permissionMode = getPermissionMode(conversationId);
-    const runOptions: RunClaudeOptions = {};
-
-    // Add prompt request handler
-    runOptions.onPromptRequest = async (info) => {
-      const response = registerPromptRequest(info.requestId);
-      const card = createPromptCard(info.requestId, info.message, info.options);
-      await ctx.sendActivity({
-        attachments: [
-          {
-            contentType: "application/vnd.microsoft.card.adaptive",
-            content: card,
-          },
-        ],
-      });
-      return response;
-    };
-
-    runOptions.onElicitation = async (request) => {
-      return handleElicitation(request, async (elicitationId, req) => {
-        const card =
-          req.mode === "url"
-            ? buildElicitationUrlCard(elicitationId, req)
-            : buildElicitationFormCard(elicitationId, req);
-
-        await ctx.sendActivity({
-          attachments: [
-            {
-              contentType: "application/vnd.microsoft.card.adaptive",
-              content: card,
-            },
-          ],
-        });
-      });
-    };
-
-    // Always pass canUseTool - SDK decides when to call based on permission settings
-    const sendCard = async (req: {
-      toolName: string;
-      input: Record<string, unknown>;
-      toolUseID: string;
-      decisionReason?: string;
-    }) => {
-      const card = buildPermissionCard(
-        req.toolName,
-        req.input,
-        req.toolUseID,
-        req.decisionReason,
-      );
-      void ctx.sendActivity({
-        attachments: [
-          {
-            contentType: "application/vnd.microsoft.card.adaptive",
-            content: card,
-          },
-        ],
-      });
-    };
-    runOptions.canUseTool = createPermissionHandler(sendCard);
+    const progress = this.createProgressNotifier(ctx, typingController);
 
     try {
-      console.log("[BOT] Calling runClaude...");
-      const result = await runClaude(
+      console.log("[BOT] Sending message to session...");
+      const result = await managed.session.send(
         text || "What is in this image?",
-        getSession(conversationId),
-        getSessionCwd(conversationId) ?? getWorkDir(conversationId),
-        getModel(conversationId),
-        getThinkingTokens(conversationId),
-        permissionMode,
-        images,
-        progress.onProgress,
-        runOptions,
+        { onProgress: progress.onProgress, images },
       );
 
-      console.log("[BOT] runClaude completed, stopping typing");
-      // Stop typing
+      console.log("[BOT] Session turn completed, stopping typing");
       typingController.abort();
       await typingLoop;
 
       if (result.error) {
-        console.error(`[BOT] Error from Claude: ${result.error}`);
-        await progress.finalize([friendlyError(result.error)]);
+        // If error and session had a query, the process may have died.
+        // Destroy session so next message creates a fresh one.
+        console.error(`[BOT] Error from session: ${result.error}`);
+        sessionStore.destroy(conversationId);
+        await progress.finalize([
+          friendlyError(result.error, result.stopReason),
+        ]);
         return;
       }
 
-      if (result.sessionId) {
-        const cwd = getSessionCwd(conversationId) ?? getWorkDir(conversationId);
-        setSession(conversationId, result.sessionId, cwd);
+      if (result.interrupted) {
+        console.log("[BOT] Turn was interrupted");
+        const parts: string[] = ["🛑 Interrupted."];
+        if (result.result) {
+          parts.push(result.result);
+        }
+        await progress.finalize(splitMessage(parts.join("\n\n")));
+        return;
       }
+
+      // Session ID is captured by onSessionId callback in createManagedSession
 
       console.log("[BOT] Formatting and sending response");
       await progress.finalize(splitMessage(formatResponse(result)));
@@ -414,9 +361,115 @@ export class ClaudeCodeBot extends ActivityHandler {
       console.error("[BOT] Error in handleMessage:", err);
       typingController.abort();
       await typingLoop;
+      sessionStore.destroy(conversationId);
       const msg = err instanceof Error ? err.message : String(err);
       await progress.finalize([friendlyError(msg)]);
     }
+  }
+
+  /** Create a ManagedSession for a conversation with all callbacks wired up. */
+  private createManagedSession(
+    conversationId: string,
+    overrides?: { resume?: string; forkSession?: boolean },
+  ): ManagedSession {
+    // Mutable ctx reference — updated before each send()
+    let currentCtx: TurnContext;
+
+    const sendActivity = async (
+      activity: Partial<{
+        attachments: unknown[];
+        type: string;
+        text: string;
+      }>,
+    ) => {
+      return currentCtx?.sendActivity(
+        activity as Parameters<TurnContext["sendActivity"]>[0],
+      );
+    };
+
+    const sendCard = async (card: Record<string, unknown>) => {
+      await sendActivity({
+        attachments: [
+          {
+            contentType: "application/vnd.microsoft.card.adaptive",
+            content: card,
+          },
+        ],
+      });
+    };
+
+    // Permission handler
+    const sendPermCard = async (req: {
+      toolName: string;
+      input: Record<string, unknown>;
+      toolUseID: string;
+      decisionReason?: string;
+    }) => {
+      await sendCard(
+        buildPermissionCard(
+          req.toolName,
+          req.input,
+          req.toolUseID,
+          req.decisionReason,
+        ),
+      );
+    };
+
+    // Elicitation handler
+    const onElicitation = async (
+      request: Parameters<typeof handleElicitation>[0],
+    ) => {
+      return handleElicitation(request, async (elicitationId, req) => {
+        const card =
+          req.mode === "url"
+            ? buildElicitationUrlCard(elicitationId, req)
+            : buildElicitationFormCard(elicitationId, req);
+        await sendCard(card);
+      });
+    };
+
+    // Prompt request handler
+    const onPromptRequest = async (info: {
+      requestId: string;
+      message: string;
+      options: unknown[];
+    }) => {
+      const response = registerPromptRequest(info.requestId);
+      await sendCard(
+        createPromptCard(
+          info.requestId,
+          info.message,
+          info.options as Parameters<typeof createPromptCard>[2],
+        ),
+      );
+      return response;
+    };
+
+    const cwd = getSessionCwd(conversationId) ?? getWorkDir(conversationId);
+
+    const sessionConfig: SessionConfig = {
+      cwd,
+      model: getModel(conversationId),
+      thinkingTokens: getThinkingTokens(conversationId),
+      permissionMode: getPermissionMode(conversationId),
+      resume: overrides?.resume,
+      forkSession: overrides?.forkSession,
+      canUseTool: createPermissionHandler(sendPermCard),
+      onElicitation,
+      onPromptRequest,
+      onSessionId: (id) => {
+        setSession(conversationId, id, cwd);
+      },
+    };
+
+    const session = new ConversationSession(sessionConfig);
+
+    return {
+      session,
+      setCtx: (ctx: unknown) => {
+        currentCtx = ctx as TurnContext;
+      },
+    };
   }
 
   /** Handle handoff action — callable from both Adaptive Card clicks and direct API. */
@@ -435,127 +488,50 @@ export class ClaudeCodeBot extends ActivityHandler {
       );
 
       setHandoffMode(conversationId, "pickup");
+      // Destroy existing session so we start fresh
+      sessionStore.destroy(conversationId);
       clearSession(conversationId);
       if (workDir) setWorkDir(conversationId, workDir);
 
-      // Fetch recent conversation context from the Terminal session
-      const context = sessionId ? await buildSessionContext(sessionId) : "";
-      const contextSection = context
-        ? `\n\nHere is the recent conversation from Terminal:\n\n${context}\n\n`
-        : " ";
+      console.log(`[HANDOFF] Fork: sessionId=${sessionId}, workDir=${workDir}`);
 
-      console.log(`[HANDOFF] Fork: sessionId=${sessionId}, workDir=${workDir}, hasContext=${!!context}`);
-      const prompt = `The user handed off from Terminal to Teams (project: ${workDir ?? "unknown"}).${contextSection}Welcome them briefly, summarize what was being worked on (if context is available), and ask what they need help with. Reply in the same language as the conversation above.`;
-
-      await this.runClaudeAndRespond(ctx, conversationId, prompt, undefined, {
-        resume: "fork",
-      });
-    }
-  }
-
-  private async runClaudeAndRespond(
-    ctx: TurnContext,
-    conversationId: string,
-    prompt: string,
-    images?: ImageInput[],
-    runOptions?: RunClaudeOptions,
-  ): Promise<void> {
-    const typingController = new AbortController();
-    const typingLoop = this.startTypingLoop(ctx, typingController.signal);
-    const progress = this.createProgressNotifier(ctx);
-
-    // Create permission handler if not bypassing
-    const permissionMode = getPermissionMode(conversationId);
-    const finalRunOptions = { ...runOptions };
-
-    // Add prompt request handler
-    finalRunOptions.onPromptRequest = async (info) => {
-      const card = createPromptCard(info.requestId, info.message, info.options);
-      await ctx.sendActivity({
-        attachments: [
-          {
-            contentType: "application/vnd.microsoft.card.adaptive",
-            content: card,
-          },
-        ],
-      });
-      // Wait for user response
-      return registerPromptRequest(info.requestId);
-    };
-
-    finalRunOptions.onElicitation = async (request) => {
-      return handleElicitation(request, async (elicitationId, req) => {
-        const card =
-          req.mode === "url"
-            ? buildElicitationUrlCard(elicitationId, req)
-            : buildElicitationFormCard(elicitationId, req);
-
-        await ctx.sendActivity({
-          attachments: [
-            {
-              contentType: "application/vnd.microsoft.card.adaptive",
-              content: card,
-            },
-          ],
-        });
-      });
-    };
-
-    // Always pass canUseTool - SDK decides when to call based on permission settings
-    const sendPermCard = async (req: {
-      toolName: string;
-      input: Record<string, unknown>;
-      toolUseID: string;
-      decisionReason?: string;
-    }) => {
-      const card = buildPermissionCard(
-        req.toolName,
-        req.input,
-        req.toolUseID,
-        req.decisionReason,
+      // Create session — if we have a terminal sessionId, resume+fork it
+      // so Claude gets the full conversation history automatically
+      const managed = sessionStore.getOrCreate(conversationId, () =>
+        this.createManagedSession(conversationId, {
+          resume: sessionId,
+          forkSession: !!sessionId,
+        }),
       );
-      await ctx.sendActivity({
-        attachments: [
-          {
-            contentType: "application/vnd.microsoft.card.adaptive",
-            content: card,
-          },
-        ],
-      });
-    };
-    finalRunOptions.canUseTool = createPermissionHandler(sendPermCard);
+      managed.setCtx(ctx);
 
-    try {
-      const effectiveCwd = getSessionCwd(conversationId) ?? getWorkDir(conversationId);
-      const result = await runClaude(
-        prompt,
-        getSession(conversationId),
-        effectiveCwd,
-        getModel(conversationId),
-        getThinkingTokens(conversationId),
-        permissionMode,
-        images,
-        progress.onProgress,
-        finalRunOptions,
-      );
-      typingController.abort();
-      await typingLoop;
+      const prompt = sessionId
+        ? `The user handed off from Terminal to Teams (project: ${workDir ?? "unknown"}). You have the full terminal conversation history. Welcome them briefly, summarize what was being worked on, and ask what they need help with. Reply in the same language as the conversation above.`
+        : `The user started a new session from Teams (project: ${workDir ?? "unknown"}). Welcome them briefly and ask what they need help with.`;
 
-      if (result.error) {
-        await progress.finalize([friendlyError(result.error)]);
-        return;
+      const typingController = new AbortController();
+      const typingLoop = this.startTypingLoop(ctx, typingController.signal);
+      const progress = this.createProgressNotifier(ctx, typingController);
+
+      try {
+        const result = await managed.session.send(prompt);
+        typingController.abort();
+        await typingLoop;
+
+        if (result.error) {
+          await progress.finalize([
+            friendlyError(result.error, result.stopReason),
+          ]);
+          return;
+        }
+
+        await progress.finalize(splitMessage(formatResponse(result)));
+      } catch (err) {
+        typingController.abort();
+        await typingLoop;
+        const msg = err instanceof Error ? err.message : String(err);
+        await progress.finalize([friendlyError(msg)]);
       }
-
-      if (result.sessionId) {
-        setSession(conversationId, result.sessionId, effectiveCwd);
-      }
-
-      await progress.finalize(splitMessage(formatResponse(result)));
-    } catch (err) {
-      typingController.abort();
-      await typingLoop;
-      const msg = err instanceof Error ? err.message : String(err);
-      await progress.finalize([friendlyError(msg)]);
     }
   }
 
@@ -583,30 +559,48 @@ export class ClaudeCodeBot extends ActivityHandler {
     }
   }
 
-  private createProgressNotifier(ctx: TurnContext): {
+  createProgressNotifier(
+    ctx: TurnContext,
+    typingController?: AbortController,
+  ): {
     onProgress: (event: ProgressEvent) => void;
     /** Replace the progress message with final content, or send new if no progress was shown. */
     finalize: (chunks: string[]) => Promise<void>;
   } {
     const MAX_LINES = 10;
-    const throttleMs = 2000;
+    const TOOL_THROTTLE_MS = 2000;
+    const TEXT_THROTTLE_MS = 1000;
+    const MAX_STREAMING_LEN = 4000; // Keep streaming preview short
     let activityId: string | undefined;
     let lastSentAt = 0;
-    let pendingMessages: string[] = [];
     let timer: NodeJS.Timeout | undefined;
+    let inflightUpdate: Promise<void> | undefined;
     const progressLines: string[] = [];
+    let streamingText: string | undefined;
+    let pendingUpdate = false;
 
-    const addLines = (messages: string[]): void => {
-      for (const msg of messages) {
-        if (progressLines.length >= MAX_LINES) {
-          progressLines.shift();
-        }
-        progressLines.push(msg);
+    const buildDisplay = (): string => {
+      const parts: string[] = [];
+      if (progressLines.length > 0) {
+        parts.push(progressLines.join("\n\n"));
       }
+      if (streamingText) {
+        if (parts.length > 0) parts.push("---");
+        const display =
+          streamingText.length > MAX_STREAMING_LEN
+            ? "…" + streamingText.slice(-MAX_STREAMING_LEN)
+            : streamingText;
+        parts.push(display);
+      }
+      return parts.join("\n\n");
     };
 
-    const updateProgress = async (): Promise<void> => {
-      const text = progressLines.join("\n\n");
+    const sendUpdate = async (): Promise<void> => {
+      // Serialize: wait for any previous sendUpdate to finish first
+      if (inflightUpdate) {
+        await inflightUpdate;
+      }
+      const text = buildDisplay();
       if (!text) return;
       try {
         if (!activityId) {
@@ -620,60 +614,84 @@ export class ClaudeCodeBot extends ActivityHandler {
       }
     };
 
-    const flushPending = async (): Promise<void> => {
-      if (pendingMessages.length === 0) return;
-      const msgs = pendingMessages;
-      pendingMessages = [];
-      addLines(msgs);
-      lastSentAt = Date.now();
-      await updateProgress();
+    const scheduleUpdate = (throttleMs: number): void => {
+      const now = Date.now();
+      const waitMs = throttleMs - (now - lastSentAt);
+
+      if (waitMs <= 0 && !timer) {
+        lastSentAt = now;
+        inflightUpdate = sendUpdate();
+        return;
+      }
+
+      pendingUpdate = true;
+      if (!timer) {
+        timer = setTimeout(
+          () => {
+            timer = undefined;
+            if (pendingUpdate) {
+              pendingUpdate = false;
+              lastSentAt = Date.now();
+              inflightUpdate = sendUpdate();
+            }
+          },
+          Math.max(waitMs, 100),
+        );
+      }
     };
 
     return {
       onProgress: (event: ProgressEvent) => {
-        const message = this.formatProgressMessage(event);
-        if (!message) return;
-
-        const now = Date.now();
-        const waitMs = throttleMs - (now - lastSentAt);
-
-        if (waitMs <= 0 && !timer) {
-          addLines([message]);
-          lastSentAt = now;
-          void updateProgress();
+        if (event.type === "done") {
+          typingController?.abort();
           return;
         }
 
-        pendingMessages.push(message);
-        if (!timer) {
-          timer = setTimeout(
-            () => {
-              timer = undefined;
-              void flushPending();
-            },
-            Math.max(waitMs, 100),
-          );
+        if (event.type === "text") {
+          streamingText = event.text;
+          scheduleUpdate(TEXT_THROTTLE_MS);
+          return;
         }
+
+        const message = this.formatProgressMessage(event);
+        if (!message) return;
+        if (progressLines.length >= MAX_LINES) {
+          progressLines.shift();
+        }
+        progressLines.push(message);
+        // Clear streaming text when new tool starts (Claude is doing tool work)
+        streamingText = undefined;
+        scheduleUpdate(TOOL_THROTTLE_MS);
       },
       finalize: async (chunks: string[]) => {
         if (timer) {
           clearTimeout(timer);
           timer = undefined;
         }
+        // Wait for any in-flight sendUpdate to complete (sets activityId)
+        if (inflightUpdate) {
+          await inflightUpdate;
+          inflightUpdate = undefined;
+        }
         if (chunks.length === 0) return;
-        try {
-          if (activityId) {
+
+        // First chunk: update existing message or send new
+        if (activityId) {
+          try {
             await ctx.updateActivity({
               id: activityId,
               type: "message",
               text: chunks[0],
             });
-          } else {
-            await ctx.sendActivity(chunks[0]);
+          } catch {
+            // updateActivity failed — message already shows streaming content,
+            // don't send a duplicate
           }
-        } catch {
+        } else {
           await ctx.sendActivity(chunks[0]);
         }
+
+        // Additional chunks as separate messages
         for (let i = 1; i < chunks.length; i++) {
           await ctx.sendActivity(chunks[i]);
         }
@@ -682,6 +700,20 @@ export class ClaudeCodeBot extends ActivityHandler {
   }
 
   private formatProgressMessage(event: ProgressEvent): string | undefined {
+    if (event.type === "tool_summary") {
+      return `📋 ${this.truncateProgress(event.summary, 200)}`;
+    }
+
+    if (event.type === "task_status") {
+      const icon =
+        event.status === "started"
+          ? "🚀"
+          : event.status === "completed"
+            ? "✅"
+            : "⚠️";
+      return `${icon} Task: ${this.truncateProgress(event.summary, 150)}`;
+    }
+
     if (event.type !== "tool_use") return undefined;
     const tool = event.tool;
 

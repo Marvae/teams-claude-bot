@@ -1,6 +1,7 @@
-import { readFileSync, writeFileSync } from "fs";
+import { readFileSync, writeFileSync, mkdirSync } from "fs";
 import { realpathSync, existsSync } from "fs";
-import { resolve } from "path";
+import { resolve, join, dirname } from "path";
+import { homedir } from "os";
 import { config } from "../config.js";
 
 interface SessionData {
@@ -17,7 +18,9 @@ interface SessionData {
 
 type SessionStore = Record<string, SessionData>;
 
-const SESSIONS_FILE = resolve(process.cwd(), ".sessions.json");
+const SESSIONS_FILE =
+  process.env.BOT_SESSIONS_FILE ??
+  join(homedir(), ".claude", "teams-bot", "sessions.json");
 
 let sessions: SessionStore = {};
 
@@ -31,6 +34,7 @@ export function loadSessions(): void {
 }
 
 function persist(): void {
+  mkdirSync(dirname(SESSIONS_FILE), { recursive: true });
   writeFileSync(SESSIONS_FILE, JSON.stringify(sessions, null, 2));
 }
 
