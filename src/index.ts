@@ -1,10 +1,12 @@
 import { config } from "./config.js";
 import { BotFrameworkAdapter, TurnContext } from "botbuilder";
 import express from "express";
+import { resolve } from "node:path";
 import { ClaudeCodeBot } from "./bot/teams-bot.js";
 import { loadSessions } from "./session/manager.js";
 import { loadConversationRefs, getConversationRef } from "./handoff/store.js";
-import { isVoiceEnabled } from "./voice/index.js";
+import { isVoiceEnabled, wrapVoiceTranscript } from "./voice/index.js";
+import { processVoiceUpload } from "./voice/tab-api.js";
 
 // Load persisted state
 loadSessions();
@@ -31,7 +33,12 @@ const bot = new ClaudeCodeBot();
 
 // Express server
 const app = express();
-app.use(express.json());
+
+// Serve static files (Voice Tab HTML)
+app.use(express.static(resolve(process.cwd(), "public")));
+
+// JSON body parser — increase limit for base64-encoded audio uploads
+app.use(express.json({ limit: "50mb" }));
 
 app.post("/api/messages", async (req, res) => {
   try {
@@ -77,6 +84,50 @@ app.post("/api/handoff", async (req, res) => {
     res.status(500).json({
       success: false,
       error: "Failed to send notification",
+    });
+  }
+});
+
+// Voice Tab API — receives audio from Voice Tab, transcribes, sends to chat
+app.post("/api/voice", async (req, res) => {
+  const { audio, mimeType, userId, userName } = req.body ?? {};
+
+  // Process the audio through whisper pipeline
+  const result = await processVoiceUpload({ audio, mimeType, userId, userName });
+  if (!result.success || !result.transcript) {
+    return res.status(result.error?.includes("not available") ? 503 : 400).json(result);
+  }
+
+  // Look up conversation reference to send proactive message
+  const ref = getConversationRef(userId?.toLowerCase());
+  if (!ref) {
+    return res.status(404).json({
+      success: false,
+      transcript: result.transcript,
+      error:
+        "No chat found. Send any message to the bot in Chat first, then try again.",
+    });
+  }
+
+  try {
+    const wrappedTranscript = wrapVoiceTranscript(result.transcript);
+
+    await adapter.continueConversation(ref, async (ctx: TurnContext) => {
+      // Show the transcript in chat so the user sees what was said
+      await ctx.sendActivity(`🎙️ ${result.transcript}`);
+
+      // Inject into Claude session via the bot's message handler
+      await bot.handleVoiceMessage(ctx, wrappedTranscript);
+    });
+
+    console.log(`[VOICE-TAB] Transcript sent to chat for ${userName || userId}`);
+    res.json({ success: true, transcript: result.transcript });
+  } catch (err) {
+    console.error(`[VOICE-TAB] Proactive message failed:`, err);
+    res.status(500).json({
+      success: false,
+      transcript: result.transcript,
+      error: "Failed to send message to chat",
     });
   }
 });

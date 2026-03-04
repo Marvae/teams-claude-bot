@@ -77,6 +77,15 @@
       ]
     }
   ],
+  "staticTabs": [
+    {
+      "entityId": "voice",
+      "name": "Voice",
+      "contentUrl": "https://YOUR_DOMAIN/voice.html",
+      "scopes": ["personal"]
+    }
+  ],
   "permissions": ["messageTeamMembers"],
-  "validDomains": []
+  "devicePermissions": ["media"],
+  "validDomains": ["YOUR_DOMAIN"]
 }

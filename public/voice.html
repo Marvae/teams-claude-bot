@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Voice - Claude Code</title>
+  <script src="https://res.cdn.office.net/teams-js/2.31.1/js/MicrosoftTeams.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #1a1a2e;
+      color: #e0e0e0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    .status {
+      font-size: 16px;
+      margin-bottom: 32px;
+      text-align: center;
+      min-height: 24px;
+      color: #a0a0b0;
+    }
+
+    .status.error { color: #ff6b6b; }
+    .status.success { color: #51cf66; }
+
+    .record-btn {
+      width: 120px;
+      height: 120px;
+      border-radius: 50%;
+      border: 4px solid #444;
+      background: #2a2a4a;
+      color: #e0e0e0;
+      font-size: 40px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s ease;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .record-btn:active { transform: scale(0.95); }
+    .record-btn.recording {
+      border-color: #ff6b6b;
+      background: #4a2020;
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+    .record-btn.processing {
+      border-color: #ffd43b;
+      background: #3a3a20;
+      cursor: wait;
+    }
+    .record-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    @keyframes pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(255, 107, 107, 0.4); }
+      50% { box-shadow: 0 0 0 20px rgba(255, 107, 107, 0); }
+    }
+
+    .hint {
+      margin-top: 24px;
+      font-size: 13px;
+      color: #666;
+      text-align: center;
+    }
+
+    .transcript {
+      margin-top: 24px;
+      padding: 12px 16px;
+      background: #2a2a4a;
+      border-radius: 8px;
+      max-width: 320px;
+      width: 100%;
+      font-size: 14px;
+      line-height: 1.5;
+      max-height: 200px;
+      overflow-y: auto;
+      display: none;
+    }
+    .transcript.visible { display: block; }
+  </style>
+</head>
+<body>
+  <div class="status" id="status">Initializing...</div>
+  <button class="record-btn" id="recordBtn" disabled>
+    <span id="btnIcon">🎙️</span>
+  </button>
+  <div class="hint" id="hint"></div>
+  <div class="transcript" id="transcript"></div>
+
+  <script>
+    const statusEl = document.getElementById("status");
+    const btnEl = document.getElementById("recordBtn");
+    const iconEl = document.getElementById("btnIcon");
+    const hintEl = document.getElementById("hint");
+    const transcriptEl = document.getElementById("transcript");
+
+    let teamsContext = null;
+    let isRecording = false;
+
+    function setStatus(text, cls) {
+      statusEl.textContent = text;
+      statusEl.className = "status" + (cls ? " " + cls : "");
+    }
+
+    function setHint(text) {
+      hintEl.textContent = text;
+    }
+
+    // Initialize Teams SDK
+    async function init() {
+      try {
+        await microsoftTeams.app.initialize();
+        const ctx = await microsoftTeams.app.getContext();
+        teamsContext = ctx;
+
+        setStatus("Ready to record");
+        setHint("Tap the microphone to start");
+        btnEl.disabled = false;
+
+        // Notify Teams that the tab is loaded
+        microsoftTeams.app.notifySuccess();
+      } catch (err) {
+        console.error("Teams SDK init failed:", err);
+        setStatus("Failed to initialize Teams SDK", "error");
+        setHint("Please open this tab from within Microsoft Teams");
+      }
+    }
+
+    // Use Teams media API (selectMedia) for audio recording
+    async function startRecording() {
+      if (isRecording) return;
+      isRecording = true;
+      btnEl.classList.add("recording");
+      iconEl.textContent = "⏹️";
+      setStatus("Recording... tap to stop");
+      setHint("");
+      transcriptEl.classList.remove("visible");
+
+      try {
+        // mediaType 4 = Audio in Teams SDK
+        const result = await new Promise((resolve, reject) => {
+          microsoftTeams.media.selectMedia(
+            { mediaType: microsoftTeams.media.MediaType.Audio, maxMediaCount: 1 },
+            (err, attachments) => {
+              if (err) reject(new Error(err.message || "Recording failed"));
+              else resolve(attachments);
+            }
+          );
+        });
+
+        isRecording = false;
+        btnEl.classList.remove("recording");
+        btnEl.classList.add("processing");
+        iconEl.textContent = "⏳";
+        setStatus("Transcribing...");
+        btnEl.disabled = true;
+
+        if (!result || result.length === 0) {
+          resetBtn();
+          setStatus("No audio recorded", "error");
+          return;
+        }
+
+        // Get the media content
+        const media = result[0];
+        const blob = await getMediaBlob(media);
+
+        await sendAudio(blob);
+      } catch (err) {
+        console.error("Recording error:", err);
+        isRecording = false;
+        resetBtn();
+
+        // If Teams media API is not available, try fallback
+        if (err.message && (err.message.includes("not supported") || err.message.includes("SdkError"))) {
+          setStatus("Teams media API unavailable", "error");
+          setHint("Try using the desktop or mobile Teams app");
+        } else if (err.message === "Recording failed") {
+          setStatus("Recording cancelled", "error");
+          setHint("Tap to try again");
+        } else {
+          setStatus("Recording failed: " + (err.message || err), "error");
+        }
+      }
+    }
+
+    function getMediaBlob(media) {
+      return new Promise((resolve, reject) => {
+        // Teams SDK returns media with getMedia() method
+        media.getMedia((err, blob) => {
+          if (err) {
+            reject(new Error(err.message || "Failed to get media"));
+            return;
+          }
+          // blob is a Blob-like object with content (base64) and mimeType
+          const byteString = atob(blob.content);
+          const ab = new ArrayBuffer(byteString.length);
+          const ia = new Uint8Array(ab);
+          for (let i = 0; i < byteString.length; i++) {
+            ia[i] = byteString.charCodeAt(i);
+          }
+          resolve(new Blob([ab], { type: blob.mimeType || "audio/wav" }));
+        });
+      });
+    }
+
+    async function sendAudio(blob) {
+      try {
+        // Convert blob to base64 for JSON transport (avoids multer dependency)
+        const arrayBuf = await blob.arrayBuffer();
+        const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuf)));
+
+        const origin = window.location.origin;
+        const resp = await fetch(origin + "/api/voice", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            audio: base64,
+            mimeType: blob.type || "audio/wav",
+            userId: teamsContext.user?.id || "",
+            userName: teamsContext.user?.displayName || "",
+          }),
+        });
+
+        const data = await resp.json();
+
+        if (resp.ok && data.success) {
+          setStatus("Sent to chat!", "success");
+          transcriptEl.textContent = data.transcript || "";
+          if (data.transcript) {
+            transcriptEl.classList.add("visible");
+          }
+          setHint("Check your chat for Claude's response");
+        } else {
+          setStatus(data.error || "Failed to process", "error");
+          setHint("Tap to try again");
+        }
+      } catch (err) {
+        console.error("Upload error:", err);
+        setStatus("Network error", "error");
+        setHint("Check your connection and try again");
+      }
+
+      resetBtn();
+    }
+
+    function resetBtn() {
+      btnEl.classList.remove("recording", "processing");
+      iconEl.textContent = "🎙️";
+      btnEl.disabled = false;
+      isRecording = false;
+    }
+
+    btnEl.addEventListener("click", () => {
+      if (btnEl.disabled) return;
+      if (isRecording) {
+        // Teams selectMedia handles its own stop — user taps stop in the Teams UI
+        // This shouldn't normally fire, but reset just in case
+        resetBtn();
+        setStatus("Ready to record");
+      } else {
+        startRecording();
+      }
+    });
+
+    init();
+  </script>
+</body>
+</html>

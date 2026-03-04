@@ -560,6 +560,50 @@ export class ClaudeCodeBot extends ActivityHandler {
     };
   }
 
+  /**
+   * Handle a voice message from the Voice Tab.
+   *
+   * Called via proactive messaging — the transcript is injected into the
+   * Claude session exactly like a regular user message.
+   */
+  public async handleVoiceMessage(
+    ctx: TurnContext,
+    transcript: string,
+  ): Promise<void> {
+    const conversationId = ctx.activity.conversation.id;
+
+    const managed = sessionStore.getOrCreate(conversationId, () =>
+      this.createManagedSession(conversationId),
+    );
+
+    if (managed.session.isBusy) {
+      managed.pendingMessages.push({ text: transcript });
+      console.log(
+        `[VOICE-TAB] Message queued (${managed.pendingMessages.length} pending)`,
+      );
+      await ctx.sendActivity(
+        `⏳ Queued — will process after the current task.`,
+      );
+      return;
+    }
+
+    managed.setCtx(ctx);
+
+    await this.processUserMessage(managed, conversationId, ctx, transcript);
+
+    // Drain pending messages
+    while (managed.pendingMessages.length > 0) {
+      const next = managed.pendingMessages.shift()!;
+      await this.processUserMessage(
+        managed,
+        conversationId,
+        ctx,
+        next.text,
+        next.images,
+      );
+    }
+  }
+
   /** Handle handoff action — callable from both Adaptive Card clicks and direct API. */
   public async handleHandoff(
     ctx: TurnContext,

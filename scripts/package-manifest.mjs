@@ -27,12 +27,23 @@ if (!appId || appId === "your-app-id") {
   process.exit(1);
 }
 
+// Domain for tabs — from DEVTUNNEL_ID or BOT_DOMAIN env var
+const tunnelId = env["DEVTUNNEL_ID"];
+const botDomain = env["BOT_DOMAIN"] || (tunnelId ? `${tunnelId}-3978.devtunnels.ms` : "");
+if (!botDomain) {
+  console.warn("Warning: No BOT_DOMAIN or DEVTUNNEL_ID set — Voice Tab URL will need manual updating");
+}
+
 // Patch manifest.json
 const manifestPath = resolve(root, "manifest", "manifest.json");
 const manifest = readFileSync(manifestPath, "utf-8");
-const patched = manifest
+let patched = manifest
   .replace(/"id":\s*"YOUR_BOT_APP_ID"/, `"id": "${appId}"`)
   .replace(/"botId":\s*"YOUR_BOT_APP_ID"/, `"botId": "${appId}"`);
+
+if (botDomain) {
+  patched = patched.replace(/YOUR_DOMAIN/g, botDomain);
+}
 
 const tmpManifest = resolve(root, "manifest", "_manifest.json");
 writeFileSync(tmpManifest, patched);
