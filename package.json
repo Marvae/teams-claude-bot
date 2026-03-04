@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "concurrently -k -n bot,tunnel -c blue,green \"tsx watch src/index.ts\" \"node scripts/tunnel.mjs\"",
     "dev:local": "tsx watch src/index.ts",
-    "build": "esbuild src/index.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/index.js --external:@anthropic-ai/claude-agent-sdk --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\"",
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/index.js --external:@anthropic-ai/claude-agent-sdk --external:@pierre/diffs --external:@pierre/diffs/* --external:playwright-core --external:chromium-bidi --external:chromium-bidi/* --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\"",
     "start": "node dist/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -25,6 +25,10 @@
     "botbuilder": "^4.23.0",
     "dotenv": "^17.3.1",
     "express": "^5.2.1"
+  },
+  "optionalDependencies": {
+    "@pierre/diffs": "^1.0.11",
+    "playwright-core": "^1.58.2"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

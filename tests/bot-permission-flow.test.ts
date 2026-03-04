@@ -90,6 +90,11 @@ function createAdapter(): TestAdapter {
   });
 }
 
+function assertInformativeTyping(activity: Partial<Activity>): void {
+  expect(activity.type).toBe(ActivityTypes.Typing);
+  expect(activity.channelData).toMatchObject({ streamType: "informative" });
+}
+
 function setupMockQuery(result: string, sessionId = "sess-1") {
   mockQuery.mockImplementation(async function* () {
     yield { type: "system", subtype: "init", session_id: sessionId };
@@ -116,7 +121,7 @@ describe("handleMessage passes permission + prompt handlers", () => {
 
     await adapter
       .send(makeActivity("Write a file"))
-      .assertReply({ type: ActivityTypes.Typing })
+      .assertReply((activity) => assertInformativeTyping(activity))
       .assertReply((activity) => {
         expect(activity.text).toBe("Done");
       })
@@ -135,7 +140,7 @@ describe("handleMessage passes permission + prompt handlers", () => {
 
     await adapter
       .send(makeActivity("Connect MCP"))
-      .assertReply({ type: ActivityTypes.Typing })
+      .assertReply((activity) => assertInformativeTyping(activity))
       .assertReply((activity) => {
         expect(activity.text).toBe("Done");
       })
@@ -154,7 +159,7 @@ describe("handleMessage passes permission + prompt handlers", () => {
 
     await adapter
       .send(makeActivity("Do stuff"))
-      .assertReply({ type: ActivityTypes.Typing })
+      .assertReply((activity) => assertInformativeTyping(activity))
       .assertReply((activity) => {
         expect(activity.text).toBe("Done fast");
       })
@@ -204,7 +209,7 @@ describe("handleMessage passes permission + prompt handlers", () => {
 
     await adapter
       .send(makeActivity("Delete temp files"))
-      .assertReply({ type: ActivityTypes.Typing })
+      .assertReply((activity) => assertInformativeTyping(activity))
       .assertReply(() => {
         // Permission card or result
       })
@@ -274,7 +279,7 @@ describe("handleMessage passes permission + prompt handlers", () => {
 
     await adapter
       .send(makeActivity("Connect MCP with form"))
-      .assertReply({ type: ActivityTypes.Typing })
+      .assertReply((activity) => assertInformativeTyping(activity))
       .assertReply(() => {
         // Elicitation card or result
       })

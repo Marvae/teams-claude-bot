@@ -102,6 +102,11 @@ function createAdapter(): TestAdapter {
   });
 }
 
+function assertInformativeTyping(activity: Partial<Activity>): void {
+  expect(activity.type).toBe(ActivityTypes.Typing);
+  expect(activity.channelData).toMatchObject({ streamType: "informative" });
+}
+
 /** Extract the user text from the async generator prompt passed to SDK query. */
 async function extractPromptText(
   prompt: AsyncGenerator<{ message: { content: string } }>,
@@ -139,7 +144,7 @@ describe("ClaudeCodeBot e2e (TestAdapter)", () => {
 
     await adapter
       .send(makeActivity("Hello"))
-      .assertReply({ type: ActivityTypes.Typing })
+      .assertReply((activity) => assertInformativeTyping(activity))
       .assertReply((activity) => {
         expect(activity.type).toBe(ActivityTypes.Message);
         expect(activity.text).toBe("Hello from Claude");
@@ -334,7 +339,7 @@ describe("permission card interactions", () => {
 
     await adapter
       .send(makeActivity("Run in plan mode"))
-      .assertReply({ type: ActivityTypes.Typing })
+      .assertReply((activity) => assertInformativeTyping(activity))
       .assertReply((activity) => {
         expect(activity.text).toBe("Plan response");
       })
@@ -357,7 +362,7 @@ describe("permission card interactions", () => {
 
     await adapter
       .send(makeActivity("Run in dontAsk mode"))
-      .assertReply({ type: ActivityTypes.Typing })
+      .assertReply((activity) => assertInformativeTyping(activity))
       .assertReply((activity) => {
         expect(activity.text).toBe("Auto-approve response");
       })

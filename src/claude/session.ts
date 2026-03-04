@@ -340,6 +340,35 @@ export class ConversationSession {
       });
     }
 
+    // ── User message (tool_use_result payloads from tool responses) ──
+    if (msg.type === "user") {
+      const toolUseResult = msg.tool_use_result;
+      if (toolUseResult && typeof toolUseResult === "object") {
+        const payload = toolUseResult as Record<string, unknown>;
+        if (
+          typeof payload.originalFile === "string" &&
+          typeof payload.newString === "string"
+        ) {
+          this.turnResolver?.onProgress?.({
+            type: "file_diff",
+            filePath:
+              typeof payload.filePath === "string"
+                ? payload.filePath
+                : typeof payload.file_path === "string"
+                  ? payload.file_path
+                  : undefined,
+            originalFile: payload.originalFile,
+            newString: payload.newString,
+          });
+        }
+      } else if (typeof toolUseResult === "string" && toolUseResult.trim()) {
+        this.turnResolver?.onProgress?.({
+          type: "tool_error",
+          error: toolUseResult,
+        });
+      }
+    }
+
     // ── Task notifications (subagent background tasks) ──
     if (
       msg.type === "system" &&

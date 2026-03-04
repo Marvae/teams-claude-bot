@@ -48,6 +48,15 @@ case "${1:-help}" in
     echo "Building..."
     cd "$PROJECT_DIR" && npm run build
 
+    # Ask about diff rendering feature
+        read -p "Enable diff image rendering? (requires ~200MB download) [y/N] " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+      echo "Installing diff rendering dependencies..."
+      npm install @pierre/diffs playwright-core
+      npx playwright install chromium || echo "Warning: playwright install failed, diff images disabled"
+    fi
+
     _stop 2>/dev/null
 
     echo "Starting background service..."
@@ -314,5 +323,13 @@ PYEOF
     echo "  logs              Tail log file (install mode only)"
     echo "  install-skill     Install /handoff skill for Claude Code"
     echo "  uninstall-skill   Remove /handoff skill"
+    echo "  enable-diff       Install playwright for diff image rendering"
+    ;;
+
+  enable-diff)
+    echo "Installing diff rendering dependencies..."
+    npm install @pierre/diffs playwright-core
+    npx playwright install chromium
+    echo "Done. Diff images are now enabled."
     ;;
 esac

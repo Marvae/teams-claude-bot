@@ -12,6 +12,15 @@ case "$1" in
     # Build first
     cd "$PROJECT_DIR" && npm run build
 
+    # Ask about diff rendering feature
+        read -p "Enable diff image rendering? (requires ~200MB download) [y/N] " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+      echo "Installing diff rendering dependencies..."
+      npm install @pierre/diffs playwright-core
+      npx playwright install chromium || echo "Warning: playwright install failed, diff images disabled"
+    fi
+
     mkdir -p "$HOME/Library/LaunchAgents"
     cat > "$PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -238,7 +247,14 @@ PLIST
     echo "Uninstalled /handoff skill and hook."
     ;;
 
+  enable-diff)
+    echo "Installing diff rendering dependencies..."
+    npm install @pierre/diffs playwright-core
+    npx playwright install chromium
+    echo "Done. Diff images are now enabled."
+    ;;
+
   *)
-    echo "Usage: $0 {install|uninstall|start|stop|restart|status|logs|build|install-skill|uninstall-skill}"
+    echo "Usage: $0 {install|uninstall|start|stop|restart|status|logs|build|install-skill|uninstall-skill|enable-diff}"
     ;;
 esac

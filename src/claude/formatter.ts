@@ -1,13 +1,6 @@
-import type { ClaudeResult, ToolInfo } from "./agent.js";
+import type { ClaudeResult } from "./agent.js";
 
 const MAX_MESSAGE_LENGTH = 25_000;
-
-function formatTool(t: ToolInfo): string {
-  if (t.file) return `- **${t.name}**: \`${t.file}\``;
-  if (t.command) return `- **${t.name}**: \`${t.command}\``;
-  if (t.pattern) return `- **${t.name}**: \`${t.pattern}\``;
-  return `- **${t.name}**`;
-}
 
 export function formatResponse(result: ClaudeResult): string {
   return result.result || "Done (no output)";

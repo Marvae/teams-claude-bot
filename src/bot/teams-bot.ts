@@ -5,7 +5,6 @@ import {
 } from "../claude/user-input.js";
 import {
   ActivityHandler,
-  ActivityTypes,
   BotFrameworkAdapter,
   TurnContext,
 } from "botbuilder";
@@ -37,6 +36,10 @@ import {
 import { processAttachments } from "./attachments.js";
 import { config } from "../config.js";
 import { saveConversationRef } from "../handoff/store.js";
+import {
+  renderDiffImage,
+  type FileDiffInput,
+} from "./diff-renderer.js";
 
 function friendlyError(error: string, stopReason?: string | null): string {
   if (stopReason === "refusal") {
@@ -76,7 +79,6 @@ export class ClaudeCodeBot extends ActivityHandler {
   private permissionCards = new Map<
     string,
     {
-      activityId: string;
       toolName: string;
       input: Record<string, unknown>;
       decisionReason?: string;
@@ -247,30 +249,9 @@ export class ClaudeCodeBot extends ActivityHandler {
         this.permissionCards.delete(toolUseID);
 
         if (cardInfo) {
-          const updatedCard = buildPermissionCard(
-            cardInfo.toolName,
-            cardInfo.input,
-            toolUseID,
-            cardInfo.decisionReason,
-            undefined,
-            resolved ? label : "⏰ Expired",
+          await ctx.sendActivity(
+            resolved ? label : "Permission request expired or not found.",
           );
-          try {
-            await ctx.updateActivity({
-              id: cardInfo.activityId,
-              type: "message",
-              attachments: [
-                {
-                  contentType: "application/vnd.microsoft.card.adaptive",
-                  content: updatedCard,
-                },
-              ],
-            });
-          } catch {
-            await ctx.sendActivity(
-              resolved ? label : "Permission request expired or not found.",
-            );
-          }
         } else {
           await ctx.sendActivity(
             resolved ? label : "Permission request expired or not found.",
@@ -432,10 +413,8 @@ export class ClaudeCodeBot extends ActivityHandler {
       }
     }
 
-    // Start typing indicator loop
-    const typingController = new AbortController();
-    const typingLoop = this.startTypingLoop(ctx, typingController.signal);
-    const progress = this.createProgressNotifier(ctx, typingController);
+    await this.sendInformativeTyping(ctx);
+    const progress = this.createProgressNotifier(ctx);
 
     try {
       console.log("[BOT] Sending message to session...");
@@ -444,9 +423,6 @@ export class ClaudeCodeBot extends ActivityHandler {
         images,
       });
 
-      console.log("[BOT] Session turn completed, stopping typing");
-      typingController.abort();
-      await typingLoop;
       state.addUsage(result.costUsd, result.usage);
 
       if (result.error) {
@@ -482,8 +458,6 @@ export class ClaudeCodeBot extends ActivityHandler {
       console.log("[BOT] Response sent successfully");
     } catch (err) {
       console.error("[BOT] Error in handleMessage:", err);
-      typingController.abort();
-      await typingLoop;
       state.destroySession();
       const msg = err instanceof Error ? err.message : String(err);
       await progress.finalize([friendlyError(msg)]);
@@ -545,7 +519,6 @@ export class ClaudeCodeBot extends ActivityHandler {
       });
       if (resp?.id) {
         this.permissionCards.set(req.toolUseID, {
-          activityId: resp.id,
           toolName: req.toolName,
           input: req.input,
           decisionReason: req.decisionReason,
@@ -661,14 +634,11 @@ export class ClaudeCodeBot extends ActivityHandler {
         ? `The user handed off from Terminal to Teams (project: ${workDir ?? "unknown"}). You have the full terminal conversation history. Welcome them briefly, summarize what was being worked on, and ask what they need help with. Reply in the same language as the conversation above.`
         : `The user started a new session from Teams (project: ${workDir ?? "unknown"}). Welcome them briefly and ask what they need help with.`;
 
-      const typingController = new AbortController();
-      const typingLoop = this.startTypingLoop(ctx, typingController.signal);
-      const progress = this.createProgressNotifier(ctx, typingController);
+      await this.sendInformativeTyping(ctx);
+      const progress = this.createProgressNotifier(ctx);
 
       try {
         const result = await managed.session.send(prompt);
-        typingController.abort();
-        await typingLoop;
 
         if (result.error) {
           await progress.finalize([
@@ -679,12 +649,17 @@ export class ClaudeCodeBot extends ActivityHandler {
 
         await progress.finalize(splitMessage(formatResponse(result)));
       } catch (err) {
-        typingController.abort();
-        await typingLoop;
         const msg = err instanceof Error ? err.message : String(err);
         await progress.finalize([friendlyError(msg)]);
       }
     }
+  }
+
+  private async sendInformativeTyping(ctx: TurnContext): Promise<void> {
+    await ctx.sendActivity({
+      type: "typing",
+      channelData: { streamType: "informative" },
+    });
   }
 
   private async sendSuggestedAction(
@@ -705,33 +680,8 @@ export class ClaudeCodeBot extends ActivityHandler {
     }
   }
 
-  private async startTypingLoop(
-    ctx: TurnContext,
-    signal: AbortSignal,
-  ): Promise<void> {
-    while (!signal.aborted) {
-      try {
-        await ctx.sendActivity({ type: ActivityTypes.Typing });
-      } catch {
-        // Ignore typing indicator errors
-      }
-      await new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, 3000);
-        signal.addEventListener(
-          "abort",
-          () => {
-            clearTimeout(timer);
-            resolve();
-          },
-          { once: true },
-        );
-      });
-    }
-  }
-
   createProgressNotifier(
     ctx: TurnContext,
-    typingController?: AbortController,
   ): {
     onProgress: (event: ProgressEvent) => void;
     finalize: (chunks: string[]) => Promise<void>;
@@ -741,7 +691,6 @@ export class ClaudeCodeBot extends ActivityHandler {
     const TOOL_THROTTLE_MS = 2000;
     const TEXT_THROTTLE_MS = 1000;
     const MAX_STREAMING_LEN = 4000;
-    let activityId: string | undefined;
     let lastSentAt = 0;
     let timer: NodeJS.Timeout | undefined;
     let inflightUpdate: Promise<void> | undefined;
@@ -750,6 +699,8 @@ export class ClaudeCodeBot extends ActivityHandler {
     let todoDisplay: string | undefined;
     let pendingUpdate = false;
     let promptSuggestion: string | undefined;
+    let streamSequence = 1;
+    const fileDiffs: FileDiffInput[] = [];
 
     const buildDisplay = (): string => {
       const parts: string[] = [];
@@ -777,12 +728,14 @@ export class ClaudeCodeBot extends ActivityHandler {
       const text = buildDisplay();
       if (!text) return;
       try {
-        if (!activityId) {
-          const resp = await ctx.sendActivity(text);
-          activityId = resp?.id;
-        } else {
-          await ctx.updateActivity({ id: activityId, type: "message", text });
-        }
+        await ctx.sendActivity({
+          type: "typing",
+          text,
+          channelData: {
+            streamType: "streaming",
+            streamSequence: streamSequence++,
+          },
+        });
       } catch {
         // Ignore transient update failures.
       }
@@ -818,7 +771,21 @@ export class ClaudeCodeBot extends ActivityHandler {
       onProgress: (event: ProgressEvent) => {
         if (event.type === "done") {
           promptSuggestion = event.promptSuggestion;
-          typingController?.abort();
+          return;
+        }
+
+        if (event.type === "file_diff") {
+          fileDiffs.push({
+            filePath: event.filePath,
+            originalFile: event.originalFile,
+            newString: event.newString,
+          });
+          return;
+        }
+
+        if (event.type === "tool_error") {
+          progressLines.push(`⚠️ Tool error: ${this.truncateProgress(event.error, 200)}`);
+          scheduleUpdate(TOOL_THROTTLE_MS);
           return;
         }
 
@@ -888,22 +855,31 @@ export class ClaudeCodeBot extends ActivityHandler {
         }
         if (chunks.length === 0) return;
 
-        if (activityId) {
-          try {
-            await ctx.updateActivity({
-              id: activityId,
-              type: "message",
-              text: chunks[0],
-            });
-          } catch {
-            // updateActivity failed
-          }
-        } else {
-          await ctx.sendActivity(chunks[0]);
-        }
+        await ctx.sendActivity({ type: "message", text: chunks[0] });
 
         for (let i = 1; i < chunks.length; i++) {
-          await ctx.sendActivity(chunks[i]);
+          await ctx.sendActivity({ type: "message", text: chunks[i] });
+        }
+
+        for (const fileDiff of fileDiffs) {
+          try {
+            const image = await renderDiffImage(fileDiff);
+            await ctx.sendActivity({
+              type: "message",
+              text: fileDiff.filePath
+                ? `Diff preview: \`${fileDiff.filePath}\``
+                : "Diff preview",
+              attachments: [
+                {
+                  contentType: "image/png",
+                  name: "diff.png",
+                  contentUrl: `data:image/png;base64,${image}`,
+                },
+              ],
+            });
+          } catch {
+            // Playwright not installed, skip diff image
+          }
         }
       },
       getPromptSuggestion: () => promptSuggestion,

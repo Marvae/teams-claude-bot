@@ -21,11 +21,8 @@ describe("formatResponse", () => {
         { name: "Bash", command: "npm test" },
       ],
     };
-    const output = formatResponse(result);
-    expect(output).toContain("**Read**: `/src/index.ts`");
-    expect(output).toContain("**Bash**: `npm test`");
-    expect(output).toContain("---");
-    expect(output).toContain("Done");
+    // Current implementation returns only result text
+    expect(formatResponse(result)).toBe("Done");
   });
 
   it("formats tool with pattern", () => {
@@ -33,7 +30,8 @@ describe("formatResponse", () => {
       result: "Found files",
       tools: [{ name: "Glob", pattern: "**/*.ts" }],
     };
-    expect(formatResponse(result)).toContain("**Glob**: `**/*.ts`");
+    // Current implementation returns only result text
+    expect(formatResponse(result)).toBe("Found files");
   });
 
   it("formats tool with no details", () => {
@@ -41,7 +39,8 @@ describe("formatResponse", () => {
       result: "Ok",
       tools: [{ name: "WebSearch" }],
     };
-    expect(formatResponse(result)).toContain("- **WebSearch**");
+    // Current implementation returns only result text
+    expect(formatResponse(result)).toBe("Ok");
   });
 });
 

@@ -473,6 +473,58 @@ describe("ConversationSession", () => {
     });
   });
 
+  describe("tool_use_result events", () => {
+    it("emits file_diff progress event from user tool_use_result payload", async () => {
+      mockQuery.mockImplementation(async function* () {
+        yield { type: "system", subtype: "init", session_id: "s1" };
+        yield {
+          type: "user",
+          tool_use_result: {
+            filePath: "src/app.ts",
+            originalFile: "const a = 1;\n",
+            newString: "const a = 2;\n",
+          },
+        };
+        yield { type: "result", result: "Done" };
+      });
+
+      const events: ProgressEvent[] = [];
+      const session = new ConversationSession(makeConfig());
+      await session.send("edit", { onProgress: (e) => events.push(e) });
+
+      const diffEvents = events.filter((e) => e.type === "file_diff");
+      expect(diffEvents).toHaveLength(1);
+      expect(diffEvents[0]).toEqual({
+        type: "file_diff",
+        filePath: "src/app.ts",
+        originalFile: "const a = 1;\n",
+        newString: "const a = 2;\n",
+      });
+    });
+
+    it("emits tool_error progress event from string tool_use_result", async () => {
+      mockQuery.mockImplementation(async function* () {
+        yield { type: "system", subtype: "init", session_id: "s1" };
+        yield {
+          type: "user",
+          tool_use_result: "Permission denied: cannot write file",
+        };
+        yield { type: "result", result: "Done" };
+      });
+
+      const events: ProgressEvent[] = [];
+      const session = new ConversationSession(makeConfig());
+      await session.send("edit", { onProgress: (e) => events.push(e) });
+
+      const toolErrors = events.filter((e) => e.type === "tool_error");
+      expect(toolErrors).toHaveLength(1);
+      expect(toolErrors[0]).toEqual({
+        type: "tool_error",
+        error: "Permission denied: cannot write file",
+      });
+    });
+  });
+
   describe("task notification events", () => {
     it("emits task_status for task_started", async () => {
       mockQuery.mockImplementation(async function* () {

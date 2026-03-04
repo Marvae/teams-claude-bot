@@ -40,6 +40,13 @@ export type ProgressEvent =
   | { type: "tool_summary"; summary: string }
   | { type: "task_status"; taskId: string; status: string; summary: string }
   | {
+      type: "file_diff";
+      filePath?: string;
+      originalFile: string;
+      newString: string;
+    }
+  | { type: "tool_error"; error: string }
+  | {
       type: "rate_limit";
       status: "allowed_warning" | "rejected";
       resetsAt?: number;
