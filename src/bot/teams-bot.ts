@@ -304,7 +304,7 @@ export class ClaudeCodeBot extends ActivityHandler {
       if (value.action === "set_permission_mode") {
         const mode = value.mode as string;
         state.setPermissionMode(mode);
-        state.destroySession();
+        await state.getSession()?.session.setPermissionMode(mode);
         await ctx.sendActivity(`Permission mode set to \`${mode}\``);
         return;
       }
@@ -425,6 +425,7 @@ export class ClaudeCodeBot extends ActivityHandler {
       console.log("[BOT] Session turn completed, stopping typing");
       typingController.abort();
       await typingLoop;
+      state.addUsage(result.costUsd, result.usage);
 
       if (result.error) {
         // result.error means SDK returned a result message with is_error=true.

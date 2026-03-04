@@ -95,6 +95,7 @@ export function destroySession(): void {
   if (managed) {
     managed.session.close();
     managed = null;
+    resetUsageStats();
   }
 }
 
@@ -170,6 +171,46 @@ export function setHandoffMode(m: "pickup"): void {
 
 export function clearHandoffMode(): void {
   handoffMode = undefined;
+}
+
+// ─── Cumulative usage stats (reset on session destroy) ───
+
+let totalCostUsd = 0;
+let totalInputTokens = 0;
+let totalOutputTokens = 0;
+let totalTurns = 0;
+
+export function addUsage(
+  cost?: number,
+  usage?: { inputTokens: number; outputTokens: number },
+): void {
+  totalTurns++;
+  if (cost !== undefined) totalCostUsd += cost;
+  if (usage) {
+    totalInputTokens += usage.inputTokens;
+    totalOutputTokens += usage.outputTokens;
+  }
+}
+
+export function getUsageStats(): {
+  costUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  turns: number;
+} {
+  return {
+    costUsd: totalCostUsd,
+    inputTokens: totalInputTokens,
+    outputTokens: totalOutputTokens,
+    turns: totalTurns,
+  };
+}
+
+function resetUsageStats(): void {
+  totalCostUsd = 0;
+  totalInputTokens = 0;
+  totalOutputTokens = 0;
+  totalTurns = 0;
 }
 
 // ─── Cached SDK commands ───

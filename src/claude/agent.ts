@@ -19,6 +19,9 @@ export interface ClaudeResult {
   tools: ToolInfo[];
   stopReason?: string | null;
   interrupted?: boolean;
+  costUsd?: number;
+  usage?: { inputTokens: number; outputTokens: number };
+  durationMs?: number;
 }
 
 export interface ImageInput {

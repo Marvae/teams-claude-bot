@@ -89,6 +89,29 @@ export class ConversationSession {
     }
   }
 
+  /** Dynamically change permission mode on the running query. */
+  async setPermissionMode(mode: string): Promise<void> {
+    if (this.activeQuery) {
+      await this.activeQuery.setPermissionMode(
+        mode as Parameters<Query["setPermissionMode"]>[0],
+      );
+    }
+  }
+
+  /** Dynamically change model on the running query. */
+  async setModel(model?: string): Promise<void> {
+    if (this.activeQuery) {
+      await this.activeQuery.setModel(model);
+    }
+  }
+
+  /** Stop a background subagent task by ID. */
+  async stopTask(taskId: string): Promise<void> {
+    if (this.activeQuery) {
+      await this.activeQuery.stopTask(taskId);
+    }
+  }
+
   /**
    * Send a message to the session. Blocks until the turn completes.
    * First call starts the query; subsequent calls use streamInput.
@@ -397,11 +420,22 @@ export class ConversationSession {
         return;
       }
 
+      const usage = msg.usage as
+        | { input_tokens: number; output_tokens: number }
+        | undefined;
       this.resolveCurrentTurn({
         sessionId: this.sessionId,
         result: (msg.result as string) ?? "",
         tools: this.turnResolver?.tools ?? [],
         stopReason,
+        costUsd: (msg.total_cost_usd as number) ?? undefined,
+        durationMs: (msg.duration_ms as number) ?? undefined,
+        usage: usage
+          ? {
+              inputTokens: usage.input_tokens,
+              outputTokens: usage.output_tokens,
+            }
+          : undefined,
       });
     }
 
@@ -476,11 +510,15 @@ export class ConversationSession {
     };
 
     if (this.config.model) opts.model = this.config.model;
-    if (
-      this.config.thinkingTokens !== undefined &&
-      this.config.thinkingTokens !== null
-    ) {
-      opts.maxThinkingTokens = this.config.thinkingTokens;
+    if (this.config.thinkingTokens !== undefined) {
+      if (this.config.thinkingTokens === null) {
+        opts.thinking = { type: "disabled" };
+      } else {
+        opts.thinking = {
+          type: "enabled",
+          budgetTokens: this.config.thinkingTokens,
+        };
+      }
     }
     if (this.config.cwd) opts.cwd = this.config.cwd;
     if (this.config.resume) {

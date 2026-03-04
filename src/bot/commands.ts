@@ -112,6 +112,8 @@ export async function handleCommand(
 
       const resolved = MODEL_SHORTCUTS[arg.toLowerCase()] ?? arg;
       state.setModel(resolved);
+      // Update running session dynamically (no restart needed)
+      await state.getSession()?.session.setModel(resolved);
       await ctx.sendActivity(`Model set to \`${resolved}\``);
       return true;
     }
@@ -179,7 +181,7 @@ export async function handleCommand(
       }
 
       state.setPermissionMode(arg);
-      state.destroySession();
+      await state.getSession()?.session.setPermissionMode(arg);
       await ctx.sendActivity(`Permission mode set to \`${arg}\``);
       return true;
     }
@@ -187,6 +189,7 @@ export async function handleCommand(
       const managed = state.getSession();
       const sessionId = managed?.session.currentSessionId;
 
+      const usage = state.getUsageStats();
       const lines = [
         `**Session:** ${sessionId ? `\`${sessionId.slice(0, 12)}…\`` : "none"}`,
         `**Work dir:** \`${state.getWorkDir()}\``,
@@ -197,6 +200,15 @@ export async function handleCommand(
         })()}`,
         `**Permission:** \`${state.getPermissionMode()}\``,
       ];
+      if (usage.turns > 0) {
+        const tokens = (
+          (usage.inputTokens + usage.outputTokens) /
+          1000
+        ).toFixed(1);
+        lines.push(
+          `**Usage:** ${usage.turns} turns · ${tokens}k tokens · $${usage.costUsd.toFixed(4)}`,
+        );
+      }
       await ctx.sendActivity(lines.join("\n\n"));
       return true;
     }

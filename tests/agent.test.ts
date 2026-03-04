@@ -253,7 +253,7 @@ describe("ConversationSession", () => {
       expect(call.options.model).toBe("claude-3-opus");
     });
 
-    it("passes maxThinkingTokens when provided", async () => {
+    it("passes thinking config when budgetTokens provided", async () => {
       mockQuery.mockImplementation(async function* () {
         yield { type: "result", result: "OK" };
       });
@@ -264,10 +264,13 @@ describe("ConversationSession", () => {
       await session.send("test");
 
       const call = mockQuery.mock.calls[0][0];
-      expect(call.options.maxThinkingTokens).toBe(8000);
+      expect(call.options.thinking).toEqual({
+        type: "enabled",
+        budgetTokens: 8000,
+      });
     });
 
-    it("skips maxThinkingTokens when null", async () => {
+    it("disables thinking when null", async () => {
       mockQuery.mockImplementation(async function* () {
         yield { type: "result", result: "OK" };
       });
@@ -278,7 +281,7 @@ describe("ConversationSession", () => {
       await session.send("test");
 
       const call = mockQuery.mock.calls[0][0];
-      expect(call.options.maxThinkingTokens).toBeUndefined();
+      expect(call.options.thinking).toEqual({ type: "disabled" });
     });
   });
 
