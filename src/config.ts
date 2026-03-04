@@ -1,7 +1,8 @@
 import "dotenv/config";
+import { randomBytes } from "crypto";
 import { homedir } from "os";
 import { resolve } from "path";
-import { existsSync } from "fs";
+import { existsSync, readFileSync, appendFileSync } from "fs";
 
 function required(name: string): string {
   const value = process.env[name];
@@ -38,6 +39,26 @@ export const config = {
     return dir;
   })(),
   allowedUsers: parseAllowedUsers(process.env.ALLOWED_USERS),
-  handoffToken: process.env.HANDOFF_TOKEN ?? "",
+  handoffToken: (() => {
+    const token = process.env.HANDOFF_TOKEN;
+    if (token) return token;
+    // Auto-generate and persist to .env so it survives restarts
+    const generated = randomBytes(32).toString("hex");
+    const envPath = resolve(process.cwd(), ".env");
+    try {
+      const envContent = existsSync(envPath)
+        ? readFileSync(envPath, "utf-8")
+        : "";
+      if (!envContent.includes("HANDOFF_TOKEN=")) {
+        appendFileSync(envPath, `\nHANDOFF_TOKEN=${generated}\n`);
+        console.log(`[SECURITY] Generated HANDOFF_TOKEN and saved to .env`);
+      }
+    } catch {
+      console.warn(
+        `[SECURITY] Could not write to .env — token is ephemeral: ${generated}`,
+      );
+    }
+    return generated;
+  })(),
   sessionInitPrompt: process.env.SESSION_INIT_PROMPT,
 } as const;

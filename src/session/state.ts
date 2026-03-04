@@ -51,8 +51,8 @@ function loadPersisted(): PersistedData {
 }
 
 function savePersisted(data: PersistedData): void {
-  mkdirSync(dirname(SESSION_FILE), { recursive: true });
-  writeFileSync(SESSION_FILE, JSON.stringify(data));
+  mkdirSync(dirname(SESSION_FILE), { recursive: true, mode: 0o700 });
+  writeFileSync(SESSION_FILE, JSON.stringify(data), { mode: 0o600 });
 }
 
 export function loadPersistedSessionId(): string | undefined {

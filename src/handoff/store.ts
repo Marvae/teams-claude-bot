@@ -16,7 +16,7 @@ export function loadConversationRefs(): void {
 }
 
 function persist(): void {
-  writeFileSync(REFS_FILE, JSON.stringify(refs, null, 2));
+  writeFileSync(REFS_FILE, JSON.stringify(refs, null, 2), { mode: 0o600 });
 }
 
 export function saveConversationRef(ctx: TurnContext): void {

@@ -66,7 +66,6 @@ vi.mock("../src/session/state.js", async (importOriginal) => {
   };
 });
 
-import * as state from "../src/session/state.js";
 import { ClaudeCodeBot } from "../src/bot/teams-bot.js";
 
 const serviceUrl = "https://amer.ng.msg.teams.microsoft.com";
