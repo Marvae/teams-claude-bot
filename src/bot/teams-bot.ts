@@ -680,6 +680,7 @@ export class ClaudeCodeBot extends ActivityHandler {
         type: "message",
         text: "",
         suggestedActions: {
+          to: [],
           actions: [{ type: "imBack", title: suggestion, value: suggestion }],
         },
       });

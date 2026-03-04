@@ -10,25 +10,28 @@ A lightweight Microsoft Teams bot that bridges to Claude Code on your local mach
 
 - **Full Claude Code access** — Read, Write, Edit, Bash, Glob, Grep tools via Teams messages
 - **Image & file upload** — Send screenshots for Claude to analyze, or upload code files for review
-- **Handoff** — Seamlessly switch between Terminal and Teams with `/handoff` skill
-  - Terminal → Teams: Hand off to Teams, both sides can continue working
-  - `/handoff back`: Return to Terminal-only workflow
-- **Permission control** — Interactive tool approval via Adaptive Cards
-  - Default mode: Ask before risky operations
-  - Accept Edits: Auto-allow file edits, ask for others
-  - Bypass: Allow everything (fast but risky)
-- **Access control** — Restrict usage to authorized users via Azure AD object ID or email
-- **Streaming responses** — Real-time text updates as Claude generates (via Teams message editing)
-- **Session management** — Single-session design optimized for 1:1 private chat
-  - Only sessionId persisted to disk (`~/.claude/teams-bot/session.json`) — auto-resume on restart
-  - Preferences (model, thinking, permission, workDir) are in-memory, reset on restart
-  - Session browser with `/sessions` — lists SDK sessions with summary, project, branch, age
-  - Resume any session via numbered buttons (path-validated against allowed work directory)
+- **Streaming responses** — Real-time text + tool progress updates via Teams message editing
+- **Todo tracking** — Complex tasks show inline progress (✅🔧⏳) with live counter
+- **Prompt suggestions** — Quick-reply button after each turn for natural follow-ups
+- **Session management** — Single long-lived session with auto-resume on restart
+  - Only sessionId + permissionMode persisted to disk
+  - `/sessions` browser — lists all SDK sessions with summary, project, branch
+  - Resume any session via buttons (path-validated against allowed work directory)
   - Message queuing — messages sent while busy are queued, not dropped
-- **Slash commands** — `/model`, `/project`, `/thinking`, `/permission`, `/new`, `/status`, `/sessions`, `/handoff`, `/help`
-- **Typing indicators** — Shows "typing..." while Claude is working, stops when text starts streaming
-- **Message chunking** — Auto-splits long responses to fit Teams' 25KB limit
-- **Friendly error handling** — User-friendly error messages instead of raw stack traces
+  - Usage tracking — `/status` shows cumulative cost, tokens, and turns
+- **Permission control** — Dynamic permission modes, changeable without restarting session
+  - Default, Accept Edits, Plan, Don't Ask, Bypass modes
+  - Interactive tool approval via compact Adaptive Cards
+  - Expandable details for long tool inputs
+- **Handoff** — Two-step Terminal ↔ Teams handoff with confirmation card
+  - Terminal → Teams: `/handoff` sends card, user clicks Accept to fork session
+  - Both sides continue working independently
+  - `/handoff back`: Clear handoff mode
+- **MCP & Elicitation** — MCP server auth flows (form + URL) via Adaptive Cards
+- **Access control** — Restrict usage via Azure AD object ID or email whitelist
+- **Security** — Rate limiting, security headers, file permission hardening, activity dedup
+- **Slash commands** — `/new`, `/stop`, `/model`, `/project`, `/thinking`, `/permission`, `/sessions`, `/status`, `/handoff`, `/help`
+- **SDK commands** — Claude Code skills (compact, cost, review, etc.) available via `/help`
 
 ## Architecture
 
@@ -36,24 +39,32 @@ A lightweight Microsoft Teams bot that bridges to Claude Code on your local mach
 Teams (any device)
   → Bot Framework SDK
     → Express server (/api/messages, /api/handoff)
-      → Claude Agent SDK
+      → Claude Agent SDK (streaming input mode)
         → Claude Code (local machine)
 ```
+
+### Key Design Decisions
+
+- **Single session, no Map** — One live ConversationSession at a time (module-level variable). Optimized for 1:1 private chat.
+- **Streaming input mode** — Single long-lived `query()` with `AsyncQueue`. Messages pushed via queue, no process restart between turns.
+- **Minimal persistence** — Only `sessionId` and `permissionMode` written to disk. Everything else is in-memory.
+- **Dynamic control** — `setPermissionMode()` and `setModel()` modify the running query without restart.
+- **SDK as source of truth** — `listSessions()` for session history, `supportedCommands()` for slash commands.
 
 ### Project Structure
 
 ```
 src/
-├── index.ts                 # Express server (bot endpoint + handoff API)
+├── index.ts                 # Express server (bot endpoint + handoff API + rate limiting)
 ├── config.ts                # Env var parsing (app credentials, allowed users)
 ├── bot/
-│   ├── teams-bot.ts         # Main ActivityHandler (auth, attachments, handoff, routing)
-│   ├── commands.ts          # Slash command handling
+│   ├── teams-bot.ts         # Main ActivityHandler (message handling, progress, handoff)
+│   ├── commands.ts          # Slash command handling (all use state module)
 │   ├── attachments.ts       # Download & process Teams file/image attachments
 │   ├── mention.ts           # Strip @mentions in group chats
-│   └── cards.ts             # Adaptive card builders (help, permission, etc.)
+│   └── cards.ts             # Adaptive card builders (help, permission, handoff, etc.)
 ├── claude/
-│   ├── agent.ts             # Claude Agent SDK types & helpers (ToolInfo, ProgressEvent, images)
+│   ├── agent.ts             # SDK types & helpers (ToolInfo, ProgressEvent, TodoItem)
 │   ├── session.ts           # ConversationSession — long-lived SDK query wrapper
 │   ├── formatter.ts         # Response formatting & message splitting
 │   ├── permissions.ts       # Tool permission handler (canUseTool callback)
@@ -63,7 +74,7 @@ src/
 ├── handoff/
 │   └── store.ts             # Conversation reference storage (for proactive messages)
 └── session/
-    ├── state.ts             # Unified session state (persistence, preferences, live session)
+    ├── state.ts             # Unified session state (persistence, preferences, usage stats)
     └── async-queue.ts       # AsyncQueue for streaming input to SDK
 
 .claude/
@@ -74,62 +85,43 @@ src/
     └── session-start.sh     # SessionStart hook to capture session ID
 ```
 
+### Message Flow
+
+```
+1. Dedup check (ignore Teams duplicate webhooks)
+2. Access control (ALLOWED_USERS whitelist)
+3. Handle Adaptive Card actions (permission, handoff, elicitation, etc.)
+4. Process attachments (images → base64, text files → prepend to prompt)
+5. Route slash commands (all read/write from unified state module)
+6. Get or create session (lazy — first message triggers creation with auto-resume)
+7. Queue if busy, or send to session
+8. Stream progress: todo list + tool calls + partial text (updateActivity)
+9. On completion: replace progress with final response + prompt suggestion
+```
+
 ### Handoff Flow
 
 ```
 Terminal → Teams:
 1. User runs /handoff in Terminal
-2. Skill extracts session ID, calls POST /api/handoff
-3. Bot transfers session context to Teams
-4. Both Terminal and Teams can work independently
+2. Skill calls POST /api/handoff with sessionId + workDir
+3. Bot sends confirmation card to Teams
+4. User clicks "Accept Handoff" → session forked, both sides independent
 
 Teams → Terminal:
-1. User sends /handoff back in Teams
+1. User sends /handoff back
 2. Clears handoff mode, Teams session stays active
-3. User can continue in Terminal
 ```
 
 ### Permission Flow
 
 ```
-1. Claude requests tool use (e.g., Bash "rm -rf /tmp/test")
-2. Bot sends Adaptive Card with tool details + Allow/Deny buttons
-3. User taps Allow or Deny
-4. Bot resolves permission, Claude continues or aborts
+1. Claude requests tool use → SDK calls canUseTool callback
+2. Bot sends compact Adaptive Card (tool name + one-line summary)
+3. Long inputs have expandable "Details" section
+4. User taps Allow or Deny → card updated in-place with result
+5. /permission <mode> changes mode dynamically on running query
 ```
-
-### Message Flow
-
-```
-1. User sends message in Teams (text, image, or file)
-2. Save conversation reference (for proactive handoff notifications)
-3. Access control check (ALLOWED_USERS whitelist)
-4. Handle Adaptive Card button clicks (permission, handoff, session switch)
-5. Process attachments:
-   - Images → base64 → Claude vision content block
-   - Text/code files → prepend to prompt as code block
-   - Unsupported → notify user, skip
-6. Route slash commands
-7. Start typing indicator loop (3s interval)
-8. Call Claude Agent SDK query() with prompt + images + canUseTool + streaming
-9. Stream partial text to Teams via updateActivity (1s throttle)
-10. On completion, format final response (tools used + result)
-11. Replace streaming message with final formatted response
-12. Split into chunks if needed, send back to Teams
-```
-
-### Access Control
-
-Set `ALLOWED_USERS` env var with comma-separated Azure AD object IDs or emails:
-
-```bash
-ALLOWED_USERS=user1@contoso.com,user2@contoso.com
-```
-
-- If unset or empty → open access (for dev/testing)
-- Checks `activity.from.aadObjectId` and `activity.from.name`
-- Case-insensitive matching
-- Denied users get a brief "not authorized" message
 
 ## Prerequisites
 
@@ -175,7 +167,6 @@ ALLOWED_USERS=user1@contoso.com,user2@contoso.com
    # .env
    DEVTUNNEL_ID=my-teams-bot
    ```
-   This creates a persistent tunnel, so the URL stays the same.
 
 4. **Start the bot**
    ```bash
@@ -186,9 +177,9 @@ ALLOWED_USERS=user1@contoso.com,user2@contoso.com
 
 6. **Update messaging endpoint** in Azure Bot registration → `<tunnel-url>/api/messages`.
 
-7. **Send a message to the bot in Teams** — This is a one-time setup to enable handoff notifications.
+7. **Send a message to the bot in Teams** — One-time setup to enable handoff notifications.
 
-8. **Install as background service**
+8. **Install as background service** (macOS)
    ```bash
    npm link          # Register the CLI command
    teams-bot install # Install service + auto-start on login + optional /handoff skill
@@ -201,16 +192,16 @@ ALLOWED_USERS=user1@contoso.com,user2@contoso.com
 | `/new` | Start a fresh Claude session |
 | `/stop` | Interrupt current task, clear pending queue |
 | `/project <path>` | Set working directory |
-| `/model [name]` | Show or set model (sonnet/opus/haiku) |
+| `/model [name]` | Show or set model (sonnet/opus/haiku) — applies immediately |
 | `/models` | List available models |
 | `/thinking [tokens\|off]` | Set extended thinking budget |
-| `/permission [mode]` | Set permission mode (shows picker card) |
-| `/sessions` | View session history (Adaptive Card with Resume buttons) |
+| `/permission [mode]` | Set permission mode — applies immediately |
+| `/sessions` | Browse and resume past sessions |
 | `/handoff back` | Hand session back to Terminal |
-| `/status` | Show current session config |
-| `/help` | Show command card |
+| `/status` | Show session info + cumulative usage stats |
+| `/help` | Show all commands (bot + Claude Code skills) |
 
-Any other message is sent to Claude Code as a prompt.
+Any other `/command` is forwarded to Claude Code as a slash command. Any other message is sent as a prompt.
 
 ### Permission Modes
 
@@ -219,10 +210,10 @@ Any other message is sent to Claude Code as a prompt.
 | `default` | Ask before risky operations (recommended) |
 | `acceptEdits` | Auto-allow file edits, ask for others |
 | `plan` | Planning only, no tool execution |
-| `dontAsk` | Deny if not pre-approved |
+| `dontAsk` | Auto-approve all tools |
 | `bypassPermissions` | Allow everything without asking |
 
-Use `/permission` to show a picker card, or `/permission <mode>` to set directly.
+Permission mode is persisted across restarts and applied dynamically without restarting the session.
 
 ### Handoff Skill (Terminal → Teams)
 
@@ -269,8 +260,8 @@ npm run format     # Prettier
 
 - **TypeScript** — Strict mode, ESM
 - **Bot Framework SDK** (`botbuilder` v4.23) — Teams message handling
-- **Claude Agent SDK** (`@anthropic-ai/claude-agent-sdk` v0.2) — Claude Code integration
-- **Express** — HTTP server
+- **Claude Agent SDK** (`@anthropic-ai/claude-agent-sdk`) — Claude Code integration
+- **Express** — HTTP server with rate limiting and security headers
 - **esbuild** — Bundler (single-file output, Node 22 target)
 - **vitest** — Testing
 - **ESLint + Prettier** — Code quality
