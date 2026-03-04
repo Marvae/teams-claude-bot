@@ -266,10 +266,79 @@ describe("permission card interactions", () => {
       const card = reply.attachments![0].content as Record<string, unknown>;
       expect(card.type).toBe("AdaptiveCard");
       const actions = card.actions as Array<Record<string, unknown>>;
-      expect(actions.length).toBe(3);
-      expect(actions.map((a) => a.title)).toContain("🛡️ Default");
-      expect(actions.map((a) => a.title)).toContain("⚡ Bypass");
+      expect(actions.length).toBe(5);
+      const modeIds = actions.map((a) => (a.data as { mode: string }).mode);
+      expect(modeIds).toEqual(
+        expect.arrayContaining([
+          "default",
+          "acceptEdits",
+          "plan",
+          "dontAsk",
+          "bypassPermissions",
+        ]),
+      );
+      const titles = actions.map((a) => a.title);
+      expect(titles).toContain(
+        "Plan mode - Claude explains what it would do without executing",
+      );
+      expect(titles).toContain(
+        "Don't ask - Auto-approve all tools (less strict than bypass)",
+      );
     });
+  });
+
+  it("handles /permission plan", async () => {
+    runClaudeMock.mockResolvedValue({
+      result: "Plan response",
+      sessionId: "sess-plan-1",
+      tools: [],
+    });
+
+    const adapter = createAdapter();
+
+    await adapter
+      .send(makeActivity("/permission plan"))
+      .assertReply("Permission mode set to `plan`")
+      .startTest();
+
+    await adapter
+      .send(makeActivity("Run in plan mode"))
+      .assertReply({ type: ActivityTypes.Typing })
+      .assertReply((activity) => {
+        expect(activity.text).toBe("Plan response");
+      })
+      .startTest();
+
+    expect(runClaudeMock).toHaveBeenCalled();
+    const args = runClaudeMock.mock.calls.at(-1);
+    expect(args?.[5]).toBe("plan");
+  });
+
+  it("handles /permission dontAsk", async () => {
+    runClaudeMock.mockResolvedValue({
+      result: "Auto-approve response",
+      sessionId: "sess-dont-1",
+      tools: [],
+    });
+
+    const adapter = createAdapter();
+
+    await adapter
+      .send(makeActivity("/permission dontAsk"))
+      .assertReply("Permission mode set to `dontAsk`")
+      .startTest();
+
+    await adapter
+      .send(makeActivity("Run in dontAsk mode"))
+      .assertReply({ type: ActivityTypes.Typing })
+      .assertReply((activity) => {
+        expect(activity.text).toBe("Auto-approve response");
+      })
+      .startTest();
+
+    expect(runClaudeMock).toHaveBeenCalled();
+    const args = runClaudeMock.mock.calls.at(-1);
+    expect(args?.[5]).toBe("dontAsk");
   });
 
   it("handles set_permission_mode action", async () => {
@@ -373,6 +442,7 @@ describe("handoff flow", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     runClaudeMock.mockReset();
+    sessionState.sessionId = undefined;
   });
 
   // Note: handoff_fork uses continueConversation which doesn't work in TestAdapter

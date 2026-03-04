@@ -256,6 +256,16 @@ export function buildPermissionModeCard(
       desc: "Auto-allow file edits, ask for others",
     },
     {
+      id: "plan",
+      label: "Plan mode - Claude explains what it would do without executing",
+      desc: "Preview actions without running tools",
+    },
+    {
+      id: "dontAsk",
+      label: "Don't ask - Auto-approve all tools (less strict than bypass)",
+      desc: "Auto-approve tools without confirmation",
+    },
+    {
       id: "bypassPermissions",
       label: "⚡ Bypass",
       desc: "Allow everything (fast but risky)",

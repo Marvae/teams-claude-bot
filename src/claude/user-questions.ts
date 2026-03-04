@@ -10,6 +10,7 @@ export type UserQuestion = {
   header: string;
   options: UserQuestionOption[];
   multiSelect?: boolean;
+  allowFreeText?: boolean;
 };
 
 export type AskUserQuestionInput = {
@@ -39,6 +40,10 @@ export function getQuestionInputId(index: number): string {
   return `question_${index}`;
 }
 
+function getFreeTextInputId(index: number): string {
+  return `freetext_${index}`;
+}
+
 export function isAskUserQuestionInput(
   input: Record<string, unknown>,
 ): input is AskUserQuestionInput {
@@ -56,6 +61,20 @@ export function isAskUserQuestionInput(
       typeof candidate.question !== "string" ||
       typeof candidate.header !== "string" ||
       !Array.isArray(candidate.options)
+    ) {
+      return false;
+    }
+
+    if (
+      candidate.multiSelect !== undefined &&
+      typeof candidate.multiSelect !== "boolean"
+    ) {
+      return false;
+    }
+
+    if (
+      candidate.allowFreeText !== undefined &&
+      typeof candidate.allowFreeText !== "boolean"
     ) {
       return false;
     }
@@ -79,33 +98,36 @@ export function buildAskUserQuestionResponse(
   for (const [index, question] of input.questions.entries()) {
     const key = getQuestionInputId(index);
     const raw = rawAnswers[key];
+    const freeTextRaw = rawAnswers[getFreeTextInputId(index)];
+    const freeText = typeof freeTextRaw === "string" ? freeTextRaw.trim() : "";
+    let answer = "";
 
     if (question.multiSelect) {
       if (typeof raw !== "string") {
-        answers[question.question] = "";
-        continue;
+        answer = "";
+      } else {
+        const selectedLabels = raw
+          .split(",")
+          .map((label) => label.trim())
+          .filter(Boolean)
+          .filter((label) =>
+            question.options.some((option) => option.label === label),
+          );
+
+        answer = selectedLabels.join(", ");
       }
-
-      const selectedLabels = raw
-        .split(",")
-        .map((label) => label.trim())
-        .filter(Boolean)
-        .filter((label) =>
-          question.options.some((option) => option.label === label),
-        );
-
-      answers[question.question] = selectedLabels.join(", ");
-      continue;
-    }
-
-    if (
+    } else if (
       typeof raw === "string" &&
       question.options.some((option) => option.label === raw)
     ) {
-      answers[question.question] = raw;
-    } else {
-      answers[question.question] = "";
+      answer = raw;
     }
+
+    if (question.allowFreeText && freeText) {
+      answer = answer ? `${answer}\n${freeText}` : freeText;
+    }
+
+    answers[question.question] = answer;
   }
 
   return {
@@ -163,6 +185,15 @@ export function buildAskUserQuestionCardData(
         })),
       },
     );
+
+    if (question.allowFreeText) {
+      body.push({
+        type: "Input.Text",
+        id: getFreeTextInputId(index),
+        placeholder: "Additional details (optional)",
+        isMultiline: true,
+      });
+    }
   }
 
   const actions: Array<Record<string, unknown>> = [
@@ -208,6 +239,8 @@ export function registerAskUserQuestion(
       timeout,
       input,
     });
+
+    return;
   });
 }
 

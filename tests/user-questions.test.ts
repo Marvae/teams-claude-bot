@@ -96,6 +96,56 @@ describe("user-questions", () => {
     });
   });
 
+  it("adds free-text input when allowFreeText is enabled", () => {
+    const input: AskUserQuestionInput = {
+      questions: [
+        {
+          header: "Format",
+          question: "How should I format the output?",
+          options: [{ label: "Summary" }, { label: "Detailed" }],
+          allowFreeText: true,
+        },
+      ],
+    };
+
+    const card = buildAskUserQuestionCard(input, "tool-q-3");
+    const body = card.body as Array<Record<string, unknown>>;
+
+    const textInput = body.find(
+      (item) => item.type === "Input.Text" && item.id === "freetext_0",
+    );
+    expect(textInput).toBeDefined();
+  });
+
+  it("includes free-text response when provided", () => {
+    const input: AskUserQuestionInput = {
+      questions: [
+        {
+          header: "Format",
+          question: "How should I format the output?",
+          options: [{ label: "Summary" }, { label: "Detailed" }],
+          allowFreeText: true,
+        },
+      ],
+    };
+
+    const response = buildAskUserQuestionResponse(input, {
+      question_0: "Summary",
+      freetext_0: "Use markdown tables and include code examples.",
+    });
+
+    expect(response).toEqual({
+      behavior: "allow",
+      updatedInput: {
+        questions: input.questions,
+        answers: {
+          "How should I format the output?":
+            "Summary\nUse markdown tables and include code examples.",
+        },
+      },
+    });
+  });
+
   it("integrates with canUseTool handler for AskUserQuestion", async () => {
     const sendCard = vi.fn().mockResolvedValue(undefined);
     const handler = createPermissionHandler(sendCard);

@@ -39,7 +39,13 @@ const AVAILABLE_MODELS = [
   { id: "claude-haiku-4-5", shortcut: "haiku" },
 ];
 
-const VALID_PERMISSION_MODES = ["default", "acceptEdits", "bypassPermissions"];
+const VALID_PERMISSION_MODES = [
+  "default",
+  "acceptEdits",
+  "plan",
+  "dontAsk",
+  "bypassPermissions",
+];
 
 export async function handleCommand(
   text: string,
