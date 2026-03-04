@@ -369,14 +369,8 @@ export function buildHandoffCard(
     body: [
       {
         type: "TextBlock",
-        text: "Handoff from Terminal",
-        weight: "bolder",
-        size: "medium",
-      },
-      {
-        type: "TextBlock",
-        text: `📂 ${dirName}`,
-        spacing: "small",
+        text: `🔄 Handoff — **${dirName}**`,
+        size: "small",
       },
       {
         type: "TextBlock",
@@ -435,17 +429,10 @@ export function buildPermissionModeCard(
   const body: Record<string, unknown>[] = [
     {
       type: "TextBlock",
-      text: "Permission Mode",
-      weight: "bolder",
-      size: "medium",
-    },
-    {
-      type: "TextBlock",
       text: currentMode
-        ? `Current: **${currentMode}**`
-        : "No mode set (using bypass)",
-      wrap: true,
-      spacing: "small",
+        ? `Permission: **${currentMode}**`
+        : "Permission: **bypassPermissions**",
+      size: "small",
     },
   ];
 

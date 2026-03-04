@@ -143,20 +143,7 @@ export function buildAskUserQuestionCardData(
   input: AskUserQuestionInput,
   toolUseID: string,
 ): AskUserQuestionCardData {
-  const body: Array<Record<string, unknown>> = [
-    {
-      type: "TextBlock",
-      text: "Question",
-      weight: "bolder",
-      size: "medium",
-    },
-    {
-      type: "TextBlock",
-      text: "Please answer to continue.",
-      wrap: true,
-      spacing: "small",
-    },
-  ];
+  const body: Array<Record<string, unknown>> = [];
 
   for (const [index, question] of input.questions.entries()) {
     body.push(

@@ -81,14 +81,14 @@ export function buildElicitationCard(
   const body: AdaptiveBody[] = [
     {
       type: "TextBlock",
-      text: `MCP Input Required (${request.serverName})`,
-      weight: "bolder",
-      size: "medium",
+      text: `**${request.serverName}**`,
+      size: "small",
     },
     {
       type: "TextBlock",
       text: request.message,
       wrap: true,
+      size: "small",
       spacing: "small",
     },
   ];
@@ -159,14 +159,14 @@ export function buildElicitationUrlCard(
   const body: AdaptiveBody[] = [
     {
       type: "TextBlock",
-      text: `MCP Authorization Required (${request.serverName})`,
-      weight: "bolder",
-      size: "medium",
+      text: `🔑 **${request.serverName}**`,
+      size: "small",
     },
     {
       type: "TextBlock",
       text: request.message,
       wrap: true,
+      size: "small",
       spacing: "small",
     },
   ];
