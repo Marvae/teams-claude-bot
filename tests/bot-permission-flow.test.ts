@@ -143,7 +143,31 @@ describe("handleMessage passes permission + prompt handlers", () => {
     expect(typeof runOptions.onPromptRequest).toBe("function");
   });
 
-  it("does NOT pass canUseTool when permissionMode is bypassPermissions", async () => {
+  it("passes onElicitation to runClaude", async () => {
+    runClaudeMock.mockResolvedValue({
+      result: "Done",
+      sessionId: "sess-elic-1",
+      tools: [],
+    });
+
+    const adapter = createAdapter();
+
+    await adapter
+      .send(makeActivity("Connect MCP"))
+      .assertReply({ type: ActivityTypes.Typing })
+      .assertReply((activity) => {
+        expect(activity.text).toBe("Done");
+      })
+      .startTest();
+
+    const args = runClaudeMock.mock.calls[0];
+    const runOptions = args[8];
+    expect(runOptions).toBeDefined();
+    expect(runOptions.onElicitation).toBeDefined();
+    expect(typeof runOptions.onElicitation).toBe("function");
+  });
+
+  it("still passes canUseTool when permissionMode is bypassPermissions", async () => {
     sessionState.permissionMode = "bypassPermissions";
 
     runClaudeMock.mockResolvedValue({
@@ -164,8 +188,8 @@ describe("handleMessage passes permission + prompt handlers", () => {
 
     const args = runClaudeMock.mock.calls[0];
     const runOptions = args[8];
-    // canUseTool should be undefined when bypassing permissions
-    expect(runOptions?.canUseTool).toBeUndefined();
+    // canUseTool is always passed - SDK decides when to call it
+    expect(runOptions?.canUseTool).toBeDefined();
   });
 
   it("canUseTool callback sends permission card and resolves on Allow", async () => {
@@ -268,5 +292,70 @@ describe("handleMessage passes permission + prompt handlers", () => {
       .startTest();
 
     expect(capturedOnPromptRequest).toBeDefined();
+  });
+
+  it("onElicitation callback sends form card and resolves with submitted values", async () => {
+    let capturedOnElicitation:
+      | ((...args: unknown[]) => Promise<unknown>)
+      | undefined;
+
+    runClaudeMock.mockImplementation(async (...args: unknown[]) => {
+      const runOptions = args[8] as Record<string, unknown> | undefined;
+      capturedOnElicitation =
+        runOptions?.onElicitation as typeof capturedOnElicitation;
+
+      if (capturedOnElicitation) {
+        const { resolveElicitation } =
+          await import("../src/claude/elicitation.js");
+
+        const responsePromise = capturedOnElicitation({
+          serverName: "github-mcp",
+          message: "Provide project configuration",
+          mode: "form",
+          elicitationId: "elicitation-1",
+          requestedSchema: {
+            type: "object",
+            properties: {
+              project: { type: "string", title: "Project" },
+              branch: { type: "string", title: "Branch" },
+            },
+            required: ["project"],
+          },
+        });
+
+        await new Promise((r) => setTimeout(r, 50));
+        resolveElicitation("elicitation-1", {
+          project: "teams-claude-bot",
+          branch: "main",
+        });
+
+        const selected = await responsePromise;
+        expect(selected).toEqual({
+          action: "accept",
+          content: {
+            project: "teams-claude-bot",
+            branch: "main",
+          },
+        });
+      }
+
+      return {
+        result: "Elicitation completed",
+        sessionId: "sess-elic-form",
+        tools: [],
+      };
+    });
+
+    const adapter = createAdapter();
+
+    await adapter
+      .send(makeActivity("Connect MCP with form"))
+      .assertReply({ type: ActivityTypes.Typing })
+      .assertReply(() => {
+        // Elicitation card or result
+      })
+      .startTest();
+
+    expect(capturedOnElicitation).toBeDefined();
   });
 });

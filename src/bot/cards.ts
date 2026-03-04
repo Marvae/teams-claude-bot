@@ -3,6 +3,11 @@ import {
   buildAskUserQuestionCardData,
   isAskUserQuestionInput,
 } from "../claude/user-questions.js";
+import {
+  buildElicitationCard,
+  buildElicitationUrlCard as buildClaudeElicitationUrlCard,
+  type ElicitationRequest,
+} from "../claude/elicitation.js";
 
 interface CommandDef {
   title: string;
@@ -203,6 +208,36 @@ export function buildAskUserQuestionCard(
     $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
     body: questionCard.body,
     actions: questionCard.actions,
+  };
+}
+
+export function buildElicitationFormCard(
+  elicitationId: string,
+  request: ElicitationRequest,
+): Record<string, unknown> {
+  const card = buildElicitationCard(elicitationId, request);
+
+  return {
+    type: "AdaptiveCard",
+    version: "1.4",
+    $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+    body: card.body,
+    actions: card.actions,
+  };
+}
+
+export function buildElicitationUrlCard(
+  elicitationId: string,
+  request: ElicitationRequest,
+): Record<string, unknown> {
+  const card = buildClaudeElicitationUrlCard(elicitationId, request);
+
+  return {
+    type: "AdaptiveCard",
+    version: "1.4",
+    $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+    body: card.body,
+    actions: card.actions,
   };
 }
 

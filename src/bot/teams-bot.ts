@@ -36,8 +36,18 @@ import {
   resolvePermission,
   createPermissionHandler,
 } from "../claude/permissions.js";
-import { buildPermissionCard } from "./cards.js";
+import {
+  buildElicitationFormCard,
+  buildElicitationUrlCard,
+  buildPermissionCard,
+} from "./cards.js";
 import { resolveAskUserQuestion } from "../claude/user-questions.js";
+import {
+  cancelElicitation,
+  handleElicitation,
+  resolveElicitation,
+  resolveElicitationUrlComplete,
+} from "../claude/elicitation.js";
 import { processAttachments } from "./attachments.js";
 import { config } from "../config.js";
 import { saveConversationRef } from "../handoff/store.js";
@@ -189,6 +199,39 @@ export class ClaudeCodeBot extends ActivityHandler {
         return;
       }
 
+      if (value.action === "elicitation_form_submit") {
+        const elicitationId = value.elicitationId as string;
+        const resolved = resolveElicitation(elicitationId, value);
+        if (resolved) {
+          await ctx.sendActivity("✅ Submitted");
+        } else {
+          await ctx.sendActivity("Elicitation request expired or not found.");
+        }
+        return;
+      }
+
+      if (value.action === "elicitation_url_complete") {
+        const elicitationId = value.elicitationId as string;
+        const resolved = resolveElicitationUrlComplete(elicitationId);
+        if (resolved) {
+          await ctx.sendActivity("✅ Authorization confirmed");
+        } else {
+          await ctx.sendActivity("Elicitation request expired or not found.");
+        }
+        return;
+      }
+
+      if (value.action === "elicitation_form_cancel") {
+        const elicitationId = value.elicitationId as string;
+        const resolved = cancelElicitation(elicitationId);
+        if (resolved) {
+          await ctx.sendActivity("❌ Canceled");
+        } else {
+          await ctx.sendActivity("Elicitation request expired or not found.");
+        }
+        return;
+      }
+
       if (value.action === "set_permission_mode") {
         const mode = value.mode as string;
         setPermissionMode(conversationId, mode);
@@ -288,21 +331,14 @@ export class ClaudeCodeBot extends ActivityHandler {
       return response;
     };
 
-    // Add permission handler (unless bypassing)
-    if (permissionMode !== "bypassPermissions") {
-      const sendCard = async (req: {
-        toolName: string;
-        input: Record<string, unknown>;
-        toolUseID: string;
-        decisionReason?: string;
-      }) => {
-        const card = buildPermissionCard(
-          req.toolName,
-          req.input,
-          req.toolUseID,
-          req.decisionReason,
-        );
-        void ctx.sendActivity({
+    runOptions.onElicitation = async (request) => {
+      return handleElicitation(request, async (elicitationId, req) => {
+        const card =
+          req.mode === "url"
+            ? buildElicitationUrlCard(elicitationId, req)
+            : buildElicitationFormCard(elicitationId, req);
+
+        await ctx.sendActivity({
           attachments: [
             {
               contentType: "application/vnd.microsoft.card.adaptive",
@@ -310,9 +346,32 @@ export class ClaudeCodeBot extends ActivityHandler {
             },
           ],
         });
-      };
-      runOptions.canUseTool = createPermissionHandler(sendCard);
-    }
+      });
+    };
+
+    // Always pass canUseTool - SDK decides when to call based on permission settings
+    const sendCard = async (req: {
+      toolName: string;
+      input: Record<string, unknown>;
+      toolUseID: string;
+      decisionReason?: string;
+    }) => {
+      const card = buildPermissionCard(
+        req.toolName,
+        req.input,
+        req.toolUseID,
+        req.decisionReason,
+      );
+      void ctx.sendActivity({
+        attachments: [
+          {
+            contentType: "application/vnd.microsoft.card.adaptive",
+            content: card,
+          },
+        ],
+      });
+    };
+    runOptions.canUseTool = createPermissionHandler(sendCard);
 
     try {
       console.log("[BOT] Calling runClaude...");
@@ -413,19 +472,13 @@ export class ClaudeCodeBot extends ActivityHandler {
       return registerPromptRequest(info.requestId);
     };
 
-    if (permissionMode !== "bypassPermissions") {
-      const sendCard = async (req: {
-        toolName: string;
-        input: Record<string, unknown>;
-        toolUseID: string;
-        decisionReason?: string;
-      }) => {
-        const card = buildPermissionCard(
-          req.toolName,
-          req.input,
-          req.toolUseID,
-          req.decisionReason,
-        );
+    finalRunOptions.onElicitation = async (request) => {
+      return handleElicitation(request, async (elicitationId, req) => {
+        const card =
+          req.mode === "url"
+            ? buildElicitationUrlCard(elicitationId, req)
+            : buildElicitationFormCard(elicitationId, req);
+
         await ctx.sendActivity({
           attachments: [
             {
@@ -434,9 +487,32 @@ export class ClaudeCodeBot extends ActivityHandler {
             },
           ],
         });
-      };
-      finalRunOptions.canUseTool = createPermissionHandler(sendCard);
-    }
+      });
+    };
+
+    // Always pass canUseTool - SDK decides when to call based on permission settings
+    const sendPermCard = async (req: {
+      toolName: string;
+      input: Record<string, unknown>;
+      toolUseID: string;
+      decisionReason?: string;
+    }) => {
+      const card = buildPermissionCard(
+        req.toolName,
+        req.input,
+        req.toolUseID,
+        req.decisionReason,
+      );
+      await ctx.sendActivity({
+        attachments: [
+          {
+            contentType: "application/vnd.microsoft.card.adaptive",
+            content: card,
+          },
+        ],
+      });
+    };
+    finalRunOptions.canUseTool = createPermissionHandler(sendPermCard);
 
     try {
       const result = await runClaude(

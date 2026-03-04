@@ -43,7 +43,26 @@ export interface RunClaudeOptions {
   resume?: "fork" | "continue";
   canUseTool?: CanUseTool;
   onPromptRequest?: (info: PromptRequestInfo) => Promise<string>;
+  onElicitation?: OnElicitation;
 }
+
+export interface ElicitationRequest {
+  serverName: string;
+  message: string;
+  mode?: "form" | "url";
+  url?: string;
+  elicitationId?: string;
+  requestedSchema?: Record<string, unknown>;
+}
+
+export interface ElicitationResult {
+  action: "accept" | "decline" | "cancel";
+  content?: Record<string, unknown>;
+}
+
+export type OnElicitation = (
+  request: ElicitationRequest,
+) => Promise<ElicitationResult>;
 
 export type CanUseTool = SDKCanUseTool;
 
@@ -103,19 +122,11 @@ export async function runClaude(
 
   try {
     const options: Record<string, unknown> = {
-      allowedTools: [
-        "Read",
-        "Write",
-        "Edit",
-        "Bash",
-        "Glob",
-        "Grep",
-        "AskUserQuestion",
-      ],
+      allowedTools: ["Read", "Glob", "Grep", "AskUserQuestion"],
       permissionMode: permissionMode ?? "default",
       allowDangerouslySkipPermissions: permissionMode === "bypassPermissions",
       maxTurns: 50,
-      executable: process.execPath,
+      executable: "node",
     };
 
     if (model) options.model = model;
@@ -134,6 +145,11 @@ export async function runClaude(
     // Pass canUseTool callback if provided
     if (runOptions?.canUseTool) {
       options.canUseTool = runOptions.canUseTool;
+    }
+
+    // Pass onElicitation callback if provided
+    if (runOptions?.onElicitation) {
+      options.onElicitation = runOptions.onElicitation;
     }
 
     // Save images to tmp files and prepend paths to prompt
@@ -252,10 +268,41 @@ export async function runClaude(
         }
       }
 
-      // Capture final result
+      // Handle SDK result message (success or error)
       if (
         typeof message === "object" &&
         message !== null &&
+        "type" in message &&
+        (message as Record<string, unknown>).type === "result"
+      ) {
+        const resultMsg = message as Record<string, unknown>;
+        const isError =
+          resultMsg.is_error === true ||
+          (typeof resultMsg.subtype === "string" &&
+            (resultMsg.subtype as string).startsWith("error_"));
+
+        if (isError) {
+          const errors = resultMsg.errors as string[] | undefined;
+          if (errors && errors.length > 0) {
+            return {
+              error: errors.join("; "),
+              tools,
+            };
+          }
+          return {
+            error: `Error: ${resultMsg.subtype ?? "unknown"}`,
+            tools,
+          };
+        }
+
+        resultText = resultMsg.result as string;
+      }
+
+      // Legacy: Capture result from messages without type field
+      if (
+        typeof message === "object" &&
+        message !== null &&
+        !("type" in message) &&
         "result" in message
       ) {
         resultText = (message as Record<string, unknown>).result as string;
