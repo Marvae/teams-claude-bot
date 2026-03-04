@@ -179,6 +179,7 @@ export async function handleCommand(
       }
 
       state.setPermissionMode(arg);
+      state.destroySession();
       await ctx.sendActivity(`Permission mode set to \`${arg}\``);
       return true;
     }

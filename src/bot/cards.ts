@@ -220,39 +220,35 @@ export function buildPermissionCard(
 
   const inputDisplay = JSON.stringify(input, null, 2).slice(0, 500);
 
-  // Build a short summary for the main card
-  const summary = buildPermissionSummary(toolName, input);
+  const oneLiner = JSON.stringify(input);
+  const summary =
+    oneLiner.length > 120 ? oneLiner.slice(0, 117) + "..." : oneLiner;
 
   const body: Record<string, unknown>[] = [
     {
       type: "TextBlock",
-      text: "🔒 Permission Required",
-      weight: "bolder",
-      size: "medium",
+      text: `🔒 **${toolName}**`,
+      wrap: true,
+      size: "small",
     },
     {
-      type: "TextBlock",
-      text: `Tool: **${toolName}**`,
-      wrap: true,
-    },
-  ];
-
-  if (summary) {
-    body.push({
       type: "TextBlock",
       text: summary,
       wrap: true,
       fontType: "monospace",
       size: "small",
-    });
-  }
+      spacing: "small",
+    },
+  ];
 
   if (decisionReason) {
     body.push({
       type: "TextBlock",
-      text: `Reason: ${decisionReason}`,
+      text: decisionReason,
       wrap: true,
       isSubtle: true,
+      size: "small",
+      spacing: "small",
     });
   }
 
@@ -284,7 +280,11 @@ export function buildPermissionCard(
       style: "destructive",
       data: { action: "permission_deny", toolUseID },
     },
-    {
+  ];
+
+  // Only show Details if the summary was truncated
+  if (oneLiner.length > 120) {
+    actions.push({
       type: "Action.ShowCard",
       title: "Details",
       card: {
@@ -299,8 +299,8 @@ export function buildPermissionCard(
           },
         ],
       },
-    },
-  ];
+    });
+  }
 
   return {
     type: "AdaptiveCard",
@@ -465,26 +465,4 @@ export function buildPermissionModeCard(
     body,
     actions,
   };
-}
-
-/** Build a short one-line summary for common tool inputs. */
-function buildPermissionSummary(
-  toolName: string,
-  input: Record<string, unknown>,
-): string | undefined {
-  if (toolName === "Bash" && typeof input.command === "string") {
-    return input.command.length > 120
-      ? input.command.slice(0, 117) + "..."
-      : input.command;
-  }
-  if (
-    (toolName === "Edit" || toolName === "Write" || toolName === "Read") &&
-    typeof input.file_path === "string"
-  ) {
-    return input.file_path;
-  }
-  if (toolName === "Grep" && typeof input.pattern === "string") {
-    return `pattern: ${input.pattern}`;
-  }
-  return undefined;
 }

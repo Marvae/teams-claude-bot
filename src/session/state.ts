@@ -30,32 +30,52 @@ export interface ManagedSession {
   pendingMessages: PendingMessage[];
 }
 
-// ─── Persistence (sessionId only) ───
+// ─── Persistence ───
 
 const SESSION_FILE =
   process.env.BOT_SESSIONS_FILE ??
   join(homedir(), ".claude", "teams-bot", "session.json");
 
-export function loadPersistedSessionId(): string | undefined {
+interface PersistedData {
+  sessionId?: string;
+  permissionMode?: string;
+}
+
+function loadPersisted(): PersistedData {
   try {
     const raw = readFileSync(SESSION_FILE, "utf-8");
-    const data = JSON.parse(raw) as { sessionId?: string };
-    return data.sessionId;
+    return JSON.parse(raw) as PersistedData;
   } catch {
-    return undefined;
+    return {};
   }
 }
 
-export function persistSessionId(id: string): void {
+function savePersisted(data: PersistedData): void {
   mkdirSync(dirname(SESSION_FILE), { recursive: true });
-  writeFileSync(SESSION_FILE, JSON.stringify({ sessionId: id }));
+  writeFileSync(SESSION_FILE, JSON.stringify(data));
+}
+
+export function loadPersistedSessionId(): string | undefined {
+  return loadPersisted().sessionId;
+}
+
+export function persistSessionId(id: string): void {
+  const data = loadPersisted();
+  data.sessionId = id;
+  savePersisted(data);
 }
 
 export function clearPersistedSessionId(): void {
-  try {
-    writeFileSync(SESSION_FILE, JSON.stringify({}));
-  } catch {
-    // Ignore — file may not exist
+  const data = loadPersisted();
+  delete data.sessionId;
+  savePersisted(data);
+}
+
+/** Load persisted state into memory (call on startup). */
+export function loadPersistedState(): void {
+  const data = loadPersisted();
+  if (data.permissionMode) {
+    permissionMode = data.permissionMode;
   }
 }
 
@@ -135,6 +155,9 @@ export function getPermissionMode(): string {
 
 export function setPermissionMode(m: string): void {
   permissionMode = m;
+  const data = loadPersisted();
+  data.permissionMode = m;
+  savePersisted(data);
 }
 
 export function getHandoffMode(): "pickup" | undefined {

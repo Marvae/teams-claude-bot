@@ -304,6 +304,7 @@ export class ClaudeCodeBot extends ActivityHandler {
       if (value.action === "set_permission_mode") {
         const mode = value.mode as string;
         state.setPermissionMode(mode);
+        state.destroySession();
         await ctx.sendActivity(`Permission mode set to \`${mode}\``);
         return;
       }

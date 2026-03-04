@@ -4,9 +4,11 @@ import express from "express";
 import { ClaudeCodeBot } from "./bot/teams-bot.js";
 import { buildHandoffCard } from "./bot/cards.js";
 import { loadConversationRefs, getConversationRef } from "./handoff/store.js";
+import { loadPersistedState } from "./session/state.js";
 
-// Load persisted state (conversation refs only — session created lazily on first message)
+// Load persisted state
 loadConversationRefs();
+loadPersistedState();
 
 // Bot Framework adapter
 const adapter = new BotFrameworkAdapter({
