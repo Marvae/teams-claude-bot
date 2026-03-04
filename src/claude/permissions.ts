@@ -1,6 +1,7 @@
 import type {
   CanUseTool as SDKCanUseTool,
   PermissionResult as SDKPermissionResult,
+  PermissionUpdate,
 } from "@anthropic-ai/claude-agent-sdk";
 import { handleAskUserQuestion } from "./user-questions.js";
 
@@ -10,6 +11,7 @@ export type PermissionRequest = {
   toolUseID: string;
   decisionReason?: string;
   blockedPath?: string;
+  suggestions?: PermissionUpdate[];
 };
 
 export type PermissionResult = SDKPermissionResult;
@@ -23,6 +25,7 @@ type PendingPermission = {
   timeout: NodeJS.Timeout;
   toolUseID: string;
   input: Record<string, unknown>;
+  suggestions?: PermissionUpdate[];
 };
 
 const pendingPermissions = new Map<string, PendingPermission>();
@@ -40,7 +43,8 @@ export function createPermissionHandler(
     input: Record<string, unknown>,
     opts: Parameters<SDKCanUseTool>[2],
   ): Promise<PermissionResult> => {
-    const { toolUseID, decisionReason, blockedPath } = opts;
+    const { toolUseID, decisionReason, blockedPath, suggestions } = opts;
+    console.log(`[PERM] canUseTool called: tool=${toolName}, suggestions=${JSON.stringify(suggestions)}`);
 
     if (toolName === "AskUserQuestion") {
       return handleAskUserQuestion(input, {
@@ -51,7 +55,7 @@ export function createPermissionHandler(
     }
 
     // Send card to user
-    await sendCard({ toolName, input, toolUseID, decisionReason, blockedPath });
+    await sendCard({ toolName, input, toolUseID, decisionReason, blockedPath, suggestions });
 
     // Wait for user response or timeout
     return new Promise<PermissionResult>((resolve) => {
@@ -69,6 +73,7 @@ export function createPermissionHandler(
         timeout,
         toolUseID,
         input,
+        suggestions,
       });
     });
   }) satisfies SDKCanUseTool;
@@ -95,6 +100,26 @@ export function resolvePermission(toolUseID: string, allow: boolean): boolean {
     });
   }
 
+  return true;
+}
+
+export function resolvePermissionWithSuggestion(
+  toolUseID: string,
+  suggestionIndex: number,
+): boolean {
+  const pending = pendingPermissions.get(toolUseID);
+  if (!pending) return false;
+
+  clearTimeout(pending.timeout);
+  pendingPermissions.delete(toolUseID);
+
+  const selected = pending.suggestions?.[suggestionIndex];
+  pending.resolve({
+    behavior: "allow",
+    updatedInput: pending.input,
+    updatedPermissions: selected ? [selected] : pending.suggestions,
+    toolUseID,
+  });
   return true;
 }
 

@@ -17,8 +17,10 @@ import { ConversationSession, type SessionConfig } from "../claude/session.js";
 import { formatResponse, splitMessage } from "../claude/formatter.js";
 import {
   resolvePermission,
+  resolvePermissionWithSuggestion,
   createPermissionHandler,
 } from "../claude/permissions.js";
+import type { PermissionUpdate } from "@anthropic-ai/claude-agent-sdk";
 import {
   buildElicitationFormCard,
   buildElicitationUrlCard,
@@ -78,6 +80,7 @@ export class ClaudeCodeBot extends ActivityHandler {
       toolName: string;
       input: Record<string, unknown>;
       decisionReason?: string;
+      suggestions?: PermissionUpdate[];
     }
   >();
 
@@ -224,11 +227,20 @@ export class ClaudeCodeBot extends ActivityHandler {
 
       if (
         value.action === "permission_allow" ||
-        value.action === "permission_deny"
+        value.action === "permission_deny" ||
+        value.action === "permission_allow_session"
       ) {
         const toolUseID = value.toolUseID as string;
-        const allow = value.action === "permission_allow";
-        const resolved = resolvePermission(toolUseID, allow);
+        const allow = value.action !== "permission_deny";
+        let resolved: boolean;
+        if (value.action === "permission_allow_session") {
+          resolved = resolvePermissionWithSuggestion(
+            toolUseID,
+            value.suggestionIndex as number,
+          );
+        } else {
+          resolved = resolvePermission(toolUseID, allow);
+        }
         const label = allow ? "✅ Allowed" : "❌ Denied";
 
         const cardInfo = this.permissionCards.get(toolUseID);
@@ -240,6 +252,7 @@ export class ClaudeCodeBot extends ActivityHandler {
             cardInfo.input,
             toolUseID,
             cardInfo.decisionReason,
+            undefined,
             resolved ? label : "⏰ Expired",
           );
           try {
@@ -513,12 +526,14 @@ export class ClaudeCodeBot extends ActivityHandler {
       input: Record<string, unknown>;
       toolUseID: string;
       decisionReason?: string;
+      suggestions?: PermissionUpdate[];
     }) => {
       const card = buildPermissionCard(
         req.toolName,
         req.input,
         req.toolUseID,
         req.decisionReason,
+        req.suggestions,
       );
       const resp = await sendActivity({
         attachments: [
@@ -534,6 +549,7 @@ export class ClaudeCodeBot extends ActivityHandler {
           toolName: req.toolName,
           input: req.input,
           decisionReason: req.decisionReason,
+          suggestions: req.suggestions,
         });
       }
     };

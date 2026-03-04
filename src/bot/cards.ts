@@ -1,4 +1,5 @@
 // cards.ts
+import type { PermissionUpdate } from "@anthropic-ai/claude-agent-sdk";
 import {
   type AskUserQuestionInput,
   buildAskUserQuestionCardData,
@@ -207,11 +208,34 @@ export function buildHelpCard(
   };
 }
 
+function suggestionLabel(s: PermissionUpdate): string {
+  const destLabel: Record<string, string> = {
+    session: "for session",
+    projectSettings: "for project",
+    localSettings: "locally",
+    userSettings: "globally",
+  };
+  const scope = destLabel[s.destination] ?? s.destination;
+  if ("rules" in s && s.rules.length > 0) {
+    const action = s.rules[0].toolName ?? "tool";
+    const content = s.rules[0].ruleContent;
+    if (content) {
+      return `Allow ${action} in ${content} ${scope}`;
+    }
+    return `Allow ${action} ${scope}`;
+  }
+  if (s.type === "setMode" && "mode" in s) {
+    return `Set ${s.mode} ${scope}`;
+  }
+  return `Allow ${scope}`;
+}
+
 export function buildPermissionCard(
   toolName: string,
   input: Record<string, unknown>,
   toolUseID: string,
   decisionReason?: string,
+  suggestions?: PermissionUpdate[],
   result?: string,
 ): Record<string, unknown> {
   if (toolName === "AskUserQuestion" && isAskUserQuestionInput(input)) {
@@ -274,13 +298,29 @@ export function buildPermissionCard(
       style: "positive",
       data: { action: "permission_allow", toolUseID },
     },
-    {
-      type: "Action.Submit",
-      title: "❌ Deny",
-      style: "destructive",
-      data: { action: "permission_deny", toolUseID },
-    },
   ];
+
+  if (suggestions) {
+    for (let i = 0; i < suggestions.length; i++) {
+      actions.push({
+        type: "Action.Submit",
+        title: `✅ ${suggestionLabel(suggestions[i])}`,
+        style: "positive",
+        data: {
+          action: "permission_allow_session",
+          toolUseID,
+          suggestionIndex: i,
+        },
+      });
+    }
+  }
+
+  actions.push({
+    type: "Action.Submit",
+    title: "❌ Deny",
+    style: "destructive",
+    data: { action: "permission_deny", toolUseID },
+  });
 
   // Only show Details if the summary was truncated
   if (oneLiner.length > 120) {
