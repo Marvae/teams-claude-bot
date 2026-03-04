@@ -61,7 +61,6 @@ export class ConversationSession {
   private turnResolver: TurnResolver | null = null;
   private _lastActivity = Date.now();
   private closed = false;
-  private idleWaiters: Array<() => void> = [];
 
   constructor(private config: SessionConfig) {}
 
@@ -138,14 +137,6 @@ export class ConversationSession {
     if (this.activeQuery) {
       await this.activeQuery.interrupt();
     }
-  }
-
-  /** Wait until the session is no longer busy (current turn resolves). */
-  waitForIdle(): Promise<void> {
-    if (!this._isBusy) return Promise.resolve();
-    return new Promise<void>((resolve) => {
-      this.idleWaiters.push(resolve);
-    });
   }
 
   /** Close the query and clean up. */
@@ -443,9 +434,6 @@ export class ConversationSession {
       this.turnResolver = null;
       resolver.resolve(result);
     }
-    // Wake up anyone waiting for idle
-    for (const w of this.idleWaiters) w();
-    this.idleWaiters.length = 0;
   }
 
   private buildQueryOptions(): Record<string, unknown> {
