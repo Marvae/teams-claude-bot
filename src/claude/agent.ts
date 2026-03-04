@@ -39,6 +39,7 @@ export type ProgressEvent =
       resetsAt?: number;
     }
   | { type: "text"; text: string }
+  | { type: "auth_error"; error: string }
   | { type: "done" };
 
 export interface PromptRequestInfo {

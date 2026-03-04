@@ -268,6 +268,15 @@ export class ConversationSession {
       this.config.onSessionId?.(this.sessionId);
     }
 
+    // ── Auth status ──
+    if (msg.type === "auth_status") {
+      const error = msg.error as string | undefined;
+      if (error) {
+        console.error(`[SESSION] Auth error: ${error}`);
+        this.turnResolver?.onProgress?.({ type: "auth_error", error });
+      }
+    }
+
     // ── PromptRequest ──
     if ("prompt" in msg && "message" in msg && "options" in msg) {
       await this.handlePromptRequest(msg);

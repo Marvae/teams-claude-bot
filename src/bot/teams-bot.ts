@@ -49,10 +49,19 @@ function friendlyError(error: string, stopReason?: string | null): string {
   if (error.includes("ENOENT")) {
     return "Could not start Claude Code. The bot service may need to be restarted.";
   }
+  if (
+    error.includes("auth") ||
+    error.includes("unauthorized") ||
+    error.includes("login") ||
+    error.includes("credential") ||
+    error.includes("OAuth")
+  ) {
+    return "Claude login expired. Run `claude login` in your terminal, then try again.";
+  }
   if (error.includes("rate_limit") || error.includes("429")) {
     return "Claude API is rate limited. Please wait a moment and try again.";
   }
-  if (error.includes("token") || error.includes("context_length")) {
+  if (error.includes("context_length")) {
     return "Conversation is too long. Use `/new` to start a fresh session.";
   }
   if (error.includes("timeout") || error.includes("ETIMEDOUT")) {
@@ -762,6 +771,14 @@ export class ClaudeCodeBot extends ActivityHandler {
       onProgress: (event: ProgressEvent) => {
         if (event.type === "done") {
           typingController?.abort();
+          return;
+        }
+
+        if (event.type === "auth_error") {
+          progressLines.push(
+            `🔑 Login expired — run \`claude login\` in terminal`,
+          );
+          scheduleUpdate(TOOL_THROTTLE_MS);
           return;
         }
 
