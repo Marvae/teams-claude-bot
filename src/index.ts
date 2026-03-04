@@ -4,6 +4,7 @@ import express from "express";
 import { ClaudeCodeBot } from "./bot/teams-bot.js";
 import { loadSessions } from "./session/manager.js";
 import { loadConversationRefs, getConversationRef } from "./handoff/store.js";
+import { isVoiceEnabled } from "./voice/index.js";
 
 // Load persisted state
 loadSessions();
@@ -83,4 +84,7 @@ app.post("/api/handoff", async (req, res) => {
 app.listen(config.port, () => {
   console.log(`Bot running on http://localhost:${config.port}/api/messages`);
   console.log(`Working directory: ${config.claudeWorkDir}`);
+
+  // Warm voice-enabled cache and log availability
+  isVoiceEnabled().catch(() => {});
 });
