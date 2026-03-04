@@ -10,18 +10,7 @@ function formatTool(t: ToolInfo): string {
 }
 
 export function formatResponse(result: ClaudeResult): string {
-  const parts: string[] = [];
-
-  if (result.tools.length > 0) {
-    parts.push(result.tools.map(formatTool).join("\n"));
-    parts.push("---");
-  }
-
-  if (result.result) {
-    parts.push(result.result);
-  }
-
-  return parts.length > 0 ? parts.join("\n\n") : "Done (no output)";
+  return result.result || "Done (no output)";
 }
 
 export function splitMessage(

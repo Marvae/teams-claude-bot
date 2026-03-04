@@ -18,6 +18,9 @@ __pycache__/
 # OS
 .DS_Store
 
+# Logs
+*.log
+
 # Runtime state
 .conversation-refs.json
 

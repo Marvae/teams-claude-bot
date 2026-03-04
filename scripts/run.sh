@@ -18,6 +18,11 @@ fi
 
 TUNNEL_ID="$DEVTUNNEL_ID"
 
+# Ensure devtunnel is findable (WinGet installs to a path not always in bash PATH)
+if ! command -v devtunnel &>/dev/null; then
+  export PATH="$PATH:/c/Users/$USER/AppData/Local/Microsoft/WinGet/Links"
+fi
+
 cleanup() {
   echo "[run.sh] Shutting down..."
   kill $BOT_PID $TUNNEL_PID 2>/dev/null
