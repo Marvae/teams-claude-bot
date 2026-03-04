@@ -32,9 +32,10 @@ export interface ManagedSession {
 
 // ─── Persistence ───
 
-const SESSION_FILE =
+const SESSION_FILE = (
   process.env.BOT_SESSIONS_FILE ??
-  join(homedir(), ".claude", "teams-bot", "session.json");
+  join(homedir(), ".claude", "teams-bot", "session.json")
+).replace(/^~/, homedir());
 
 interface PersistedData {
   sessionId?: string;
