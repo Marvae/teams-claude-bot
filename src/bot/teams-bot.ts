@@ -73,7 +73,11 @@ function friendlyError(error: string, stopReason?: string | null): string {
   return `Something went wrong: ${error.slice(0, 200)}`;
 }
 
+type PendingMessage = { text: string; images?: ImageInput[] };
+
 export class ClaudeCodeBot extends ActivityHandler {
+  private pendingMessages = new Map<string, PendingMessage[]>();
+
   constructor() {
     super();
     this.onMessage(async (ctx, next) => {
@@ -297,8 +301,14 @@ export class ClaudeCodeBot extends ActivityHandler {
     );
 
     if (managed.session.isBusy) {
+      const queue = this.pendingMessages.get(conversationId) ?? [];
+      queue.push({ text: text || "What is in this image?", images });
+      this.pendingMessages.set(conversationId, queue);
+      console.log(
+        `[BOT] Message queued (${queue.length} pending) for ${conversationId}`,
+      );
       await ctx.sendActivity(
-        "Still working on the previous message. Please wait, or send `/stop` to cancel.",
+        `⏳ Queued (${queue.length}) — will process after the current task. Send \`/stop\` to cancel.`,
       );
       return;
     }
@@ -306,6 +316,38 @@ export class ClaudeCodeBot extends ActivityHandler {
     // Update ctx reference for this turn (so callbacks can send cards)
     managed.setCtx(ctx);
 
+    // Process current message, then drain any queued messages
+    await this.processUserMessage(
+      managed,
+      conversationId,
+      ctx,
+      text || "What is in this image?",
+      images,
+    );
+
+    // Drain pending messages that arrived while we were busy
+    while (this.pendingMessages.has(conversationId)) {
+      const queue = this.pendingMessages.get(conversationId)!;
+      const next = queue.shift()!;
+      if (queue.length === 0) this.pendingMessages.delete(conversationId);
+      console.log(`[BOT] Processing queued message for ${conversationId}`);
+      await this.processUserMessage(
+        managed,
+        conversationId,
+        ctx,
+        next.text,
+        next.images,
+      );
+    }
+  }
+
+  private async processUserMessage(
+    managed: ManagedSession,
+    conversationId: string,
+    ctx: TurnContext,
+    text: string,
+    images?: ImageInput[],
+  ): Promise<void> {
     // Run init prompt on new sessions (first send starts the query)
     if (!managed.session.hasQuery && config.sessionInitPrompt) {
       console.log("[BOT] Running session init prompt...");
@@ -322,20 +364,19 @@ export class ClaudeCodeBot extends ActivityHandler {
 
     try {
       console.log("[BOT] Sending message to session...");
-      const result = await managed.session.send(
-        text || "What is in this image?",
-        { onProgress: progress.onProgress, images },
-      );
+      const result = await managed.session.send(text, {
+        onProgress: progress.onProgress,
+        images,
+      });
 
       console.log("[BOT] Session turn completed, stopping typing");
       typingController.abort();
       await typingLoop;
 
       if (result.error) {
-        // If error and session had a query, the process may have died.
-        // Destroy session so next message creates a fresh one.
         console.error(`[BOT] Error from session: ${result.error}`);
         sessionStore.destroy(conversationId);
+        this.pendingMessages.delete(conversationId);
         await progress.finalize([
           friendlyError(result.error, result.stopReason),
         ]);
@@ -352,8 +393,6 @@ export class ClaudeCodeBot extends ActivityHandler {
         return;
       }
 
-      // Session ID is captured by onSessionId callback in createManagedSession
-
       console.log("[BOT] Formatting and sending response");
       await progress.finalize(splitMessage(formatResponse(result)));
       console.log("[BOT] Response sent successfully");
@@ -362,6 +401,7 @@ export class ClaudeCodeBot extends ActivityHandler {
       typingController.abort();
       await typingLoop;
       sessionStore.destroy(conversationId);
+      this.pendingMessages.delete(conversationId);
       const msg = err instanceof Error ? err.message : String(err);
       await progress.finalize([friendlyError(msg)]);
     }
