@@ -27,10 +27,16 @@ import {
 } from "../session/manager.js";
 import {
   runClaude,
+  saveImagesToTmp,
   type ImageInput,
   type ProgressEvent,
   type RunClaudeOptions,
 } from "../claude/agent.js";
+import {
+  queryPool,
+  type ManagedQuery,
+  type TurnHandlers,
+} from "../session/query-pool.js";
 import { formatResponse, splitMessage } from "../claude/formatter.js";
 import {
   resolvePermission,
@@ -232,23 +238,67 @@ export class ClaudeCodeBot extends ActivityHandler {
     // Handle slash commands (only for text-only messages)
     if (!images && (await handleCommand(text, conversationId, ctx))) return;
 
-    // Run session init prompt on new sessions
-    const isNewSession = !getSession(conversationId);
-    if (isNewSession && config.sessionInitPrompt) {
-      console.log("[BOT] Running session init prompt...");
-      const initResult = await runClaude(
-        config.sessionInitPrompt,
-        undefined,
-        getWorkDir(conversationId),
-        getModel(conversationId),
-        getThinkingTokens(conversationId),
-        getPermissionMode(conversationId),
-      );
-      if (initResult.sessionId) {
-        setSession(conversationId, initResult.sessionId);
+    // Prepare image prompt prefix if needed
+    let finalText = text || "What is in this image?";
+    if (images && images.length > 0) {
+      const paths = await saveImagesToTmp(images);
+      const imageRefs = paths.map((p) => `[Uploaded image: ${p}]`).join("\n");
+      finalText = `The user sent the following image(s). Use the Read tool to view them:\n${imageRefs}\n\n${finalText}`;
+    }
+
+    // Acquire or reuse persistent query
+    const permissionMode = getPermissionMode(conversationId);
+    let managed: ManagedQuery;
+    try {
+      managed = queryPool.acquire(conversationId, {
+        workDir: getWorkDir(conversationId),
+        model: getModel(conversationId),
+        thinkingTokens: getThinkingTokens(conversationId),
+        permissionMode,
+        sessionId: getSession(conversationId),
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await ctx.sendActivity(friendlyError(msg));
+      return;
+    }
+
+    // Update mutable permission handler for this turn
+    this.updatePermissionHandler(ctx, managed, permissionMode);
+
+    // If Claude is busy, interrupt first
+    if (managed.busy) {
+      try {
+        await managed.query.interrupt();
+        // Explicitly settle the in-flight turn so its promise doesn't hang
+        if (managed.currentTurn) {
+          managed.currentTurn.reject(new Error("Interrupted by new message"));
+          managed.currentTurn = null;
+          managed.busy = false;
+        }
+        await ctx.sendActivity("⏹ Interrupted. Processing your new message...");
+      } catch (err) {
+        console.warn("[BOT] Interrupt failed, removing query:", err);
+        await queryPool.remove(conversationId);
+        // Fallback to single-turn runClaude
+        await this.fallbackRunClaude(ctx, conversationId, finalText, permissionMode);
+        return;
       }
-      if (initResult.error) {
-        console.warn(`[BOT] Session init error: ${initResult.error}`);
+    }
+
+    // Run session init prompt on first query (no existing session)
+    if (!getSession(conversationId) && config.sessionInitPrompt && !managed.sessionId) {
+      console.log("[BOT] Running session init prompt via pool...");
+      try {
+        const initResult = await queryPool.sendMessage(managed, config.sessionInitPrompt, {});
+        if (initResult.sessionId) {
+          setSession(conversationId, initResult.sessionId);
+        }
+        if (initResult.error) {
+          console.warn(`[BOT] Session init error: ${initResult.error}`);
+        }
+      } catch (err) {
+        console.warn("[BOT] Session init error:", err);
       }
     }
 
@@ -257,40 +307,13 @@ export class ClaudeCodeBot extends ActivityHandler {
     const typingLoop = this.startTypingLoop(ctx, typingController.signal);
     const progress = this.createProgressNotifier(ctx);
 
-    // Build runOptions with permission + prompt handlers
-    const permissionMode = getPermissionMode(conversationId);
-    const runOptions: RunClaudeOptions = {};
-
-    // Add prompt request handler
-    runOptions.onPromptRequest = async (info) => {
-      const response = registerPromptRequest(info.requestId);
-      const card = createPromptCard(info.requestId, info.message, info.options);
-      await ctx.sendActivity({
-        attachments: [
-          {
-            contentType: "application/vnd.microsoft.card.adaptive",
-            content: card,
-          },
-        ],
-      });
-      return response;
-    };
-
-    // Add permission handler (unless bypassing)
-    if (permissionMode !== "bypassPermissions") {
-      const sendCard = async (req: {
-        toolName: string;
-        input: Record<string, unknown>;
-        toolUseID: string;
-        decisionReason?: string;
-      }) => {
-        const card = buildPermissionCard(
-          req.toolName,
-          req.input,
-          req.toolUseID,
-          req.decisionReason,
-        );
-        void ctx.sendActivity({
+    // Build turn handlers
+    const turnHandlers: TurnHandlers = {
+      onProgress: progress.onProgress,
+      onPromptRequest: async (info) => {
+        const response = registerPromptRequest(info.requestId);
+        const card = createPromptCard(info.requestId, info.message, info.options);
+        await ctx.sendActivity({
           attachments: [
             {
               contentType: "application/vnd.microsoft.card.adaptive",
@@ -298,26 +321,15 @@ export class ClaudeCodeBot extends ActivityHandler {
             },
           ],
         });
-      };
-      runOptions.canUseTool = createPermissionHandler(sendCard);
-    }
+        return response;
+      },
+    };
 
     try {
-      console.log("[BOT] Calling runClaude...");
-      const result = await runClaude(
-        text || "What is in this image?",
-        getSession(conversationId),
-        getWorkDir(conversationId),
-        getModel(conversationId),
-        getThinkingTokens(conversationId),
-        permissionMode,
-        images,
-        progress.onProgress,
-        runOptions,
-      );
+      console.log("[BOT] Sending message via query pool...");
+      const result = await queryPool.sendMessage(managed, finalText, turnHandlers);
 
-      console.log("[BOT] runClaude completed, stopping typing");
-      // Stop typing
+      console.log("[BOT] Message completed, stopping typing");
       typingController.abort();
       await typingLoop;
 
@@ -335,10 +347,25 @@ export class ClaudeCodeBot extends ActivityHandler {
       await progress.finalize(splitMessage(formatResponse(result)));
       console.log("[BOT] Response sent successfully");
     } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+
+      // Interrupted turns are expected — the new message handler already took over
+      if (msg.includes("Interrupted by new message") || msg.includes("Superseded by new turn")) {
+        console.log("[BOT] Previous turn interrupted, skipping error display");
+        typingController.abort();
+        await typingLoop;
+        return;
+      }
+
       console.error("[BOT] Error in handleMessage:", err);
       typingController.abort();
       await typingLoop;
-      const msg = err instanceof Error ? err.message : String(err);
+
+      // If the query stream died, remove it so next message creates a fresh one
+      if (msg.includes("Query closed") || msg.includes("Stream error")) {
+        await queryPool.remove(conversationId);
+      }
+
       await progress.finalize([friendlyError(msg)]);
     }
   }
@@ -365,29 +392,72 @@ export class ClaudeCodeBot extends ActivityHandler {
       console.log(`[HANDOFF] Fork: sessionId=${sessionId}, workDir=${workDir}`);
       const prompt = `The user handed off from Terminal to Teams (project: ${workDir ?? "unknown"}). Welcome them and ask what they need help with.`;
 
-      await this.runClaudeAndRespond(ctx, conversationId, prompt, undefined, {
+      // Use fallbackRunClaude for handoff to preserve fork option
+      // (queryPool.sendMessage does not support resume/fork)
+      const permissionMode = getPermissionMode(conversationId);
+      await this.fallbackRunClaude(ctx, conversationId, prompt, permissionMode, {
         resume: "fork",
       });
     }
   }
 
-  private async runClaudeAndRespond(
+  /**
+   * Update the mutable permission handler on a managed query for the current turn context.
+   */
+  private updatePermissionHandler(
+    ctx: TurnContext,
+    managed: ManagedQuery,
+    permissionMode: string | undefined,
+  ): void {
+    if (permissionMode === "bypassPermissions") {
+      managed.canUseToolHandler.current = null;
+      managed.permissionMode.current = "bypassPermissions";
+    } else {
+      const sendCard = async (req: {
+        toolName: string;
+        input: Record<string, unknown>;
+        toolUseID: string;
+        decisionReason?: string;
+      }) => {
+        const card = buildPermissionCard(
+          req.toolName,
+          req.input,
+          req.toolUseID,
+          req.decisionReason,
+        );
+        ctx.sendActivity({
+          attachments: [
+            {
+              contentType: "application/vnd.microsoft.card.adaptive",
+              content: card,
+            },
+          ],
+        }).catch((err) => {
+          console.error("[BOT] Failed to send permission card:", err);
+        });
+      };
+      managed.canUseToolHandler.current = createPermissionHandler(sendCard);
+      managed.permissionMode.current = permissionMode ?? "default";
+    }
+  }
+
+  /**
+   * Fallback to single-turn runClaude when query pool fails.
+   */
+  private async fallbackRunClaude(
     ctx: TurnContext,
     conversationId: string,
     prompt: string,
-    images?: ImageInput[],
-    runOptions?: RunClaudeOptions,
+    permissionMode: string | undefined,
+    extraRunOptions?: RunClaudeOptions,
   ): Promise<void> {
     const typingController = new AbortController();
     const typingLoop = this.startTypingLoop(ctx, typingController.signal);
     const progress = this.createProgressNotifier(ctx);
 
-    // Create permission handler if not bypassing
-    const permissionMode = getPermissionMode(conversationId);
-    const finalRunOptions = { ...runOptions };
-
-    // Add prompt request handler
-    finalRunOptions.onPromptRequest = async (info) => {
+    const runOptions: RunClaudeOptions = { ...extraRunOptions };
+    runOptions.onPromptRequest = async (info) => {
+      const response = registerPromptRequest(info.requestId);
       const card = createPromptCard(info.requestId, info.message, info.options);
       await ctx.sendActivity({
         attachments: [
@@ -397,10 +467,8 @@ export class ClaudeCodeBot extends ActivityHandler {
           },
         ],
       });
-      // Wait for user response
-      return registerPromptRequest(info.requestId);
+      return response;
     };
-
     if (permissionMode !== "bypassPermissions") {
       const sendCard = async (req: {
         toolName: string;
@@ -414,16 +482,18 @@ export class ClaudeCodeBot extends ActivityHandler {
           req.toolUseID,
           req.decisionReason,
         );
-        await ctx.sendActivity({
+        ctx.sendActivity({
           attachments: [
             {
               contentType: "application/vnd.microsoft.card.adaptive",
               content: card,
             },
           ],
+        }).catch((err) => {
+          console.error("[BOT] Failed to send permission card:", err);
         });
       };
-      finalRunOptions.canUseTool = createPermissionHandler(sendCard);
+      runOptions.canUseTool = createPermissionHandler(sendCard);
     }
 
     try {
@@ -434,10 +504,77 @@ export class ClaudeCodeBot extends ActivityHandler {
         getModel(conversationId),
         getThinkingTokens(conversationId),
         permissionMode,
-        images,
+        undefined,
         progress.onProgress,
-        finalRunOptions,
+        runOptions,
       );
+      typingController.abort();
+      await typingLoop;
+
+      if (result.error) {
+        await progress.finalize([friendlyError(result.error)]);
+        return;
+      }
+      if (result.sessionId) {
+        setSession(conversationId, result.sessionId);
+      }
+      await progress.finalize(splitMessage(formatResponse(result)));
+    } catch (err) {
+      typingController.abort();
+      await typingLoop;
+      const msg = err instanceof Error ? err.message : String(err);
+      await progress.finalize([friendlyError(msg)]);
+    }
+  }
+
+  private async runClaudeAndRespond(
+    ctx: TurnContext,
+    conversationId: string,
+    prompt: string,
+    _images?: ImageInput[],
+    runOptions?: RunClaudeOptions,
+  ): Promise<void> {
+    // For handoff, use query pool too
+    const permissionMode = getPermissionMode(conversationId);
+    let managed: ManagedQuery;
+    try {
+      managed = queryPool.acquire(conversationId, {
+        workDir: getWorkDir(conversationId),
+        model: getModel(conversationId),
+        thinkingTokens: getThinkingTokens(conversationId),
+        permissionMode,
+        sessionId: getSession(conversationId),
+      });
+    } catch (err) {
+      // Fallback to single-turn
+      await this.fallbackRunClaude(ctx, conversationId, prompt, permissionMode);
+      return;
+    }
+
+    this.updatePermissionHandler(ctx, managed, permissionMode);
+
+    const typingController = new AbortController();
+    const typingLoop = this.startTypingLoop(ctx, typingController.signal);
+    const progress = this.createProgressNotifier(ctx);
+
+    const turnHandlers: TurnHandlers = {
+      onProgress: progress.onProgress,
+      onPromptRequest: async (info) => {
+        const card = createPromptCard(info.requestId, info.message, info.options);
+        await ctx.sendActivity({
+          attachments: [
+            {
+              contentType: "application/vnd.microsoft.card.adaptive",
+              content: card,
+            },
+          ],
+        });
+        return registerPromptRequest(info.requestId);
+      },
+    };
+
+    try {
+      const result = await queryPool.sendMessage(managed, prompt, turnHandlers);
       typingController.abort();
       await typingLoop;
 

@@ -69,7 +69,7 @@ const EXT_MAP: Record<string, string> = {
   "image/webp": ".webp",
 };
 
-async function saveImagesToTmp(images: ImageInput[]): Promise<string[]> {
+export async function saveImagesToTmp(images: ImageInput[]): Promise<string[]> {
   const { writeFile, mkdir } = await import("fs/promises");
   const { join } = await import("path");
   const { randomUUID } = await import("crypto");
