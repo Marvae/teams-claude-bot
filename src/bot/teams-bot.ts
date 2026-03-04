@@ -74,6 +74,15 @@ function friendlyError(error: string, stopReason?: string | null): string {
 }
 
 export class ClaudeCodeBot extends ActivityHandler {
+  private permissionCards = new Map<
+    string,
+    {
+      activityId: string;
+      toolName: string;
+      input: Record<string, unknown>;
+      decisionReason?: string;
+    }
+  >();
 
   constructor() {
     super();
@@ -185,10 +194,39 @@ export class ClaudeCodeBot extends ActivityHandler {
         const toolUseID = value.toolUseID as string;
         const allow = value.action === "permission_allow";
         const resolved = resolvePermission(toolUseID, allow);
-        if (resolved) {
-          await ctx.sendActivity(allow ? "✅ Allowed" : "❌ Denied");
+        const label = allow ? "✅ Allowed" : "❌ Denied";
+
+        const cardInfo = this.permissionCards.get(toolUseID);
+        this.permissionCards.delete(toolUseID);
+
+        if (cardInfo) {
+          const updatedCard = buildPermissionCard(
+            cardInfo.toolName,
+            cardInfo.input,
+            toolUseID,
+            cardInfo.decisionReason,
+            resolved ? label : "⏰ Expired",
+          );
+          try {
+            await ctx.updateActivity({
+              id: cardInfo.activityId,
+              type: "message",
+              attachments: [
+                {
+                  contentType: "application/vnd.microsoft.card.adaptive",
+                  content: updatedCard,
+                },
+              ],
+            });
+          } catch {
+            await ctx.sendActivity(
+              resolved ? label : "Permission request expired or not found.",
+            );
+          }
         } else {
-          await ctx.sendActivity("Permission request expired or not found.");
+          await ctx.sendActivity(
+            resolved ? label : "Permission request expired or not found.",
+          );
         }
         return;
       }
@@ -436,14 +474,28 @@ export class ClaudeCodeBot extends ActivityHandler {
       toolUseID: string;
       decisionReason?: string;
     }) => {
-      await sendCard(
-        buildPermissionCard(
-          req.toolName,
-          req.input,
-          req.toolUseID,
-          req.decisionReason,
-        ),
+      const card = buildPermissionCard(
+        req.toolName,
+        req.input,
+        req.toolUseID,
+        req.decisionReason,
       );
+      const resp = await sendActivity({
+        attachments: [
+          {
+            contentType: "application/vnd.microsoft.card.adaptive",
+            content: card,
+          },
+        ],
+      });
+      if (resp?.id) {
+        this.permissionCards.set(req.toolUseID, {
+          activityId: resp.id,
+          toolName: req.toolName,
+          input: req.input,
+          decisionReason: req.decisionReason,
+        });
+      }
     };
 
     // Elicitation handler

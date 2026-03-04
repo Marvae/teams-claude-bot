@@ -1,3 +1,4 @@
+// cards.ts
 import {
   type AskUserQuestionInput,
   buildAskUserQuestionCardData,
@@ -167,6 +168,7 @@ export function buildPermissionCard(
   input: Record<string, unknown>,
   toolUseID: string,
   decisionReason?: string,
+  result?: string,
 ): Record<string, unknown> {
   if (toolName === "AskUserQuestion" && isAskUserQuestionInput(input)) {
     return buildAskUserQuestionCard(input, toolUseID);
@@ -201,6 +203,21 @@ export function buildPermissionCard(
       wrap: true,
       isSubtle: true,
     });
+  }
+
+  if (result) {
+    body.push({
+      type: "TextBlock",
+      text: result,
+      weight: "bolder",
+      spacing: "medium",
+    });
+    return {
+      type: "AdaptiveCard",
+      version: "1.4",
+      $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+      body,
+    };
   }
 
   return {
