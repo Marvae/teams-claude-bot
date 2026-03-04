@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { TestAdapter, ActivityTypes, type Activity } from "botbuilder";
 
 const runClaudeMock = vi.fn();
+const sendMessageMock = vi.fn();
 
 const sessionState = {
   sessionId: undefined as string | undefined,
@@ -30,6 +31,33 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
 
 vi.mock("../src/claude/agent.js", () => ({
   runClaude: (...args: unknown[]) => runClaudeMock(...args),
+  saveImagesToTmp: vi.fn(async () => []),
+}));
+
+// Mock the query pool — sendMessage is the primary path now
+const mockManagedQuery = {
+  query: { interrupt: vi.fn(), setModel: vi.fn(), close: vi.fn() },
+  inputQueue: { push: vi.fn(), end: vi.fn() },
+  conversationId: "conv-1",
+  lastActivityAt: Date.now(),
+  busy: false,
+  sessionId: undefined as string | undefined,
+  currentTurn: null,
+  streamDrainer: Promise.resolve(),
+  permissionMode: { current: "bypassPermissions" },
+  canUseToolHandler: { current: null },
+};
+
+vi.mock("../src/session/query-pool.js", () => ({
+  queryPool: {
+    acquire: vi.fn(() => mockManagedQuery),
+    sendMessage: (...args: unknown[]) => sendMessageMock(...args),
+    remove: vi.fn(async () => {}),
+    closeAll: vi.fn(async () => {}),
+    has: vi.fn(() => false),
+    get: vi.fn(() => undefined),
+    size: 0,
+  },
 }));
 
 vi.mock("../src/handoff/store.js", () => ({
@@ -105,6 +133,9 @@ describe("ClaudeCodeBot e2e (TestAdapter)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     runClaudeMock.mockReset();
+    sendMessageMock.mockReset();
+    mockManagedQuery.busy = false;
+    mockManagedQuery.sessionId = undefined;
     sessionState.sessionId = undefined;
     sessionState.workDir = "/work/test";
     sessionState.model = "claude-opus-4-6";
@@ -116,7 +147,7 @@ describe("ClaudeCodeBot e2e (TestAdapter)", () => {
   });
 
   it("handles basic message flow", async () => {
-    runClaudeMock.mockResolvedValue({
+    sendMessageMock.mockResolvedValue({
       result: "Hello from Claude",
       sessionId: "sess-123",
       tools: [],
@@ -133,20 +164,15 @@ describe("ClaudeCodeBot e2e (TestAdapter)", () => {
       })
       .startTest();
 
-    expect(runClaudeMock).toHaveBeenCalledOnce();
-    expect(runClaudeMock).toHaveBeenCalledWith(
-      "Hello",
-      undefined,
-      "/work/test",
-      "claude-opus-4-6",
-      2048,
-      "bypassPermissions",
-      undefined,
-      expect.any(Function),
-      expect.objectContaining({
-        onPromptRequest: expect.any(Function),
-      }),
-    );
+    expect(sendMessageMock).toHaveBeenCalledOnce();
+    // sendMessage(managed, text, handlers)
+    const args = sendMessageMock.mock.calls[0];
+    expect(args[0]).toBe(mockManagedQuery);
+    expect(args[1]).toBe("Hello");
+    expect(args[2]).toMatchObject({
+      onProgress: expect.any(Function),
+      onPromptRequest: expect.any(Function),
+    });
     expect(vi.mocked(sessionManager.setSession)).toHaveBeenCalledWith(
       "conv-1",
       "sess-123",
@@ -169,7 +195,7 @@ describe("ClaudeCodeBot e2e (TestAdapter)", () => {
       })
       .startTest();
 
-    expect(runClaudeMock).not.toHaveBeenCalled();
+    expect(sendMessageMock).not.toHaveBeenCalled();
   });
 
   it("handles /status command", async () => {

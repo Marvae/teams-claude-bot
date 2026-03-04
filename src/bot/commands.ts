@@ -16,6 +16,7 @@ import {
   clearHandoffMode,
 } from "../session/manager.js";
 import { buildHelpCard, buildPermissionModeCard } from "./cards.js";
+import { queryPool } from "../session/query-pool.js";
 
 function formatAge(iso: string): string {
   const ms = Date.now() - new Date(iso).getTime();
@@ -55,12 +56,14 @@ export async function handleCommand(
   switch (cmd) {
     case "/new":
     case "/clear": {
+      await queryPool.remove(conversationId);
       clearSession(conversationId);
       await ctx.sendActivity("New session. Send your next message.");
       return true;
     }
 
     case "/compact": {
+      await queryPool.remove(conversationId);
       clearSession(conversationId);
       await ctx.sendActivity("Session cleared. Context will be managed fresh.");
       return true;
@@ -85,6 +88,7 @@ export async function handleCommand(
         return true;
       }
 
+      await queryPool.remove(conversationId);
       clearSession(conversationId);
       await ctx.sendActivity(
         `Project: \`${getWorkDir(conversationId)}\` (new session)`,
@@ -105,6 +109,13 @@ export async function handleCommand(
 
       const resolved = MODEL_SHORTCUTS[arg.toLowerCase()] ?? arg;
       setModel(conversationId, resolved);
+      // Hot-update model on active query if present
+      const activeQuery = queryPool.get(conversationId);
+      if (activeQuery) {
+        activeQuery.query.setModel(resolved).catch((err) => {
+          console.warn("[CMD] setModel on active query failed:", err);
+        });
+      }
       await ctx.sendActivity(`Model set to \`${resolved}\``);
       return true;
     }

@@ -4,6 +4,7 @@ import express from "express";
 import { ClaudeCodeBot } from "./bot/teams-bot.js";
 import { loadSessions } from "./session/manager.js";
 import { loadConversationRefs, getConversationRef } from "./handoff/store.js";
+import { queryPool } from "./session/query-pool.js";
 
 // Load persisted state
 loadSessions();
@@ -84,3 +85,18 @@ app.listen(config.port, () => {
   console.log(`Bot running on http://localhost:${config.port}/api/messages`);
   console.log(`Working directory: ${config.claudeWorkDir}`);
 });
+
+// Graceful shutdown — close all persistent CLI queries
+async function shutdown(signal: string): Promise<void> {
+  console.log(`[SHUTDOWN] ${signal}, closing ${queryPool.size} query(s)...`);
+  const forceTimeout = setTimeout(() => {
+    console.warn("[SHUTDOWN] Timed out, forcing exit");
+    process.exit(1);
+  }, 5000);
+  forceTimeout.unref();
+  await queryPool.closeAll();
+  clearTimeout(forceTimeout);
+  process.exit(0);
+}
+process.on("SIGTERM", () => void shutdown("SIGTERM"));
+process.on("SIGINT", () => void shutdown("SIGINT"));

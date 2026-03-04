@@ -15,6 +15,7 @@ import { TestAdapter, ActivityTypes, type Activity } from "botbuilder";
 // ---- Mocks ----
 
 const runClaudeMock = vi.fn();
+const sendMessageMock = vi.fn();
 
 const sessionState = {
   sessionId: undefined as string | undefined,
@@ -30,6 +31,33 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
 
 vi.mock("../src/claude/agent.js", () => ({
   runClaude: (...args: unknown[]) => runClaudeMock(...args),
+  saveImagesToTmp: vi.fn(async () => []),
+}));
+
+// Mock the query pool
+const mockManagedQuery = {
+  query: { interrupt: vi.fn(), setModel: vi.fn(), close: vi.fn() },
+  inputQueue: { push: vi.fn(), end: vi.fn() },
+  conversationId: "conv-perm-1",
+  lastActivityAt: Date.now(),
+  busy: false,
+  sessionId: "existing-session" as string | undefined,
+  currentTurn: null,
+  streamDrainer: Promise.resolve(),
+  permissionMode: { current: "default" },
+  canUseToolHandler: { current: null as unknown },
+};
+
+vi.mock("../src/session/query-pool.js", () => ({
+  queryPool: {
+    acquire: vi.fn(() => mockManagedQuery),
+    sendMessage: (...args: unknown[]) => sendMessageMock(...args),
+    remove: vi.fn(async () => {}),
+    closeAll: vi.fn(async () => {}),
+    has: vi.fn(() => false),
+    get: vi.fn(() => undefined),
+    size: 0,
+  },
 }));
 
 vi.mock("../src/handoff/store.js", () => ({
@@ -85,6 +113,10 @@ describe("handleMessage passes permission + prompt handlers", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     runClaudeMock.mockReset();
+    sendMessageMock.mockReset();
+    mockManagedQuery.busy = false;
+    mockManagedQuery.sessionId = "existing-session";
+    mockManagedQuery.canUseToolHandler = { current: null };
     sessionState.sessionId = "existing-session";
     sessionState.workDir = "/work/test";
     sessionState.model = "claude-opus-4-6";
@@ -92,8 +124,8 @@ describe("handleMessage passes permission + prompt handlers", () => {
     sessionState.permissionMode = "default";
   });
 
-  it("passes canUseTool to runClaude when permissionMode is default", async () => {
-    runClaudeMock.mockResolvedValue({
+  it("sets canUseToolHandler on managed query when permissionMode is default", async () => {
+    sendMessageMock.mockResolvedValue({
       result: "Done",
       sessionId: "sess-1",
       tools: [],
@@ -109,18 +141,14 @@ describe("handleMessage passes permission + prompt handlers", () => {
       })
       .startTest();
 
-    expect(runClaudeMock).toHaveBeenCalledOnce();
-
-    // The 9th argument (index 8) is runOptions
-    const args = runClaudeMock.mock.calls[0];
-    const runOptions = args[8];
-    expect(runOptions).toBeDefined();
-    expect(runOptions.canUseTool).toBeDefined();
-    expect(typeof runOptions.canUseTool).toBe("function");
+    expect(sendMessageMock).toHaveBeenCalledOnce();
+    // When permissionMode is default, canUseToolHandler should be set
+    expect(mockManagedQuery.canUseToolHandler.current).toBeDefined();
+    expect(typeof mockManagedQuery.canUseToolHandler.current).toBe("function");
   });
 
-  it("passes onPromptRequest to runClaude", async () => {
-    runClaudeMock.mockResolvedValue({
+  it("passes onPromptRequest to sendMessage handlers", async () => {
+    sendMessageMock.mockResolvedValue({
       result: "Done",
       sessionId: "sess-2",
       tools: [],
@@ -136,17 +164,17 @@ describe("handleMessage passes permission + prompt handlers", () => {
       })
       .startTest();
 
-    const args = runClaudeMock.mock.calls[0];
-    const runOptions = args[8];
-    expect(runOptions).toBeDefined();
-    expect(runOptions.onPromptRequest).toBeDefined();
-    expect(typeof runOptions.onPromptRequest).toBe("function");
+    const args = sendMessageMock.mock.calls[0];
+    const handlers = args[2]; // TurnHandlers
+    expect(handlers).toBeDefined();
+    expect(handlers.onPromptRequest).toBeDefined();
+    expect(typeof handlers.onPromptRequest).toBe("function");
   });
 
-  it("does NOT pass canUseTool when permissionMode is bypassPermissions", async () => {
+  it("clears canUseToolHandler when permissionMode is bypassPermissions", async () => {
     sessionState.permissionMode = "bypassPermissions";
 
-    runClaudeMock.mockResolvedValue({
+    sendMessageMock.mockResolvedValue({
       result: "Done fast",
       sessionId: "sess-3",
       tools: [],
@@ -162,10 +190,8 @@ describe("handleMessage passes permission + prompt handlers", () => {
       })
       .startTest();
 
-    const args = runClaudeMock.mock.calls[0];
-    const runOptions = args[8];
-    // canUseTool should be undefined when bypassing permissions
-    expect(runOptions?.canUseTool).toBeUndefined();
+    // canUseToolHandler should be null when bypassing permissions
+    expect(mockManagedQuery.canUseToolHandler.current).toBeNull();
   });
 
   it("canUseTool callback sends permission card and resolves on Allow", async () => {
@@ -173,9 +199,9 @@ describe("handleMessage passes permission + prompt handlers", () => {
       | ((...args: unknown[]) => Promise<unknown>)
       | undefined;
 
-    runClaudeMock.mockImplementation(async (...args: unknown[]) => {
-      const runOptions = args[8] as Record<string, unknown> | undefined;
-      capturedCanUseTool = runOptions?.canUseTool as typeof capturedCanUseTool;
+    sendMessageMock.mockImplementation(async () => {
+      // Capture the canUseToolHandler that was set on the managed query
+      capturedCanUseTool = mockManagedQuery.canUseToolHandler.current as typeof capturedCanUseTool;
 
       if (capturedCanUseTool) {
         const { resolvePermission } =
@@ -196,7 +222,7 @@ describe("handleMessage passes permission + prompt handlers", () => {
         resolvePermission("tool-perm-1", true);
 
         const result = await resultPromise;
-        expect(result.behavior).toBe("allow");
+        expect((result as Record<string, unknown>).behavior).toBe("allow");
       }
 
       return {
@@ -219,15 +245,13 @@ describe("handleMessage passes permission + prompt handlers", () => {
     expect(capturedCanUseTool).toBeDefined();
   });
 
-  it("onPromptRequest callback sends prompt card and resolves on selection", async () => {
+  it("onPromptRequest handler sends prompt card and resolves on selection", async () => {
     let capturedOnPromptRequest:
       | ((...args: unknown[]) => Promise<unknown>)
       | undefined;
 
-    runClaudeMock.mockImplementation(async (...args: unknown[]) => {
-      const runOptions = args[8] as Record<string, unknown> | undefined;
-      capturedOnPromptRequest =
-        runOptions?.onPromptRequest as typeof capturedOnPromptRequest;
+    sendMessageMock.mockImplementation(async (_managed: unknown, _text: unknown, handlers: Record<string, unknown>) => {
+      capturedOnPromptRequest = handlers?.onPromptRequest as typeof capturedOnPromptRequest;
 
       if (capturedOnPromptRequest) {
         const { resolvePromptRequest } =
