@@ -705,10 +705,14 @@ export class ClaudeCodeBot extends ActivityHandler {
     let inflightUpdate: Promise<void> | undefined;
     const progressLines: string[] = [];
     let streamingText: string | undefined;
+    let todoDisplay: string | undefined;
     let pendingUpdate = false;
 
     const buildDisplay = (): string => {
       const parts: string[] = [];
+      if (todoDisplay) {
+        parts.push(todoDisplay);
+      }
       if (progressLines.length > 0) {
         parts.push(progressLines.join("\n\n"));
       }
@@ -778,6 +782,28 @@ export class ClaudeCodeBot extends ActivityHandler {
           progressLines.push(
             `🔑 Login expired — run \`claude login\` in terminal`,
           );
+          scheduleUpdate(TOOL_THROTTLE_MS);
+          return;
+        }
+
+        if (event.type === "todo") {
+          const completed = event.todos.filter(
+            (t) => t.status === "completed",
+          ).length;
+          const lines = event.todos.map((t) => {
+            const icon =
+              t.status === "completed"
+                ? "✅"
+                : t.status === "in_progress"
+                  ? "🔧"
+                  : "⏳";
+            const text =
+              t.status === "in_progress" && t.activeForm
+                ? t.activeForm
+                : t.content;
+            return `${icon} ${text}`;
+          });
+          todoDisplay = `📋 ${completed}/${event.todos.length}\n\n${lines.join("\n\n")}`;
           scheduleUpdate(TOOL_THROTTLE_MS);
           return;
         }

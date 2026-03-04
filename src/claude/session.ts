@@ -359,7 +359,7 @@ export class ConversationSession {
       });
     }
 
-    // ── Assistant message (collect tools, reset streaming) ──
+    // ── Assistant message (collect tools, extract todos, reset streaming) ──
     if (msg.type === "assistant" && this.turnResolver) {
       this.turnResolver.streamingText = "";
       const inner = msg.message as Record<string, unknown> | undefined;
@@ -373,6 +373,30 @@ export class ConversationSession {
             (block as Record<string, unknown>).type === "tool_use"
           ) {
             const b = block as Record<string, unknown>;
+            // Emit todo updates
+            if (
+              b.name === "TodoWrite" ||
+              b.name === "TaskCreate" ||
+              b.name === "TaskUpdate"
+            ) {
+              const input = b.input as Record<string, unknown> | undefined;
+              const todos = input?.todos as
+                | Array<Record<string, unknown>>
+                | undefined;
+              if (Array.isArray(todos)) {
+                this.turnResolver.onProgress?.({
+                  type: "todo",
+                  todos: todos.map((t) => ({
+                    content:
+                      (t.content as string) ?? (t.subject as string) ?? "",
+                    status:
+                      (t.status as "pending" | "in_progress" | "completed") ??
+                      "pending",
+                    activeForm: t.activeForm as string | undefined,
+                  })),
+                });
+              }
+            }
             this.turnResolver.tools.push(
               extractToolInfo(
                 (b.name as string) ?? "unknown",

@@ -29,6 +29,12 @@ export interface ImageInput {
   data: string;
 }
 
+export interface TodoItem {
+  content: string;
+  status: "pending" | "in_progress" | "completed";
+  activeForm?: string;
+}
+
 export type ProgressEvent =
   | { type: "tool_use"; tool: ToolInfo }
   | { type: "tool_summary"; summary: string }
@@ -38,6 +44,7 @@ export type ProgressEvent =
       status: "allowed_warning" | "rejected";
       resetsAt?: number;
     }
+  | { type: "todo"; todos: TodoItem[] }
   | { type: "text"; text: string }
   | { type: "auth_error"; error: string }
   | { type: "done" };
