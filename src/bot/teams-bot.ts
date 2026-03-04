@@ -459,6 +459,13 @@ export class ClaudeCodeBot extends ActivityHandler {
 
       console.log("[BOT] Formatting and sending response");
       await progress.finalize(splitMessage(formatResponse(result)));
+
+      // Send prompt suggestion as quick-reply button
+      const suggestion = progress.getPromptSuggestion();
+      if (suggestion) {
+        await this.sendSuggestedAction(ctx, suggestion);
+      }
+
       console.log("[BOT] Response sent successfully");
     } catch (err) {
       console.error("[BOT] Error in handleMessage:", err);
@@ -664,6 +671,23 @@ export class ClaudeCodeBot extends ActivityHandler {
     }
   }
 
+  private async sendSuggestedAction(
+    ctx: TurnContext,
+    suggestion: string,
+  ): Promise<void> {
+    try {
+      await ctx.sendActivity({
+        type: "message",
+        text: "",
+        suggestedActions: {
+          actions: [{ type: "imBack", title: suggestion, value: suggestion }],
+        },
+      });
+    } catch {
+      // suggestedActions not supported in this context — silently skip
+    }
+  }
+
   private async startTypingLoop(
     ctx: TurnContext,
     signal: AbortSignal,
@@ -694,6 +718,7 @@ export class ClaudeCodeBot extends ActivityHandler {
   ): {
     onProgress: (event: ProgressEvent) => void;
     finalize: (chunks: string[]) => Promise<void>;
+    getPromptSuggestion: () => string | undefined;
   } {
     const MAX_LINES = 10;
     const TOOL_THROTTLE_MS = 2000;
@@ -707,6 +732,7 @@ export class ClaudeCodeBot extends ActivityHandler {
     let streamingText: string | undefined;
     let todoDisplay: string | undefined;
     let pendingUpdate = false;
+    let promptSuggestion: string | undefined;
 
     const buildDisplay = (): string => {
       const parts: string[] = [];
@@ -774,6 +800,7 @@ export class ClaudeCodeBot extends ActivityHandler {
     return {
       onProgress: (event: ProgressEvent) => {
         if (event.type === "done") {
+          promptSuggestion = event.promptSuggestion;
           typingController?.abort();
           return;
         }
@@ -862,6 +889,7 @@ export class ClaudeCodeBot extends ActivityHandler {
           await ctx.sendActivity(chunks[i]);
         }
       },
+      getPromptSuggestion: () => promptSuggestion,
     };
   }
 

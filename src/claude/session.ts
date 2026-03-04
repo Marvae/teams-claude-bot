@@ -61,6 +61,7 @@ export class ConversationSession {
   private turnResolver: TurnResolver | null = null;
   private _lastActivity = Date.now();
   private closed = false;
+  private lastPromptSuggestion: string | undefined;
 
   constructor(private config: SessionConfig) {}
 
@@ -408,9 +409,18 @@ export class ConversationSession {
       }
     }
 
+    // ── Prompt suggestion ──
+    if (msg.type === "prompt_suggestion" && typeof msg.prompt === "string") {
+      this.lastPromptSuggestion = msg.prompt;
+    }
+
     // ── Result ──
     if (msg.type === "result") {
-      this.turnResolver?.onProgress?.({ type: "done" });
+      this.turnResolver?.onProgress?.({
+        type: "done",
+        promptSuggestion: this.lastPromptSuggestion,
+      });
+      this.lastPromptSuggestion = undefined;
 
       const stopReason = (msg.stop_reason as string | null) ?? null;
 
@@ -539,6 +549,7 @@ export class ConversationSession {
       executable: "node",
       settingSources: ["project"],
       includePartialMessages: true,
+      promptSuggestions: true,
       env: { ...process.env, CLAUDECODE: undefined },
     };
 

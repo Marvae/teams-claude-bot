@@ -628,4 +628,57 @@ describe("ConversationSession", () => {
       expect(result.error).toBe("Session closed");
     });
   });
+
+  describe("prompt suggestions", () => {
+    it("enables promptSuggestions in query options", async () => {
+      mockQuery.mockImplementation(async function* () {
+        yield { type: "result", result: "OK" };
+      });
+
+      const session = new ConversationSession(makeConfig());
+      await session.send("test");
+
+      const call = mockQuery.mock.calls[0][0];
+      expect(call.options.promptSuggestions).toBe(true);
+    });
+
+    it("passes prompt suggestion through done event", async () => {
+      mockQuery.mockImplementation(async function* () {
+        yield { type: "system", subtype: "init", session_id: "s1" };
+        yield { type: "prompt_suggestion", prompt: "Run the tests" };
+        yield { type: "result", result: "Done" };
+      });
+
+      const events: ProgressEvent[] = [];
+      const session = new ConversationSession(makeConfig());
+      await session.send("fix the bug", {
+        onProgress: (e) => events.push(e),
+      });
+
+      const doneEvent = events.find((e) => e.type === "done");
+      expect(doneEvent).toEqual({
+        type: "done",
+        promptSuggestion: "Run the tests",
+      });
+    });
+
+    it("done event has no suggestion when SDK does not emit one", async () => {
+      mockQuery.mockImplementation(async function* () {
+        yield { type: "system", subtype: "init", session_id: "s1" };
+        yield { type: "result", result: "Done" };
+      });
+
+      const events: ProgressEvent[] = [];
+      const session = new ConversationSession(makeConfig());
+      await session.send("hello", {
+        onProgress: (e) => events.push(e),
+      });
+
+      const doneEvent = events.find((e) => e.type === "done");
+      expect(doneEvent).toEqual({
+        type: "done",
+        promptSuggestion: undefined,
+      });
+    });
+  });
 });

@@ -47,7 +47,7 @@ export type ProgressEvent =
   | { type: "todo"; todos: TodoItem[] }
   | { type: "text"; text: string }
   | { type: "auth_error"; error: string }
-  | { type: "done" };
+  | { type: "done"; promptSuggestion?: string };
 
 export interface PromptRequestInfo {
   requestId: string;
