@@ -38,6 +38,7 @@ vi.mock("../src/handoff/store.js", () => ({
 
 vi.mock("../src/session/manager.js", () => ({
   getSession: vi.fn(() => sessionState.sessionId),
+  getSessionCwd: vi.fn(() => undefined),
   setSession: vi.fn((_cid: string, sid: string) => {
     sessionState.sessionId = sid;
   }),

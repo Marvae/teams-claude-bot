@@ -1,4 +1,5 @@
 import { CardFactory, type TurnContext } from "botbuilder";
+import { listSessions } from "@anthropic-ai/claude-agent-sdk";
 import {
   clearSession,
   getSession,
@@ -10,8 +11,6 @@ import {
   setThinkingTokens,
   getPermissionMode,
   setPermissionMode,
-  listPastSessions,
-  // switchToSession, // TODO: implement session switching
   getHandoffMode,
   clearHandoffMode,
 } from "../session/manager.js";
@@ -201,44 +200,75 @@ export async function handleCommand(
 
     case "/sessions": {
       const currentId = getSession(conversationId);
-      const past = listPastSessions(conversationId);
+      const MAX_SESSIONS = 8;
 
-      if (!currentId && past.length === 0) {
+      // Use SDK listSessions as primary data source
+      let sdkSessions: Awaited<ReturnType<typeof listSessions>> = [];
+      try {
+        sdkSessions = await listSessions({ limit: MAX_SESSIONS });
+        sdkSessions.sort((a, b) => b.lastModified - a.lastModified);
+      } catch {
+        await ctx.sendActivity(
+          "Could not list sessions. Start chatting to create one.",
+        );
+        return true;
+      }
+
+      if (sdkSessions.length === 0) {
         await ctx.sendActivity("No sessions. Start chatting to create one.");
         return true;
       }
 
-      const bodyItems: unknown[] = [];
 
-      if (currentId) {
-        bodyItems.push({
+      const bodyItems: unknown[] = [
+        {
           type: "TextBlock",
-          text: `Active: ${getWorkDir(conversationId)}`,
+          text: "Sessions",
           weight: "bolder",
-        });
-      }
-
+          size: "medium",
+        },
+      ];
       const actions: unknown[] = [];
 
-      if (past.length > 0) {
+      let num = 0;
+      for (const s of sdkSessions) {
+        num++;
+        const isActive = s.sessionId === currentId;
+        const label = s.customTitle || s.summary || "Untitled";
+        const age = formatAge(new Date(s.lastModified).toISOString());
+        const dirName = s.cwd?.split("/").pop() ?? "";
+        const meta = [
+          dirName ? `${dirName}` : null,
+          age,
+          s.gitBranch ?? null,
+        ]
+          .filter(Boolean)
+          .join(" · ");
+
+        const prefix = isActive ? "▶ " : `${num}. `;
         bodyItems.push({
           type: "TextBlock",
-          text: "Past sessions:",
-          spacing: "medium",
-          separator: true,
+          text: `${prefix}**${label}**`,
+          spacing: "small",
+          wrap: true,
+        });
+        bodyItems.push({
+          type: "TextBlock",
+          text: `    ${meta}`,
+          spacing: "none",
+          size: "small",
+          isSubtle: true,
         });
 
-        for (const s of past) {
-          const dirName = s.workDir.split("/").pop() ?? s.workDir;
-          bodyItems.push({
-            type: "TextBlock",
-            text: `${dirName} — ${formatAge(s.usedAt)}`,
-            spacing: "small",
-          });
+        if (!isActive) {
           actions.push({
             type: "Action.Submit",
-            title: `Resume: ${dirName}`,
-            data: { action: "resume_session", index: s.index },
+            title: `#${num}`,
+            data: {
+              action: "resume_session",
+              sessionId: s.sessionId,
+              cwd: s.cwd,
+            },
           });
         }
       }

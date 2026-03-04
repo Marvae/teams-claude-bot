@@ -133,13 +133,12 @@ export async function runClaude(
     if (thinkingTokens !== undefined && thinkingTokens !== null) {
       options.maxThinkingTokens = thinkingTokens;
     }
+    if (workDir) options.cwd = workDir;
     if (sessionId) {
       options.resume = sessionId;
       if (runOptions?.resume === "fork") {
         options.forkSession = true;
       }
-    } else {
-      if (workDir) options.cwd = workDir;
     }
 
     // Pass canUseTool callback if provided
@@ -327,5 +326,51 @@ export async function runClaude(
       error: errorMessage.slice(0, 500),
       tools,
     };
+  }
+}
+
+/**
+ * Build a readable context string from recent messages in a session,
+ * using the SDK's getSessionMessages API.
+ * Skips tool_use / tool_result blocks to keep the summary clean.
+ */
+export async function buildSessionContext(
+  sessionId: string,
+  limit = 15,
+): Promise<string> {
+  try {
+    const messages = await getSessionMessages(sessionId, { limit });
+    const lines: string[] = [];
+
+    for (const m of messages) {
+      const role = m.type === "user" ? "User" : "Assistant";
+      const msg = m.message as Record<string, unknown> | undefined;
+      if (!msg) continue;
+
+      const content = msg.content;
+      let text = "";
+
+      if (typeof content === "string") {
+        text = content;
+      } else if (Array.isArray(content)) {
+        const parts: string[] = [];
+        for (const block of content as Record<string, unknown>[]) {
+          // Only extract plain text blocks, skip tool_use / tool_result
+          if (block.type === "text" && typeof block.text === "string") {
+            parts.push(block.text);
+          }
+        }
+        text = parts.join(" ");
+      }
+
+      const trimmed = text.trim();
+      if (trimmed) {
+        lines.push(`${role}: ${trimmed.slice(0, 400)}`);
+      }
+    }
+
+    return lines.join("\n");
+  } catch {
+    return "";
   }
 }

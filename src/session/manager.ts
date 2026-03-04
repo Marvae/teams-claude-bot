@@ -5,6 +5,8 @@ import { config } from "../config.js";
 
 interface SessionData {
   claudeSessionId?: string;
+  /** The cwd where the active session was created (used for SDK resume). */
+  sessionCwd?: string;
   workDir?: string;
   model?: string;
   thinkingTokens?: number | null;
@@ -65,12 +67,23 @@ export function getSession(conversationId: string): string | undefined {
   return sessions[conversationId]?.claudeSessionId;
 }
 
+/** Get the cwd bound to the active session (for SDK resume). */
+export function getSessionCwd(conversationId: string): string | undefined {
+  return sessions[conversationId]?.sessionCwd;
+}
+
 export function setSession(
   conversationId: string,
   claudeSessionId: string,
+  /** The cwd where this session lives — stored as-is, no path validation. */
+  cwd?: string,
 ): void {
   pushHistory(conversationId);
-  ensureEntry(conversationId).claudeSessionId = claudeSessionId;
+  const entry = ensureEntry(conversationId);
+  entry.claudeSessionId = claudeSessionId;
+  if (cwd !== undefined) {
+    entry.sessionCwd = cwd;
+  }
   persist();
 }
 
@@ -79,6 +92,7 @@ export function clearSession(conversationId: string): void {
   if (entry) {
     pushHistory(conversationId);
     delete entry.claudeSessionId;
+    delete entry.sessionCwd;
     persist();
   }
 }

@@ -5,6 +5,7 @@ const runClaudeMock = vi.fn();
 
 const sessionState = {
   sessionId: undefined as string | undefined,
+  sessionCwd: undefined as string | undefined,
   workDir: "/work/test",
   model: "claude-opus-4-6",
   thinkingTokens: 2048 as number | null | undefined,
@@ -38,11 +39,14 @@ vi.mock("../src/handoff/store.js", () => ({
 
 vi.mock("../src/session/manager.js", () => ({
   getSession: vi.fn(() => sessionState.sessionId),
-  setSession: vi.fn((_conversationId: string, sessionId: string) => {
+  getSessionCwd: vi.fn(() => sessionState.sessionCwd),
+  setSession: vi.fn((_conversationId: string, sessionId: string, cwd?: string) => {
     sessionState.sessionId = sessionId;
+    sessionState.sessionCwd = cwd;
   }),
   clearSession: vi.fn(() => {
     sessionState.sessionId = undefined;
+    sessionState.sessionCwd = undefined;
   }),
   getWorkDir: vi.fn(() => sessionState.workDir),
   setWorkDir: vi.fn((_conversationId: string, dir: string) => {
@@ -106,6 +110,7 @@ describe("ClaudeCodeBot e2e (TestAdapter)", () => {
     vi.clearAllMocks();
     runClaudeMock.mockReset();
     sessionState.sessionId = undefined;
+    sessionState.sessionCwd = undefined;
     sessionState.workDir = "/work/test";
     sessionState.model = "claude-opus-4-6";
     sessionState.thinkingTokens = 2048;
@@ -150,6 +155,7 @@ describe("ClaudeCodeBot e2e (TestAdapter)", () => {
     expect(vi.mocked(sessionManager.setSession)).toHaveBeenCalledWith(
       "conv-1",
       "sess-123",
+      "/work/test",
     );
   });
 
@@ -209,16 +215,9 @@ describe("ClaudeCodeBot e2e (TestAdapter)", () => {
   });
 
   it("handles adaptive card resume action", async () => {
-    sessionState.switchResult = {
-      index: 2,
-      sessionId: "sess-old",
-      workDir: "/work/legacy",
-      usedAt: new Date().toISOString(),
-    };
-
     const adapter = createAdapter();
     const activity = makeActivity("", {
-      value: { action: "resume_session", index: 2 },
+      value: { action: "resume_session", sessionId: "sess-old" },
     });
 
     await adapter
@@ -226,30 +225,70 @@ describe("ClaudeCodeBot e2e (TestAdapter)", () => {
       .assertReply((reply) => {
         expect(reply.type).toBe(ActivityTypes.Message);
         expect(reply.text).toContain("Resumed session");
-        expect(reply.text).toContain("/work/legacy");
+        expect(reply.text).toContain("sess-old");
       })
       .startTest();
 
-    expect(vi.mocked(sessionManager.switchToSession)).toHaveBeenCalledWith(
+    expect(vi.mocked(sessionManager.setSession)).toHaveBeenCalledWith(
       "conv-1",
-      2,
+      "sess-old",
+      undefined,
     );
   });
 
-  it("handles adaptive card resume action when session missing", async () => {
-    sessionState.switchResult = null;
-
+  it("resume action stores session cwd alongside sessionId", async () => {
     const adapter = createAdapter();
     const activity = makeActivity("", {
-      value: { action: "resume_session", index: 0 },
+      value: {
+        action: "resume_session",
+        sessionId: "sess-abc",
+        cwd: "/work/other-project",
+      },
+    });
+
+    await adapter
+      .send(activity)
+      .assertReply((reply) => {
+        expect(reply.text).toContain("Resumed session");
+        expect(reply.text).toContain("/work/other-project");
+      })
+      .startTest();
+
+    expect(vi.mocked(sessionManager.setSession)).toHaveBeenCalledWith(
+      "conv-1",
+      "sess-abc",
+      "/work/other-project",
+    );
+  });
+
+  it("resume action works without cwd", async () => {
+    const adapter = createAdapter();
+    const activity = makeActivity("", {
+      value: { action: "resume_session", sessionId: "sess-no-cwd" },
+    });
+
+    await adapter
+      .send(activity)
+      .assertReply((reply) => {
+        expect(reply.text).toContain("Resumed session");
+        expect(reply.text).not.toContain("📂");
+      })
+      .startTest();
+
+    expect(vi.mocked(sessionManager.setSession)).toHaveBeenCalledWith(
+      "conv-1",
+      "sess-no-cwd",
+      undefined,
+    );
+  });
+
+  it("handles adaptive card resume action when sessionId missing", async () => {
+    const adapter = createAdapter();
+    const activity = makeActivity("", {
+      value: { action: "resume_session" },
     });
 
     await adapter.send(activity).assertReply("Session not found.").startTest();
-
-    expect(vi.mocked(sessionManager.switchToSession)).toHaveBeenCalledWith(
-      "conv-1",
-      0,
-    );
   });
 });
 

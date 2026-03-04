@@ -15,18 +15,19 @@ import {
   clearSession,
   // clearHandoffMode, // TODO: use in handoff cleanup
   getSession,
+  getSessionCwd,
   setSession,
   setWorkDir,
   getWorkDir,
   getModel,
   getThinkingTokens,
   getPermissionMode,
-  switchToSession,
   setPermissionMode,
   setHandoffMode,
 } from "../session/manager.js";
 import {
   runClaude,
+  buildSessionContext,
   type ImageInput,
   type ProgressEvent,
   type RunClaudeOptions,
@@ -143,10 +144,13 @@ export class ClaudeCodeBot extends ActivityHandler {
       const conversationId = ctx.activity.conversation.id;
 
       if (value.action === "resume_session") {
-        const switched = switchToSession(conversationId, value.index as number);
-        if (switched) {
+        const sessionId = value.sessionId as string;
+        if (sessionId) {
+          const cwd = value.cwd as string | undefined;
+          setSession(conversationId, sessionId, cwd);
+          const dirLabel = cwd ? `\n\n📂 ${cwd}` : "";
           await ctx.sendActivity(
-            `🔄 Resumed session\n\n📂 ${switched.workDir}`,
+            `🔄 Resumed session \`${sessionId.slice(0, 8)}…\`${dirLabel}`,
           );
         } else {
           await ctx.sendActivity("Session not found.");
@@ -300,7 +304,7 @@ export class ClaudeCodeBot extends ActivityHandler {
         getPermissionMode(conversationId),
       );
       if (initResult.sessionId) {
-        setSession(conversationId, initResult.sessionId);
+        setSession(conversationId, initResult.sessionId, getWorkDir(conversationId));
       }
       if (initResult.error) {
         console.warn(`[BOT] Session init error: ${initResult.error}`);
@@ -378,7 +382,7 @@ export class ClaudeCodeBot extends ActivityHandler {
       const result = await runClaude(
         text || "What is in this image?",
         getSession(conversationId),
-        getWorkDir(conversationId),
+        getSessionCwd(conversationId) ?? getWorkDir(conversationId),
         getModel(conversationId),
         getThinkingTokens(conversationId),
         permissionMode,
@@ -399,7 +403,8 @@ export class ClaudeCodeBot extends ActivityHandler {
       }
 
       if (result.sessionId) {
-        setSession(conversationId, result.sessionId);
+        const cwd = getSessionCwd(conversationId) ?? getWorkDir(conversationId);
+        setSession(conversationId, result.sessionId, cwd);
       }
 
       console.log("[BOT] Formatting and sending response");
@@ -433,8 +438,14 @@ export class ClaudeCodeBot extends ActivityHandler {
       clearSession(conversationId);
       if (workDir) setWorkDir(conversationId, workDir);
 
-      console.log(`[HANDOFF] Fork: sessionId=${sessionId}, workDir=${workDir}`);
-      const prompt = `The user handed off from Terminal to Teams (project: ${workDir ?? "unknown"}). Welcome them and ask what they need help with.`;
+      // Fetch recent conversation context from the Terminal session
+      const context = sessionId ? await buildSessionContext(sessionId) : "";
+      const contextSection = context
+        ? `\n\nHere is the recent conversation from Terminal:\n\n${context}\n\n`
+        : " ";
+
+      console.log(`[HANDOFF] Fork: sessionId=${sessionId}, workDir=${workDir}, hasContext=${!!context}`);
+      const prompt = `The user handed off from Terminal to Teams (project: ${workDir ?? "unknown"}).${contextSection}Welcome them briefly, summarize what was being worked on (if context is available), and ask what they need help with. Reply in the same language as the conversation above.`;
 
       await this.runClaudeAndRespond(ctx, conversationId, prompt, undefined, {
         resume: "fork",
@@ -515,10 +526,11 @@ export class ClaudeCodeBot extends ActivityHandler {
     finalRunOptions.canUseTool = createPermissionHandler(sendPermCard);
 
     try {
+      const effectiveCwd = getSessionCwd(conversationId) ?? getWorkDir(conversationId);
       const result = await runClaude(
         prompt,
         getSession(conversationId),
-        getWorkDir(conversationId),
+        effectiveCwd,
         getModel(conversationId),
         getThinkingTokens(conversationId),
         permissionMode,
@@ -535,7 +547,7 @@ export class ClaudeCodeBot extends ActivityHandler {
       }
 
       if (result.sessionId) {
-        setSession(conversationId, result.sessionId);
+        setSession(conversationId, result.sessionId, effectiveCwd);
       }
 
       await progress.finalize(splitMessage(formatResponse(result)));
