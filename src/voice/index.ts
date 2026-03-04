@@ -73,7 +73,7 @@ export function wrapVoiceTranscript(text: string): string {
  * cannot be parsed.
  */
 export async function transcribeVoiceAttachment(
-  attachment: { contentType: string; content: unknown },
+  attachment: { contentType: string; content?: unknown },
   authToken?: string,
 ): Promise<string | null> {
   const enabled = await isVoiceEnabled();

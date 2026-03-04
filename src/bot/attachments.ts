@@ -1,4 +1,5 @@
 import { TurnContext, Attachment } from "botbuilder";
+import { isAudioAttachment, transcribeVoiceAttachment, isVoiceEnabled } from "../voice/index.js";
 
 export interface DownloadedAttachment {
   data: Buffer;
@@ -130,6 +131,7 @@ export interface ProcessedAttachments {
   images: ImageBlock[];
   textSnippets: string[];
   unsupported: string[];
+  hasVoiceTranscript: boolean;
 }
 
 export async function processAttachments(
@@ -140,11 +142,34 @@ export async function processAttachments(
     images: [],
     textSnippets: [],
     unsupported: [],
+    hasVoiceTranscript: false,
   };
 
   for (const att of attachments) {
     // Skip inline HTML images Teams adds for adaptive cards, etc.
     if (att.contentType === "text/html") continue;
+
+    // Voice message handling
+    if (isAudioAttachment(att.contentType)) {
+      if (await isVoiceEnabled()) {
+        const token = getBotToken(ctx);
+        try {
+          const transcript = await transcribeVoiceAttachment(att, token);
+          if (transcript) {
+            result.textSnippets.push(transcript);
+            result.hasVoiceTranscript = true;
+          } else {
+            result.unsupported.push("voice message");
+          }
+        } catch (err) {
+          console.error("[voice] Transcription failed:", err);
+          result.unsupported.push("voice message (transcription failed)");
+        }
+      } else {
+        result.unsupported.push("voice message (transcription not set up \u2014 run: teams-bot setup-voice)");
+      }
+      continue;
+    }
 
     const downloaded = await downloadAttachment(ctx, att);
     if (!downloaded) {

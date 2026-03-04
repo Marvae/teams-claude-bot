@@ -21,7 +21,7 @@ export interface AudioAttachment {
  */
 export function parseAudioAttachment(attachment: {
   contentType: string;
-  content: unknown;
+  content?: unknown;
 }): AudioAttachment | null {
   if (attachment.contentType !== "application/vnd.microsoft.card.audio") {
     return null;

@@ -314,6 +314,9 @@ export class ClaudeCodeBot extends ActivityHandler {
       if (processed.textSnippets.length > 0) {
         text = processed.textSnippets.join("\n\n") + "\n\n" + text;
       }
+      if (processed.hasVoiceTranscript) {
+        await ctx.sendActivity("\ud83c\udf99\ufe0f Voice message transcribed.");
+      }
       if (processed.unsupported.length > 0) {
         await ctx.sendActivity(
           `Skipped unsupported files: ${processed.unsupported.join(", ")}`,
