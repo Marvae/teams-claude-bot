@@ -18,7 +18,8 @@
     "lint": "eslint src/ tests/",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write src/ tests/",
-    "format:check": "prettier --check src/ tests/"
+    "format:check": "prettier --check src/ tests/",
+    "setup:voice": "bash scripts/setup-voice.sh"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.64",

@@ -61,6 +61,15 @@ PLIST
     else
       echo "Tip: Run '$0 install-skill' later to enable /handoff."
     fi
+
+    echo ""
+    read -p "Enable voice message transcription? (requires whisper.cpp + ffmpeg) [y/N]: " INSTALL_VOICE
+    INSTALL_VOICE="${INSTALL_VOICE:-N}"
+    if [[ "$INSTALL_VOICE" =~ ^[Yy]$ ]]; then
+      "$0" setup-voice
+    else
+      echo "Tip: Run '$0 setup-voice' later to enable voice transcription."
+    fi
     ;;
 
   uninstall)
@@ -238,7 +247,11 @@ PLIST
     echo "Uninstalled /handoff skill and hook."
     ;;
 
+  setup-voice)
+    "$PROJECT_DIR/scripts/setup-voice.sh"
+    ;;
+
   *)
-    echo "Usage: $0 {install|uninstall|start|stop|restart|status|logs|build|install-skill|uninstall-skill}"
+    echo "Usage: $0 {install|uninstall|start|stop|restart|status|logs|build|install-skill|uninstall-skill|setup-voice}"
     ;;
 esac
