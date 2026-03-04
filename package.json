@@ -5,12 +5,14 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "teams-bot": "./scripts/ctl.sh"
+    "teams-bot": "./dist/cli.js"
   },
   "scripts": {
     "dev": "concurrently -k -n bot,tunnel -c blue,green \"tsx watch src/index.ts\" \"node scripts/tunnel.mjs\"",
     "dev:local": "tsx watch src/index.ts",
-    "build": "esbuild src/index.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/index.js --external:@anthropic-ai/claude-agent-sdk --external:@pierre/diffs --external:@pierre/diffs/* --external:playwright-core --external:chromium-bidi --external:chromium-bidi/* --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\"",
+    "build": "npm run build:bot && npm run build:cli",
+    "build:bot": "esbuild src/index.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/index.js --external:@anthropic-ai/claude-agent-sdk --external:@pierre/diffs --external:@pierre/diffs/* --external:playwright-core --external:chromium-bidi --external:chromium-bidi/* --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\"",
+    "build:cli": "esbuild src/cli.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/cli.js --external:commander",
     "start": "node dist/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -36,6 +38,7 @@
     "@types/node": "^25.3.3",
     "@typescript-eslint/eslint-plugin": "^8.56.1",
     "@typescript-eslint/parser": "^8.56.1",
+    "commander": "^14.0.1",
     "concurrently": "^9.2.1",
     "esbuild": "^0.27.3",
     "eslint": "^10.0.2",
