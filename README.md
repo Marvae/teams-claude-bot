@@ -10,7 +10,7 @@ A lightweight Microsoft Teams bot that bridges to Claude Code on your local mach
 
 - **Full Claude Code access** — Read, Write, Edit, Bash, Glob, Grep tools via Teams messages
 - **Image & file upload** — Send screenshots for Claude to analyze, or upload code files for review
-- **Streaming responses** — Real-time progress via Teams streaming protocol (typing indicators)
+- **Streaming responses** — Real-time progress via message updates (text grows live)
 - **Diff previews** — Code changes shown as inline text diffs in real time
 - **Todo tracking** — Complex tasks show inline progress (✅🔧⏳) with live counter
 - **Prompt suggestions** — Quick-reply button after each turn for natural follow-ups
@@ -18,7 +18,6 @@ A lightweight Microsoft Teams bot that bridges to Claude Code on your local mach
   - Only sessionId + permissionMode persisted to disk
   - `/sessions` browser — lists all SDK sessions with summary, project, branch
   - Resume any session via buttons (path-validated against allowed work directory)
-  - Message queuing — messages sent while busy are queued, not dropped
   - Usage tracking — `/status` shows cumulative cost, tokens, and turns
 - **Permission control** — Dynamic permission modes, changeable without restarting session
   - Default, Accept Edits, Plan, Don't Ask, Bypass modes
@@ -95,7 +94,7 @@ src/
 4. Process attachments (images → base64, text files → prepend to prompt)
 5. Route slash commands (all read/write from unified state module)
 6. Get or create session (lazy — first message triggers creation with auto-resume)
-7. Queue if busy, or send to session
+7. Send to session (fire-and-forget, SDK queues internally)
 8. Stream progress: todo list + tool calls + partial text (updateActivity)
 9. On completion: replace progress with final response + prompt suggestion
 ```
@@ -191,7 +190,7 @@ Teams → Terminal:
 | Command | Description |
 |---------|-------------|
 | `/new` | Start a fresh Claude session |
-| `/stop` | Interrupt current task, clear pending queue |
+| `/stop` | Interrupt current task |
 | `/project <path>` | Set working directory |
 | `/model [name]` | Show or set model (sonnet/opus/haiku) — applies immediately |
 | `/models` | List available models |
