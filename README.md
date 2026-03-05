@@ -11,7 +11,7 @@ A lightweight Microsoft Teams bot that bridges to Claude Code on your local mach
 - **Full Claude Code access** — Read, Write, Edit, Bash, Glob, Grep tools via Teams messages
 - **Image & file upload** — Send screenshots for Claude to analyze, or upload code files for review
 - **Streaming responses** — Real-time progress via Teams streaming protocol (typing indicators)
-- **Diff image rendering** — Code changes displayed as syntax-highlighted diff images (optional)
+- **Diff previews** — Code changes shown as inline text diffs in real time
 - **Todo tracking** — Complex tasks show inline progress (✅🔧⏳) with live counter
 - **Prompt suggestions** — Quick-reply button after each turn for natural follow-ups
 - **Session management** — Single long-lived session with auto-resume on restart
@@ -237,7 +237,6 @@ Then in any Claude Code session:
 teams-bot install         # Install + auto-start on login
 teams-bot install-skill   # Install /handoff skill for Claude Code
 teams-bot uninstall-skill # Remove /handoff skill
-teams-bot enable-diff     # Enable diff image rendering (downloads ~200MB)
 teams-bot status          # Check if running
 teams-bot logs            # Tail logs
 teams-bot restart         # Rebuild + restart
@@ -265,6 +264,5 @@ npm run format     # Prettier
 - **Claude Agent SDK** (`@anthropic-ai/claude-agent-sdk`) — Claude Code integration
 - **Express** — HTTP server with rate limiting and security headers
 - **esbuild** — Bundler (single-file output, Node 22 target)
-- **@pierre/diffs + playwright-core** — Diff image rendering (optional)
 - **vitest** — Testing
 - **ESLint + Prettier** — Code quality

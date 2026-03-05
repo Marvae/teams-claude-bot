@@ -36,7 +36,7 @@ import {
 import { processAttachments } from "./attachments.js";
 import { config } from "../config.js";
 import { saveConversationRef } from "../handoff/store.js";
-import { renderDiffImage, type FileDiffInput } from "./diff-renderer.js";
+import { formatTextDiff } from "./text-diff.js";
 
 function friendlyError(error: string, stopReason?: string | null): string {
   if (stopReason === "refusal") {
@@ -638,8 +638,6 @@ export class ClaudeCodeBot extends ActivityHandler {
     let pendingUpdate = false;
     let promptSuggestion: string | undefined;
     let streamSequence = 1;
-    const fileDiffs: FileDiffInput[] = [];
-
     const buildDisplay = (): string => {
       const parts: string[] = [];
       if (todoDisplay) {
@@ -713,11 +711,17 @@ export class ClaudeCodeBot extends ActivityHandler {
         }
 
         if (event.type === "file_diff") {
-          fileDiffs.push({
-            filePath: event.filePath,
-            originalFile: event.originalFile,
-            newString: event.newString,
-          });
+          const label = event.filePath ? `\`${event.filePath}\`` : "file";
+          const diffText = formatTextDiff(
+            event.originalFile,
+            event.newString,
+          );
+          sendFn({
+            type: "message",
+            text: diffText
+              ? `${label}\n\n\`\`\`diff\n${diffText}\n\`\`\``
+              : `📝 Edited ${label}`,
+          }).catch(() => {});
           return;
         }
 
@@ -800,27 +804,6 @@ export class ClaudeCodeBot extends ActivityHandler {
         for (let i = 1; i < chunks.length; i++) {
           await sendFn({ type: "message", text: chunks[i] });
         }
-
-        for (const fileDiff of fileDiffs) {
-          try {
-            const image = await renderDiffImage(fileDiff);
-            await sendFn({
-              type: "message",
-              text: fileDiff.filePath
-                ? `Diff preview: \`${fileDiff.filePath}\``
-                : "Diff preview",
-              attachments: [
-                {
-                  contentType: "image/png",
-                  name: "diff.png",
-                  contentUrl: `data:image/png;base64,${image}`,
-                },
-              ],
-            });
-          } catch {
-            // Playwright not installed, skip diff image
-          }
-        }
       },
       getPromptSuggestion: () => promptSuggestion,
     };
@@ -873,4 +856,5 @@ export class ClaudeCodeBot extends ActivityHandler {
     if (value.length <= max) return value;
     return `${value.slice(0, max - 3)}...`;
   }
+
 }

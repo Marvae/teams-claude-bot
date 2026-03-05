@@ -170,28 +170,8 @@ function pathExistsAndNonEmpty(filePath: string): boolean {
 }
 
 async function runBuild(): Promise<void> {
-  console.log('Building...');
+  console.log('Building project...');
   await runCommand(npm, ['run', 'build'], { cwd: projectDir, shell: true });
-}
-
-async function enableDiff(): Promise<void> {
-  console.log('Installing diff rendering dependencies...');
-  await runCommand(npm, ['install', '@pierre/diffs', 'playwright-core'], { cwd: projectDir, shell: true });
-  await runCommand(npx, ['playwright', 'install', 'chromium'], { cwd: projectDir, shell: true });
-  console.log('Done. Diff images are now enabled.');
-}
-
-async function maybeEnableDiff(): Promise<void> {
-  const answer = await prompt('Enable diff image rendering? [y/N] ');
-  if (!normalizeYesNo(answer, false)) {
-    return;
-  }
-
-  try {
-    await enableDiff();
-  } catch {
-    console.log('Warning: playwright install failed, diff images disabled.');
-  }
 }
 
 function escapeSingleQuotes(input: string): string {
@@ -776,7 +756,7 @@ async function uninstallSkill(): Promise<void> {
 async function installCommand(): Promise<void> {
   const platform = detectPlatform();
   await runBuild();
-  await maybeEnableDiff();
+
   await installService(platform);
 
   if (!pathExistsAndNonEmpty(getConversationRefsPath())) {
@@ -887,10 +867,6 @@ async function main(): Promise<void> {
 
   program.command('uninstall-skill').description('Remove /handoff skill').action(async () => {
     await uninstallSkill();
-  });
-
-  program.command('enable-diff').description('Install diff rendering dependencies').action(async () => {
-    await enableDiff();
   });
 
   await program.parseAsync(process.argv);
