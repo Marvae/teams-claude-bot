@@ -23,11 +23,11 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
   getSessionMessages: vi.fn().mockResolvedValue([]),
 }));
 
-vi.mock("../src/handoff/store.js", () => ({
+vi.mock("../../src/handoff/store.js", () => ({
   saveConversationRef: vi.fn(),
 }));
 
-vi.mock("../src/session/state.js", async (importOriginal) => {
+vi.mock("../../src/session/state.js", async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
   return {
     ...actual,
@@ -66,7 +66,7 @@ vi.mock("../src/session/state.js", async (importOriginal) => {
   };
 });
 
-import { ClaudeCodeBot } from "../src/bot/teams-bot.js";
+import { ClaudeCodeBot } from "../../src/bot/teams-bot.js";
 
 const serviceUrl = "https://amer.ng.msg.teams.microsoft.com";
 
@@ -204,7 +204,7 @@ describe("handleMessage passes permission + prompt handlers", () => {
 
           if (capturedCanUseTool) {
             const { resolvePermission } =
-              await import("../src/claude/permissions.js");
+              await import("../../src/claude/permissions.js");
             const resultPromise = capturedCanUseTool(
               "Bash",
               { command: "rm -rf /tmp/test" },
@@ -257,7 +257,7 @@ describe("handleMessage passes permission + prompt handlers", () => {
 
           if (capturedOnElicitation) {
             const { resolveElicitation } =
-              await import("../src/claude/elicitation.js");
+              await import("../../src/claude/elicitation.js");
 
             const responsePromise = capturedOnElicitation({
               serverName: "github-mcp",

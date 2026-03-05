@@ -4,6 +4,7 @@
  * SDK emits PromptRequest when it needs user input (e.g., confirmation).
  * We show an Adaptive Card and wait for user selection.
  */
+import { logInfo } from "../logging/logger.js";
 
 export type PromptRequestOption = {
   key: string;
@@ -77,10 +78,12 @@ export function registerPromptRequest(
   return new Promise<string>((resolve, reject) => {
     const timeout = setTimeout(() => {
       pendingPrompts.delete(requestId);
+      logInfo("PROMPT", "request_timed_out", { requestId });
       reject(new Error("Prompt request timed out"));
     }, timeoutMs);
 
     pendingPrompts.set(requestId, { resolve, reject, timeout });
+    logInfo("PROMPT", "request_registered", { requestId, timeoutMs });
   });
 }
 
@@ -94,6 +97,7 @@ export function resolvePromptRequest(
   clearTimeout(pending.timeout);
   pendingPrompts.delete(requestId);
   pending.resolve(selectedKey);
+  logInfo("PROMPT", "request_resolved", { requestId });
 
   return true;
 }
@@ -102,5 +106,6 @@ export function clearPendingPrompts(): void {
   for (const pending of pendingPrompts.values()) {
     clearTimeout(pending.timeout);
   }
+  logInfo("PROMPT", "pending_cleared", { count: pendingPrompts.size });
   pendingPrompts.clear();
 }

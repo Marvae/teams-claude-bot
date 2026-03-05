@@ -2,6 +2,7 @@ import { CardFactory, type TurnContext } from "botbuilder";
 import { listSessions } from "@anthropic-ai/claude-agent-sdk";
 import * as state from "../session/state.js";
 import { buildHelpCard, buildPermissionModeCard } from "./cards.js";
+import { logError, logInfo } from "../logging/logger.js";
 
 function formatAge(iso: string): string {
   const ms = Date.now() - new Date(iso).getTime();
@@ -42,6 +43,11 @@ export async function handleCommand(
   const parts = text.split(/\s+/);
   const cmd = parts[0].toLowerCase();
   const arg = parts.slice(1).join(" ").trim();
+  logInfo("COMMAND", "received", {
+    command: cmd,
+    activityId: ctx.activity.id,
+    conversationId: ctx.activity.conversation?.id,
+  });
 
   switch (cmd) {
     case "/new":
@@ -57,7 +63,9 @@ export async function handleCommand(
       const managed = state.getSession();
       if (managed?.session.hasQuery) {
         await ctx.sendActivity("🛑 Stopping...");
-        managed.session.interrupt().catch(() => {});
+        managed.session.interrupt().catch((error) => {
+          logError("COMMAND", "stop_failed", error, { command: cmd });
+        });
       } else {
         await ctx.sendActivity("Nothing to interrupt.");
       }
@@ -104,7 +112,16 @@ export async function handleCommand(
       const resolved = MODEL_SHORTCUTS[arg.toLowerCase()] ?? arg;
       state.setModel(resolved);
       // Update running session dynamically (no restart needed)
-      await state.getSession()?.session.setModel(resolved);
+      try {
+        await state.getSession()?.session.setModel(resolved);
+      } catch (error) {
+        logError("COMMAND", "set_model_failed", error, {
+          command: cmd,
+          model: resolved,
+        });
+        await ctx.sendActivity("Failed to update model on active session.");
+        return true;
+      }
       await ctx.sendActivity(`Model set to \`${resolved}\``);
       return true;
     }
@@ -172,7 +189,16 @@ export async function handleCommand(
       }
 
       state.setPermissionMode(arg);
-      await state.getSession()?.session.setPermissionMode(arg);
+      try {
+        await state.getSession()?.session.setPermissionMode(arg);
+      } catch (error) {
+        logError("COMMAND", "set_permission_mode_failed", error, {
+          command: cmd,
+          mode: arg,
+        });
+        await ctx.sendActivity("Failed to update permission mode on active session.");
+        return true;
+      }
       await ctx.sendActivity(`Permission mode set to \`${arg}\``);
       return true;
     }
@@ -232,7 +258,8 @@ export async function handleCommand(
       try {
         sdkSessions = await listSessions({ limit: MAX_SESSIONS });
         sdkSessions.sort((a, b) => b.lastModified - a.lastModified);
-      } catch {
+      } catch (error) {
+        logError("COMMAND", "list_sessions_failed", error, { command: cmd });
         await ctx.sendActivity(
           "Could not list sessions. Start chatting to create one.",
         );
@@ -329,7 +356,14 @@ export async function handleCommand(
 
     case "/help": {
       const managed = state.getSession();
-      let sdkCommands = await managed?.session.getSupportedCommands();
+      let sdkCommands;
+      try {
+        sdkCommands = await managed?.session.getSupportedCommands();
+      } catch (error) {
+        logError("COMMAND", "get_supported_commands_failed", error, {
+          command: cmd,
+        });
+      }
       if (sdkCommands && sdkCommands.length > 0) {
         state.setCachedCommands(sdkCommands);
       } else {
@@ -344,6 +378,7 @@ export async function handleCommand(
 
     default: {
       // Unknown bot command — forward to SDK as a slash command
+      logInfo("COMMAND", "forward_to_sdk", { command: cmd });
       return false;
     }
   }

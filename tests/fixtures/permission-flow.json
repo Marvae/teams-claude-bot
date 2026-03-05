@@ -1,0 +1,67 @@
+{
+  "meta": {
+    "description": "Permission request flow: ask, user approves, assistant continues"
+  },
+  "messagesByInput": [
+    [
+      {
+        "type": "system",
+        "subtype": "init",
+        "session_id": "{{session_id}}"
+      },
+      {
+        "type": "assistant",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "tool_use",
+              "id": "toolu_write_1",
+              "name": "Write",
+              "input": {
+                "file_path": "notes.txt"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "type": "permission_request",
+        "prompt": "perm-write-1",
+        "message": "Approve Write tool access for notes.txt?",
+        "options": [
+          {
+            "value": "approved",
+            "label": "Approve"
+          },
+          {
+            "value": "deny",
+            "label": "Deny"
+          }
+        ]
+      }
+    ],
+    [
+      {
+        "type": "assistant",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "Permission approved. Writing complete."
+            }
+          ]
+        }
+      },
+      {
+        "type": "result",
+        "subtype": "success",
+        "is_error": false,
+        "result": "Write completed after approval.",
+        "stop_reason": "end_turn",
+        "session_id": "{{session_id}}"
+      }
+    ]
+  ]
+}

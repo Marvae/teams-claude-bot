@@ -46,6 +46,10 @@ function makeMockCtx() {
   const sent: unknown[] = [];
   return {
     ctx: {
+      activity: {
+        id: "activity-1",
+        conversation: { id: "conv-1" },
+      },
       sendActivity: vi.fn(async (activity: unknown) => {
         sent.push(activity);
         return { id: "msg-1" };

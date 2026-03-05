@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { formatResponse, splitMessage } from "../src/claude/formatter.js";
-import type { ClaudeResult } from "../src/claude/agent.js";
+import type { ClaudeResult } from "../src/claude/types.js";
 
 describe("formatResponse", () => {
   it("returns 'Done (no output)' when result is empty", () => {

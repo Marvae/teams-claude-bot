@@ -18,6 +18,7 @@ import { join, dirname, resolve } from "path";
 import { homedir } from "os";
 import { ConversationSession } from "../claude/session.js";
 import { config } from "../config.js";
+import { logError, logInfo } from "../logging/logger.js";
 
 // ─── Types ───
 
@@ -44,14 +45,24 @@ function loadPersisted(): PersistedData {
   try {
     const raw = readFileSync(SESSION_FILE, "utf-8");
     return JSON.parse(raw) as PersistedData;
-  } catch {
+  } catch (error) {
+    logError("STATE", "persisted_load_failed", error, {
+      sessionFile: SESSION_FILE,
+    });
     return {};
   }
 }
 
 function savePersisted(data: PersistedData): void {
-  mkdirSync(dirname(SESSION_FILE), { recursive: true, mode: 0o700 });
-  writeFileSync(SESSION_FILE, JSON.stringify(data), { mode: 0o600 });
+  try {
+    mkdirSync(dirname(SESSION_FILE), { recursive: true, mode: 0o700 });
+    writeFileSync(SESSION_FILE, JSON.stringify(data), { mode: 0o600 });
+    logInfo("STATE", "persisted_saved", { sessionFile: SESSION_FILE });
+  } catch (error) {
+    logError("STATE", "persisted_save_failed", error, {
+      sessionFile: SESSION_FILE,
+    });
+  }
 }
 
 export function loadPersistedSessionId(): string | undefined {
@@ -83,9 +94,10 @@ export function loadPersistedState(): void {
   if (data.cwd && data.sessionId) {
     const r = setWorkDir(data.cwd);
     if (!r.ok) {
-      console.warn(
-        `[STATE] Persisted cwd no longer valid (${data.cwd}), resume will fail gracefully`,
-      );
+      logInfo("STATE", "persisted_cwd_invalid", {
+        workDir: data.cwd,
+        sessionId: data.sessionId,
+      });
     }
   }
 }
@@ -100,11 +112,17 @@ export function getSession(): ManagedSession | null {
 
 export function setSession(m: ManagedSession): void {
   managed = m;
+  logInfo("SESSION", "started");
 }
 
 export function destroySession(): void {
   if (managed) {
-    managed.session.close();
+    try {
+      managed.session.close();
+      logInfo("SESSION", "ended");
+    } catch (error) {
+      logError("SESSION", "end_failed", error);
+    }
     managed = null;
     resetUsageStats();
   }
@@ -262,8 +280,12 @@ function cleanupIdle(): void {
   if (!managed) return;
   const now = Date.now();
   if (now - managed.session.lastActivityTime > IDLE_TIMEOUT_MS) {
-    console.log("[STATE] Closing idle session");
-    managed.session.close();
+    logInfo("SESSION", "idle_timeout");
+    try {
+      managed.session.close();
+    } catch (error) {
+      logError("SESSION", "idle_close_failed", error);
+    }
     managed = null;
   }
 }

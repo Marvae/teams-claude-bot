@@ -3,6 +3,7 @@ import { randomBytes } from "crypto";
 import { homedir } from "os";
 import { resolve } from "path";
 import { existsSync, readFileSync, writeFileSync } from "fs";
+import { logError, logInfo } from "./logging/logger.js";
 
 function required(name: string): string {
   const value = process.env[name];
@@ -54,12 +55,10 @@ export const config = {
           ? envContent.replace(/^HANDOFF_TOKEN=.*$/m, `HANDOFF_TOKEN=${generated}`)
           : envContent + `\nHANDOFF_TOKEN=${generated}\n`;
         writeFileSync(envPath, updated);
-        console.log(`[SECURITY] Generated HANDOFF_TOKEN and saved to .env`);
+        logInfo("SECURITY", "handoff_token_generated", { envPath });
       }
-    } catch {
-      console.warn(
-        `[SECURITY] Could not write to .env — token is ephemeral: ${generated}`,
-      );
+    } catch (error) {
+      logError("SECURITY", "handoff_token_persist_failed", error, { envPath });
     }
     return generated;
   })(),

@@ -9,6 +9,7 @@ import { ClaudeCodeBot } from "./bot/teams-bot.js";
 import { buildHandoffCard } from "./bot/cards.js";
 import { loadConversationRefs, getConversationRef } from "./handoff/store.js";
 import { loadPersistedState } from "./session/state.js";
+import { logError, logInfo, toError } from "./logging/logger.js";
 
 // Simple in-memory rate limiter (no external dependencies)
 function rateLimit(windowMs: number, maxRequests: number) {
@@ -34,9 +35,13 @@ function rateLimit(windowMs: number, maxRequests: number) {
   };
 }
 
-// Load persisted state
-loadConversationRefs();
-loadPersistedState();
+try {
+  loadConversationRefs();
+  loadPersistedState();
+  logInfo("BOOT", "state_loaded");
+} catch (error) {
+  logError("BOOT", "state_load_failed", error);
+}
 
 // Bot Framework adapter
 const adapter = new BotFrameworkAdapter({
@@ -46,11 +51,14 @@ const adapter = new BotFrameworkAdapter({
 });
 
 adapter.onTurnError = async (context, error) => {
-  console.error(`[ERROR] ${error}`);
+  logError("BOT", "turn_error", error, {
+    conversationId: context.activity.conversation?.id,
+    activityId: context.activity.id,
+  });
   try {
     await context.sendActivity("Something went wrong. Try again.");
-  } catch {
-    // Ignore send errors in error handler
+  } catch (sendError) {
+    logError("BOT", "turn_error_notify_failed", sendError);
   }
 };
 
@@ -72,9 +80,11 @@ app.use(express.json());
 
 app.post("/api/messages", async (req, res) => {
   try {
+    logInfo("HTTP", "messages_received", { method: req.method });
     await adapter.process(req, res, (context) => bot.run(context));
+    logInfo("HTTP", "messages_processed");
   } catch (err) {
-    console.error(`[AUTH] ${err instanceof Error ? err.message : err}`);
+    logError("HTTP", "messages_auth_failed", err);
     if (!res.headersSent) {
       res.status(401).end();
     }
@@ -85,6 +95,7 @@ app.post("/api/messages", async (req, res) => {
 app.post("/api/handoff", rateLimit(60_000, 10), async (req, res) => {
   const token = req.headers["x-handoff-token"];
   if (token !== config.handoffToken) {
+    logInfo("HANDOFF", "unauthorized");
     return res.status(401).json({ success: false, error: "Unauthorized" });
   }
 
@@ -92,6 +103,9 @@ app.post("/api/handoff", rateLimit(60_000, 10), async (req, res) => {
 
   const ref = getConversationRef();
   if (!ref) {
+    logInfo("HANDOFF", "conversation_ref_missing", {
+      sessionId: typeof sessionId === "string" ? sessionId : undefined,
+    });
     return res.status(404).json({
       success: false,
       error:
@@ -113,10 +127,16 @@ app.post("/api/handoff", rateLimit(60_000, 10), async (req, res) => {
       });
     });
 
-    console.log("[HANDOFF] Handoff card sent to Teams");
+    logInfo("HANDOFF", "card_sent", {
+      sessionId: typeof sessionId === "string" ? sessionId : undefined,
+      workDir: typeof workDir === "string" ? workDir : undefined,
+    });
     res.json({ success: true });
   } catch (err) {
-    console.error(`[HANDOFF] ${err}`);
+    logError("HANDOFF", "send_failed", err, {
+      sessionId: typeof sessionId === "string" ? sessionId : undefined,
+      workDir: typeof workDir === "string" ? workDir : undefined,
+    });
     res.status(500).json({
       success: false,
       error: "Failed to send notification",
@@ -125,6 +145,16 @@ app.post("/api/handoff", rateLimit(60_000, 10), async (req, res) => {
 });
 
 app.listen(config.port, () => {
-  console.log(`Bot running on http://localhost:${config.port}/api/messages`);
-  console.log(`Working directory: ${config.claudeWorkDir}`);
+  logInfo("BOOT", "server_started", {
+    port: config.port,
+    workDir: config.claudeWorkDir,
+  });
+});
+
+process.on("uncaughtException", (error) => {
+  logError("BOOT", "uncaught_exception", error);
+});
+
+process.on("unhandledRejection", (reason) => {
+  logError("BOOT", "unhandled_rejection", toError(reason));
 });

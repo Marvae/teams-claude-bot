@@ -1,0 +1,22 @@
+{
+  "meta": {
+    "version": 1,
+    "description": "Fixture responses for SDK integration tests in mock mode"
+  },
+  "default": {
+    "resultDelayMs": 15,
+    "init": {
+      "apiKeySource": "oauth",
+      "claude_code_version": "mock-1.0.0",
+      "cwd": "/tmp/mock-cwd",
+      "tools": ["Read", "Glob", "Grep", "AskUserQuestion"],
+      "mcp_servers": [],
+      "model": "claude-sonnet-4-6",
+      "permissionMode": "default",
+      "slash_commands": ["/help"],
+      "output_style": "default",
+      "skills": [],
+      "plugins": []
+    }
+  }
+}

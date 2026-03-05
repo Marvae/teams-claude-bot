@@ -2,6 +2,7 @@ import type {
   ElicitationRequest as SDKElicitationRequest,
   ElicitationResult as SDKElicitationResult,
 } from "@anthropic-ai/claude-agent-sdk";
+import { logError, logInfo } from "../logging/logger.js";
 
 export type ElicitationRequest = SDKElicitationRequest;
 export type ElicitationResult = SDKElicitationResult;
@@ -229,10 +230,12 @@ export function registerElicitation(
   return new Promise<ElicitationResult>((resolve) => {
     const timeout = setTimeout(() => {
       pendingElicitations.delete(elicitationId);
+      logInfo("ELICIT", "request_timed_out", { elicitationId });
       resolve({ action: "decline" });
     }, timeoutMs);
 
     pendingElicitations.set(elicitationId, { resolve, timeout });
+    logInfo("ELICIT", "request_registered", { elicitationId, timeoutMs });
   });
 }
 
@@ -245,6 +248,7 @@ export function resolveElicitation(
 
   clearTimeout(pending.timeout);
   pendingElicitations.delete(elicitationId);
+  logInfo("ELICIT", "request_resolved", { elicitationId, action: "accept" });
 
   pending.resolve({
     action: "accept",
@@ -260,6 +264,7 @@ export function resolveElicitationUrlComplete(elicitationId: string): boolean {
 
   clearTimeout(pending.timeout);
   pendingElicitations.delete(elicitationId);
+  logInfo("ELICIT", "request_resolved", { elicitationId, action: "accept" });
   pending.resolve({ action: "accept" });
   return true;
 }
@@ -270,6 +275,7 @@ export function cancelElicitation(elicitationId: string): boolean {
 
   clearTimeout(pending.timeout);
   pendingElicitations.delete(elicitationId);
+  logInfo("ELICIT", "request_resolved", { elicitationId, action: "cancel" });
   pending.resolve({ action: "cancel" });
   return true;
 }
@@ -286,7 +292,21 @@ export async function handleElicitation(
   const fallbackId = `${request.serverName}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const elicitationId = baseId && baseId.length > 0 ? baseId : fallbackId;
 
-  await sendCard(elicitationId, request);
+  try {
+    await sendCard(elicitationId, request);
+    logInfo("ELICIT", "card_sent", {
+      elicitationId,
+      serverName: request.serverName,
+      mode: request.mode,
+    });
+  } catch (error) {
+    logError("ELICIT", "card_send_failed", error, {
+      elicitationId,
+      serverName: request.serverName,
+      mode: request.mode,
+    });
+    return { action: "decline" };
+  }
 
   return registerElicitation(elicitationId, opts);
 }
@@ -295,5 +315,6 @@ export function clearPendingElicitations(): void {
   for (const pending of pendingElicitations.values()) {
     clearTimeout(pending.timeout);
   }
+  logInfo("ELICIT", "pending_cleared", { count: pendingElicitations.size });
   pendingElicitations.clear();
 }

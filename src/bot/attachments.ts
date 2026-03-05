@@ -1,4 +1,5 @@
 import { TurnContext, Attachment } from "botbuilder";
+import { logError, logInfo } from "../logging/logger.js";
 
 export interface DownloadedAttachment {
   data: Buffer;
@@ -109,10 +110,33 @@ export async function downloadAttachment(
     headers["Authorization"] = `Bearer ${token}`;
   }
 
-  const resp = await fetch(url, { headers });
-  if (!resp.ok) return null;
+  let resp: Response;
+  try {
+    resp = await fetch(url, { headers });
+  } catch (error) {
+    logError("ATTACH", "download_failed", error, {
+      fileName: attachment.name,
+      contentType: attachment.contentType,
+    });
+    return null;
+  }
+  if (!resp.ok) {
+    logInfo("ATTACH", "download_rejected", {
+      fileName: attachment.name,
+      status: resp.status,
+    });
+    return null;
+  }
 
-  const buffer = Buffer.from(await resp.arrayBuffer());
+  let buffer: Buffer;
+  try {
+    buffer = Buffer.from(await resp.arrayBuffer());
+  } catch (error) {
+    logError("ATTACH", "download_buffer_failed", error, {
+      fileName: attachment.name,
+    });
+    return null;
+  }
   const name = attachment.name ?? "attachment";
   const respType =
     resp.headers.get("content-type") ?? "application/octet-stream";
@@ -122,6 +146,11 @@ export async function downloadAttachment(
     "application/vnd.microsoft.teams.file.download.info"
       ? inferContentType(name, respType)
       : (attachment.contentType ?? respType);
+
+  logInfo("ATTACH", "downloaded", {
+    fileName: name,
+    contentType,
+  });
 
   return { data: buffer, contentType, name };
 }
@@ -149,6 +178,9 @@ export async function processAttachments(
     const downloaded = await downloadAttachment(ctx, att);
     if (!downloaded) {
       result.unsupported.push(att.name ?? "unknown file");
+      logInfo("ATTACH", "unsupported", {
+        fileName: att.name ?? "unknown file",
+      });
       continue;
     }
 
@@ -162,10 +194,18 @@ export async function processAttachments(
       result.textSnippets.push(
         `--- ${downloaded.name} ---\n\`\`\`\n${text}\n\`\`\``,
       );
+      logInfo("ATTACH", "text_processed", { fileName: downloaded.name });
     } else {
       result.unsupported.push(downloaded.name);
+      logInfo("ATTACH", "unsupported", { fileName: downloaded.name });
     }
   }
+
+  logInfo("ATTACH", "processing_complete", {
+    images: result.images.length,
+    textFiles: result.textSnippets.length,
+    unsupported: result.unsupported.length,
+  });
 
   return result;
 }

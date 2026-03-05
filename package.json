@@ -20,7 +20,9 @@
     "lint": "eslint src/ tests/",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write src/ tests/",
-    "format:check": "prettier --check src/ tests/"
+    "format:check": "prettier --check src/ tests/",
+    "test:sdk": "tsx scripts/test-sdk-integration.ts",
+    "test:sdk:mock": "USE_MOCK=1 tsx scripts/test-sdk-integration.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.64",

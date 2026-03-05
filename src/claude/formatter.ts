@@ -1,4 +1,4 @@
-import type { ClaudeResult } from "./agent.js";
+import type { ClaudeResult } from "./types.js";
 
 const MAX_MESSAGE_LENGTH = 25_000;
 

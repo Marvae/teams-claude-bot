@@ -1,22 +1,23 @@
 import {
   query as sdkQuery,
-  type CanUseTool,
-  type PromptRequestOption,
   type Query,
   type SDKMessage,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import { join, dirname, resolve } from "path";
-import { AsyncQueue } from "../session/async-queue.js";
+import { processMessage, type EventProcessorState } from "./event-processor.js";
+import { saveImagesToTmp, classifyErrorCode } from "./types.js";
 import type {
+  CanUseTool,
   ClaudeResult,
   ImageInput,
+  OnElicitation,
   ProgressEvent,
   PromptRequestInfo,
-  ToolInfo,
-  OnElicitation,
-} from "./agent.js";
-import { extractToolInfo, saveImagesToTmp } from "./agent.js";
+} from "./types.js";
+import { AppError } from "../errors/app-error.js";
+import { ERROR_CODES, type ErrorCode } from "../errors/error-codes.js";
+import { logError, logInfo } from "../logging/logger.js";
 
 // Resolve cli.js path explicitly. process.argv[1] is the entry file (dist/index.js or
 // src/index.ts), always one directory below the project root, so dirname x2 = root.
@@ -27,8 +28,6 @@ const CLAUDE_CLI_PATH = join(
   "claude-agent-sdk",
   "cli.js",
 );
-
-// ─── Session config (set once at creation) ───
 
 export interface SessionConfig {
   cwd?: string;
@@ -55,20 +54,16 @@ export interface SessionConfig {
   onResult?: (result: ClaudeResult) => void | Promise<void>;
 }
 
-// ─── ConversationSession ───
-
 export class ConversationSession {
   private activeQuery: Query | null = null;
-  private inputQueue: AsyncQueue<SDKUserMessage> | null = null;
-  private sessionId: string | undefined;
   private eventConsumer: Promise<void> | null = null;
   private _lastActivity = Date.now();
   private closed = false;
-  private lastPromptSuggestion: string | undefined;
 
-  // Per-turn tracking (reset on each result)
-  private turnTools: ToolInfo[] = [];
-  private turnStreamingText = "";
+  private eventState: EventProcessorState = {
+    turnTools: [],
+    turnStreamingText: "",
+  };
 
   constructor(private config: SessionConfig) {}
 
@@ -79,7 +74,7 @@ export class ConversationSession {
     return this._lastActivity;
   }
   get currentSessionId(): string | undefined {
-    return this.sessionId;
+    return this.eventState.sessionId;
   }
   get isClosed(): boolean {
     return this.closed;
@@ -92,7 +87,10 @@ export class ConversationSession {
     if (!this.activeQuery) return undefined;
     try {
       return await this.activeQuery.supportedCommands();
-    } catch {
+    } catch (error) {
+      logError("SESSION", "supported_commands_failed", error, {
+        sessionId: this.eventState.sessionId,
+      });
       return undefined;
     }
   }
@@ -100,34 +98,69 @@ export class ConversationSession {
   /** Dynamically change permission mode on the running query. */
   async setPermissionMode(mode: string): Promise<void> {
     if (this.activeQuery) {
-      await this.activeQuery.setPermissionMode(
-        mode as Parameters<Query["setPermissionMode"]>[0],
-      );
+      try {
+        await this.activeQuery.setPermissionMode(
+          mode as Parameters<Query["setPermissionMode"]>[0],
+        );
+        logInfo("SESSION", "permission_mode_set", { mode });
+      } catch (error) {
+        throw new AppError(
+          "SESSION",
+          ERROR_CODES.SET_PERMISSION_MODE_FAILED,
+          `Failed to set permission mode: ${mode}`,
+          error,
+        );
+      }
     }
   }
 
   /** Dynamically change model on the running query. */
   async setModel(model?: string): Promise<void> {
     if (this.activeQuery) {
-      await this.activeQuery.setModel(model);
+      try {
+        await this.activeQuery.setModel(model);
+        logInfo("SESSION", "model_set", { model: model ?? "default" });
+      } catch (error) {
+        throw new AppError(
+          "SESSION",
+          ERROR_CODES.SET_MODEL_FAILED,
+          `Failed to set model: ${model ?? "default"}`,
+          error,
+        );
+      }
     }
   }
 
   /** Stop a background subagent task by ID. */
   async stopTask(taskId: string): Promise<void> {
     if (this.activeQuery) {
-      await this.activeQuery.stopTask(taskId);
+      try {
+        await this.activeQuery.stopTask(taskId);
+        logInfo("SESSION", "task_stop_requested", { taskId });
+      } catch (error) {
+        throw new AppError(
+          "SESSION",
+          ERROR_CODES.STOP_TASK_FAILED,
+          `Failed to stop task: ${taskId}`,
+          error,
+        );
+      }
     }
   }
 
   /**
    * Send a message to the session (fire-and-forget).
-   * First call starts the query; subsequent calls push to the SDK's internal queue.
+   * First call starts the query; subsequent calls use streamInput().
    * Results are delivered via config.onResult callback.
    */
   send(prompt: string, images?: ImageInput[]): void {
     if (this.closed) {
-      this.config.onResult?.({ error: "Session is closed", tools: [] });
+      logInfo("SESSION", "send_rejected_closed");
+      void this.config.onResult?.({
+        error: "Session is closed",
+        errorCode: ERROR_CODES.SESSION_CLOSED,
+        tools: [],
+      });
       return;
     }
 
@@ -135,47 +168,71 @@ export class ConversationSession {
 
     if (!this.activeQuery) {
       this.startQuery(prompt, images).catch((err) => {
-        this.emitResult({
-          error: err instanceof Error ? err.message : String(err),
+        logError("SESSION", "start_query_failed", err, {
+          sessionId: this.eventState.sessionId,
+        });
+        const info = this.classifyError(err);
+        void this.emitResult({
+          error: info.message,
+          errorCode: info.code,
           tools: [],
         });
       });
     } else {
-      // Don't reset turn state — SDK is still processing the current turn
-      this.streamMessage(prompt, images);
+      this.streamMessage(prompt, images).catch((err) => {
+        logError("SESSION", "stream_message_failed", err, {
+          sessionId: this.eventState.sessionId,
+        });
+        const info = this.classifyError(err);
+        void this.emitResult({
+          error: info.message,
+          errorCode: info.code,
+          tools: [...this.eventState.turnTools],
+          sessionId: this.eventState.sessionId,
+        });
+      });
     }
   }
 
   /** Interrupt the current execution. */
   async interrupt(): Promise<void> {
     if (this.activeQuery) {
-      await this.activeQuery.interrupt();
+      try {
+        await this.activeQuery.interrupt();
+        logInfo("SESSION", "interrupt_requested", {
+          sessionId: this.eventState.sessionId,
+        });
+      } catch (error) {
+        throw new AppError(
+          "SESSION",
+          ERROR_CODES.INTERRUPT_FAILED,
+          "Failed to interrupt active session",
+          error,
+        );
+      }
     }
   }
 
   /** Close the query and clean up. */
   close(): void {
     this.closed = true;
-    if (this.inputQueue) {
-      this.inputQueue.end();
-      this.inputQueue = null;
-    }
     if (this.activeQuery) {
       try {
         this.activeQuery.close();
-      } catch {
-        // Ignore close errors (query may already be dead)
+        logInfo("SESSION", "closed", { sessionId: this.eventState.sessionId });
+      } catch (error) {
+        logError("SESSION", "close_failed", error, {
+          sessionId: this.eventState.sessionId,
+        });
       }
       this.activeQuery = null;
     }
     this.eventConsumer = null;
   }
 
-  // ─── Private ───
-
   private resetTurnState(): void {
-    this.turnTools = [];
-    this.turnStreamingText = "";
+    this.eventState.turnTools = [];
+    this.eventState.turnStreamingText = "";
   }
 
   private emitProgress(event: ProgressEvent): void {
@@ -185,40 +242,39 @@ export class ConversationSession {
   private async emitResult(result: ClaudeResult): Promise<void> {
     this._lastActivity = Date.now();
     this.resetTurnState();
-    await this.config.onResult?.(result);
+    try {
+      await this.config.onResult?.(result);
+    } catch (error) {
+      logError("SESSION", "on_result_callback_failed", error, {
+        sessionId: this.eventState.sessionId,
+      });
+    }
   }
 
   private async startQuery(
     prompt: string,
     images?: ImageInput[],
   ): Promise<void> {
-    console.log("[SESSION] Starting new query (first message)");
+    logInfo("SESSION", "query_start", {
+      resume: this.config.resume ? "yes" : "no",
+      cwd: this.config.cwd,
+    });
     const finalPrompt = await preparePrompt(prompt, images);
     const options = this.buildQueryOptions();
 
-    // Create queue and push first message
-    this.inputQueue = new AsyncQueue<SDKUserMessage>();
-    this.inputQueue.push({
-      type: "user",
-      message: { role: "user", content: finalPrompt },
-      parent_tool_use_id: null,
-      session_id: "",
-    });
-
-    // Pass async generator as prompt — SDK reads messages from the queue
-    const queue = this.inputQueue;
-    async function* promptGenerator() {
-      yield* queue;
-    }
-
-    this.activeQuery = sdkQuery({ prompt: promptGenerator(), options });
+    // Start query with string prompt (not AsyncIterable)
+    this.activeQuery = sdkQuery({ prompt: finalPrompt, options });
 
     this.eventConsumer = this.consumeEvents().catch((err) => {
-      console.error("[SESSION] Event consumer error:", err);
+      logError("SESSION", "event_consumer_failed", err, {
+        sessionId: this.eventState.sessionId,
+      });
       this.closed = true;
-      this.emitResult({
-        error: err instanceof Error ? err.message : String(err),
-        tools: [...this.turnTools],
+      const info = this.classifyError(err);
+      void this.emitResult({
+        error: info.message,
+        errorCode: info.code,
+        tools: [...this.eventState.turnTools],
       });
     });
   }
@@ -227,313 +283,96 @@ export class ConversationSession {
     prompt: string,
     images?: ImageInput[],
   ): Promise<void> {
-    console.log("[SESSION] Pushing message to input queue");
+    if (!this.activeQuery) {
+      throw new AppError(
+        "SESSION",
+        ERROR_CODES.STREAM_WITHOUT_QUERY,
+        "Cannot stream message: active query is unavailable",
+      );
+    }
+    logInfo("SESSION", "message_stream_start", {
+      sessionId: this.eventState.sessionId,
+    });
     const finalPrompt = await preparePrompt(prompt, images);
 
-    this.inputQueue!.push({
+    // Use SDK's streamInput() for subsequent messages
+    const msg: SDKUserMessage = {
       type: "user",
       message: { role: "user", content: finalPrompt },
       parent_tool_use_id: null,
-      session_id: this.sessionId ?? "",
-    });
+      session_id: this.eventState.sessionId ?? "",
+    };
+
+    await this.activeQuery.streamInput(
+      (async function* () {
+        yield msg;
+      })(),
+    );
   }
 
   private async consumeEvents(): Promise<void> {
-    for await (const message of this.activeQuery as AsyncIterable<SDKMessage>) {
-      await this.processMessage(message as Record<string, unknown>);
-    }
-
-    // Query process exited (could be interrupt or crash)
-    await this.emitResult({
-      result: this.turnStreamingText || undefined,
-      interrupted: true,
-      tools: [...this.turnTools],
-      sessionId: this.sessionId,
-    });
-    this.activeQuery = null;
-  }
-
-  private async processMessage(msg: Record<string, unknown>): Promise<void> {
-    // ── Init message ──
-    if (
-      msg.type === "system" &&
-      msg.subtype === "init" &&
-      typeof msg.session_id === "string"
-    ) {
-      this.sessionId = msg.session_id;
-      this.config.onSessionId?.(this.sessionId);
-    }
-
-    // ── Auth status ──
-    if (msg.type === "auth_status") {
-      const error = msg.error as string | undefined;
-      if (error) {
-        console.error(`[SESSION] Auth error: ${error}`);
-        this.emitProgress({ type: "auth_error", error });
-      }
-    }
-
-    // ── PromptRequest ──
-    if ("prompt" in msg && "message" in msg && "options" in msg) {
-      await this.handlePromptRequest(msg);
-      return;
-    }
-
-    // ── tool_progress ──
-    if (msg.type === "tool_progress") {
-      const toolName =
-        (msg.tool_name as string | undefined) ??
-        (msg.tool as string | undefined);
-      if (toolName) {
-        const toolInfo = extractToolInfo(
-          toolName,
-          msg.input as Record<string, unknown> | undefined,
-        );
-        this.emitProgress({ type: "tool_use", tool: toolInfo });
-      }
-    }
-
-    // ── Streaming text ──
-    if (msg.type === "stream_event" && msg.parent_tool_use_id === null) {
-      const evt = msg.event as Record<string, unknown> | undefined;
-      if (evt?.type === "content_block_delta") {
-        const delta = evt.delta as Record<string, unknown> | undefined;
-        if (delta?.type === "text_delta" && typeof delta.text === "string") {
-          this.turnStreamingText += delta.text;
-          this.emitProgress({
-            type: "text",
-            text: this.turnStreamingText,
-          });
-        }
-      }
-    }
-
-    // ── Rate limit event (claude.ai subscription users) ──
-    if (msg.type === "rate_limit_event") {
-      const info = msg.rate_limit_info as Record<string, unknown> | undefined;
-      if (
-        info &&
-        (info.status === "allowed_warning" || info.status === "rejected")
-      ) {
-        this.emitProgress({
-          type: "rate_limit",
-          status: info.status,
-          resetsAt: info.resetsAt as number | undefined,
-        });
-      }
-    }
-
-    // ── Tool use summary ──
-    if (msg.type === "tool_use_summary" && typeof msg.summary === "string") {
-      this.emitProgress({
-        type: "tool_summary",
-        summary: msg.summary,
-      });
-    }
-
-    // ── User message (tool_use_result payloads from tool responses) ──
-    if (msg.type === "user") {
-      const toolUseResult = msg.tool_use_result;
-      if (toolUseResult && typeof toolUseResult === "object") {
-        const payload = toolUseResult as Record<string, unknown>;
-        if (
-          typeof payload.originalFile === "string" &&
-          typeof payload.newString === "string"
-        ) {
-          this.emitProgress({
-            type: "file_diff",
-            filePath:
-              typeof payload.filePath === "string"
-                ? payload.filePath
-                : typeof payload.file_path === "string"
-                  ? payload.file_path
-                  : undefined,
-            originalFile: payload.originalFile,
-            newString: payload.newString,
-          });
-        }
-      } else if (typeof toolUseResult === "string" && toolUseResult.trim()) {
-        this.emitProgress({
-          type: "tool_error",
-          error: toolUseResult,
-        });
-      }
-    }
-
-    // ── Task notifications (subagent background tasks) ──
-    if (
-      msg.type === "system" &&
-      (msg.subtype === "task_notification" || msg.subtype === "task_started") &&
-      typeof msg.task_id === "string"
-    ) {
-      const status =
-        msg.subtype === "task_started"
-          ? "started"
-          : ((msg.status as string) ?? "unknown");
-      const summary =
-        (msg.summary as string) ?? (msg.description as string) ?? "";
-      this.emitProgress({
-        type: "task_status",
-        taskId: msg.task_id,
-        status,
-        summary,
-      });
-    }
-
-    // ── Assistant message (collect tools, extract todos, reset streaming) ──
-    if (msg.type === "assistant") {
-      this.turnStreamingText = "";
-      const inner = msg.message as Record<string, unknown> | undefined;
-      const content = inner?.content ?? msg.content;
-      if (Array.isArray(content)) {
-        for (const block of content) {
-          if (
-            typeof block === "object" &&
-            block !== null &&
-            "type" in block &&
-            (block as Record<string, unknown>).type === "tool_use"
-          ) {
-            const b = block as Record<string, unknown>;
-            // Emit todo updates
-            if (
-              b.name === "TodoWrite" ||
-              b.name === "TaskCreate" ||
-              b.name === "TaskUpdate"
-            ) {
-              const input = b.input as Record<string, unknown> | undefined;
-              const todos = input?.todos as
-                | Array<Record<string, unknown>>
-                | undefined;
-              if (Array.isArray(todos)) {
-                this.emitProgress({
-                  type: "todo",
-                  todos: todos.map((t) => ({
-                    content:
-                      (t.content as string) ?? (t.subject as string) ?? "",
-                    status:
-                      (t.status as "pending" | "in_progress" | "completed") ??
-                      "pending",
-                    activeForm: t.activeForm as string | undefined,
-                  })),
-                });
-              }
+    try {
+      for await (const message of this
+        .activeQuery as AsyncIterable<SDKMessage>) {
+        await processMessage(message as Record<string, unknown>, this.eventState, {
+          onSessionId: (sessionId) => {
+            this.config.resume = sessionId;
+            this.config.forkSession = false;
+            this.config.onSessionId?.(sessionId);
+          },
+          onPromptRequest: this.config.onPromptRequest,
+          onProgress: (event) => this.emitProgress(event),
+          onResult: async (result) => {
+            if (result.sessionId) {
+              this.config.resume = result.sessionId;
+              this.config.forkSession = false;
             }
-            this.turnTools.push(
-              extractToolInfo(
-                (b.name as string) ?? "unknown",
-                b.input as Record<string, unknown> | undefined,
-              ),
-            );
-          }
-        }
-      }
-    }
-
-    // ── Prompt suggestion ──
-    if (msg.type === "prompt_suggestion" && typeof msg.prompt === "string") {
-      this.lastPromptSuggestion = msg.prompt;
-    }
-
-    // ── Result ──
-    if (msg.type === "result") {
-      this.emitProgress({
-        type: "done",
-        promptSuggestion: this.lastPromptSuggestion,
-      });
-      this.lastPromptSuggestion = undefined;
-
-      const stopReason = (msg.stop_reason as string | null) ?? null;
-
-      // Interrupt result — return partial work, not an error
-      if (
-        msg.subtype === "interrupt" ||
-        (msg as Record<string, unknown>).is_interrupt === true
-      ) {
-        const partialText =
-          (msg.result as string) || this.turnStreamingText || undefined;
-        await this.emitResult({
-          sessionId: this.sessionId,
-          result: partialText,
-          interrupted: true,
-          tools: [...this.turnTools],
-          stopReason,
-        });
-        return;
-      }
-
-      const isError =
-        msg.is_error === true ||
-        (typeof msg.subtype === "string" &&
-          (msg.subtype as string).startsWith("error_"));
-
-      if (isError) {
-        this.closed = true;
-        const errors = msg.errors as string[] | undefined;
-        const errorMsg =
-          errors && errors.length > 0
-            ? errors.join("; ")
-            : `Error: ${msg.subtype ?? "unknown"}`;
-        await this.emitResult({
-          error: errorMsg,
-          sessionId: this.sessionId,
-          tools: [...this.turnTools],
-          stopReason,
-        });
-        return;
-      }
-
-      const usage = msg.usage as
-        | { input_tokens: number; output_tokens: number }
-        | undefined;
-      await this.emitResult({
-        sessionId: this.sessionId,
-        result: (msg.result as string) ?? "",
-        tools: [...this.turnTools],
-        stopReason,
-        costUsd: (msg.total_cost_usd as number) ?? undefined,
-        durationMs: (msg.duration_ms as number) ?? undefined,
-        usage: usage
-          ? {
-              inputTokens: usage.input_tokens,
-              outputTokens: usage.output_tokens,
+            // Clear activeQuery so next send() starts a new query with resume
+            // SDK closes stdin after result, can't streamInput() on it anymore
+            this.activeQuery = null;
+            await this.emitResult(result);
+          },
+          sendPromptResponse: async (requestId, selected) => {
+            if (!this.activeQuery) return;
+            try {
+              await this.activeQuery.streamInput(
+                (async function* () {
+                  yield {
+                    prompt_response: requestId,
+                    selected,
+                  } as unknown as SDKUserMessage;
+                })(),
+              );
+            } catch (error) {
+              logError("SESSION", "prompt_response_stream_failed", error, {
+                sessionId: this.eventState.sessionId,
+                requestId,
+              });
+              throw error;
             }
-          : undefined,
+          },
+          markClosed: () => {
+            this.closed = true;
+          },
+        });
+      }
+      // Query ended normally (close() was called or CLI exited cleanly)
+      // Don't emit result here — close() handles cleanup
+    } catch (err) {
+      // Query crashed or threw an error
+      logError("SESSION", "query_ended_with_error", err, {
+        sessionId: this.eventState.sessionId,
       });
-    }
-
-    // ── Legacy result (no type field) ──
-    if (!("type" in msg) && "result" in msg) {
+      const info = this.classifyError(err);
       await this.emitResult({
-        sessionId: this.sessionId,
-        result: msg.result as string,
-        tools: [...this.turnTools],
+        error: info.message,
+        errorCode: info.code,
+        interrupted: true,
+        tools: [...this.eventState.turnTools],
+        sessionId: this.eventState.sessionId,
       });
-    }
-  }
-
-  private async handlePromptRequest(
-    msg: Record<string, unknown>,
-  ): Promise<void> {
-    if (!this.config.onPromptRequest) return;
-
-    const req = msg as {
-      prompt: string;
-      message: string;
-      options: PromptRequestOption[];
-    };
-
-    const selected = await this.config.onPromptRequest({
-      requestId: req.prompt,
-      message: req.message,
-      options: req.options,
-    });
-
-    // Send response back via input queue
-    if (this.inputQueue) {
-      this.inputQueue.push({
-        prompt_response: req.prompt,
-        selected,
-      } as unknown as SDKUserMessage);
+    } finally {
+      this.activeQuery = null;
     }
   }
 
@@ -585,9 +424,15 @@ export class ConversationSession {
 
     return opts;
   }
-}
 
-// ─── Helpers ───
+  private classifyError(error: unknown): { code?: ErrorCode; message: string } {
+    if (error instanceof AppError) {
+      return { code: error.code, message: error.message };
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    return { code: classifyErrorCode(message), message };
+  }
+}
 
 async function preparePrompt(
   prompt: string,
@@ -596,6 +441,7 @@ async function preparePrompt(
   if (!images || images.length === 0) return prompt;
 
   const paths = await saveImagesToTmp(images);
+  logInfo("SESSION", "images_prepared", { count: paths.length });
   const imageRefs = paths.map((p) => `[Uploaded image: ${p}]`).join("\n");
   return `The user sent the following image(s). Use the Read tool to view them:\n${imageRefs}\n\n${prompt}`;
 }

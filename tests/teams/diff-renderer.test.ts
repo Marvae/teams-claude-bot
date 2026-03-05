@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatTextDiff } from "../src/bot/text-diff.js";
+import { formatTextDiff } from "../../src/bot/text-diff.js";
 
 describe("formatTextDiff", () => {
   it("shows a single-line change with context", () => {

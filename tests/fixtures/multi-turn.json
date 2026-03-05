@@ -1,0 +1,56 @@
+{
+  "meta": {
+    "description": "Multi-turn conversation with second user message sent via streamInput()"
+  },
+  "messagesByInput": [
+    [
+      {
+        "type": "system",
+        "subtype": "init",
+        "session_id": "{{session_id}}"
+      },
+      {
+        "type": "assistant",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "Hi there!"
+            }
+          ]
+        }
+      },
+      {
+        "type": "result",
+        "subtype": "success",
+        "is_error": false,
+        "result": "Hi there!",
+        "stop_reason": "end_turn",
+        "session_id": "{{session_id}}"
+      }
+    ],
+    [
+      {
+        "type": "assistant",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "4"
+            }
+          ]
+        }
+      },
+      {
+        "type": "result",
+        "subtype": "success",
+        "is_error": false,
+        "result": "4",
+        "stop_reason": "end_turn",
+        "session_id": "{{session_id}}"
+      }
+    ]
+  ]
+}

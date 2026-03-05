@@ -11,7 +11,7 @@ import {
   type ClaudeResult,
   type ImageInput,
   type ProgressEvent,
-} from "../claude/agent.js";
+} from "../claude/types.js";
 import { ConversationSession, type SessionConfig } from "../claude/session.js";
 import { formatResponse, splitMessage } from "../claude/formatter.js";
 import {
@@ -37,37 +37,22 @@ import { processAttachments } from "./attachments.js";
 import { config } from "../config.js";
 import { saveConversationRef } from "../handoff/store.js";
 import { formatTextDiff } from "./text-diff.js";
+import {
+  FRIENDLY_ERROR_MESSAGES,
+  type ErrorCode,
+} from "../errors/error-codes.js";
+import { logError, logInfo, logWarn } from "../logging/logger.js";
 
-function friendlyError(error: string, stopReason?: string | null): string {
+function friendlyError(
+  error: string,
+  stopReason?: string | null,
+  errorCode?: ErrorCode,
+): string {
   if (stopReason === "refusal") {
     return "Claude declined this request.";
   }
-  if (error.includes("exited with code 1")) {
-    return "Something went wrong with Claude Code. Try `/new` to start a fresh session.";
-  }
-  if (error.includes("Session not found")) {
-    return "Session not found. The Terminal session may have been deleted. Try `/new` to start fresh.";
-  }
-  if (error.includes("ENOENT")) {
-    return "Could not start Claude Code. The bot service may need to be restarted.";
-  }
-  if (
-    error.includes("auth") ||
-    error.includes("unauthorized") ||
-    error.includes("login") ||
-    error.includes("credential") ||
-    error.includes("OAuth")
-  ) {
-    return "Claude login expired. Run `claude login` in your terminal, then try again.";
-  }
-  if (error.includes("rate_limit") || error.includes("429")) {
-    return "Claude API is rate limited. Please wait a moment and try again.";
-  }
-  if (error.includes("context_length")) {
-    return "Conversation is too long. Use `/new` to start a fresh session.";
-  }
-  if (error.includes("timeout") || error.includes("ETIMEDOUT")) {
-    return "Request timed out. Please try again.";
+  if (errorCode) {
+    return FRIENDLY_ERROR_MESSAGES[errorCode];
   }
   return `Something went wrong: ${error.slice(0, 200)}`;
 }
@@ -92,7 +77,10 @@ export class ClaudeCodeBot extends ActivityHandler {
       // Deduplicate: Teams sometimes sends the same message twice
       const activityId = ctx.activity.id;
       if (activityId && this.processedActivities.has(activityId)) {
-        console.log(`[BOT] Ignoring duplicate activity: ${activityId}`);
+        logInfo("MESSAGE", "duplicate_ignored", {
+          activityId,
+          conversationId: ctx.activity.conversation?.id,
+        });
         await next();
         return;
       }
@@ -106,8 +94,31 @@ export class ClaudeCodeBot extends ActivityHandler {
         }
       }
 
-      saveConversationRef(ctx);
-      await this.handleMessage(ctx);
+      try {
+        saveConversationRef(ctx);
+      } catch (error) {
+        logError("BOT", "save_conversation_ref_failed", error, {
+          activityId,
+          conversationId: ctx.activity.conversation?.id,
+        });
+      }
+
+      try {
+        await this.handleMessage(ctx);
+      } catch (error) {
+        logError("BOT", "handle_message_failed", error, {
+          activityId,
+          conversationId: ctx.activity.conversation?.id,
+        });
+        try {
+          await ctx.sendActivity("Something went wrong. Try again.");
+        } catch (sendError) {
+          logError("BOT", "handle_message_notify_failed", sendError, {
+            activityId,
+          });
+        }
+      }
+
       await next();
     });
   }
@@ -141,22 +152,28 @@ export class ClaudeCodeBot extends ActivityHandler {
     );
 
     if (!isValid) {
-      console.warn(
-        `[SECURITY] Rejected request from unknown service: ${serviceUrl}`,
-      );
+      logWarn("SECURITY", "unknown_service_origin", { serviceUrl });
     }
 
     return isValid;
   }
 
   private async handleMessage(ctx: TurnContext): Promise<void> {
+    logInfo("MESSAGE", "received", {
+      activityId: ctx.activity.id,
+      conversationId: ctx.activity.conversation?.id,
+      attachmentCount: ctx.activity.attachments?.length ?? 0,
+      hasText: !!ctx.activity.text,
+    });
+
     if (!this.isValidTeamsRequest(ctx)) {
-      console.warn(
-        "[SECURITY] Unknown service origin - allowing (JWT already validated by adapter)",
-      );
+      logWarn("SECURITY", "unknown_service_allowed_by_adapter_validation");
     }
 
     if (!this.isUserAllowed(ctx)) {
+      logInfo("SECURITY", "unauthorized_user", {
+        conversationId: ctx.activity.conversation?.id,
+      });
       await ctx.sendActivity("Sorry, you are not authorized to use this bot.");
       return;
     }
@@ -220,7 +237,13 @@ export class ClaudeCodeBot extends ActivityHandler {
               value.sessionId as string | undefined,
             );
           })
-          .catch((err) => console.error("[HANDOFF] Background error:", err));
+          .catch((err) =>
+            logError("HANDOFF", "background_error", err, {
+              sessionId:
+                typeof value.sessionId === "string" ? value.sessionId : undefined,
+              workDir: typeof value.workDir === "string" ? value.workDir : undefined,
+            }),
+          );
         return;
       }
 
@@ -304,7 +327,13 @@ export class ClaudeCodeBot extends ActivityHandler {
       if (value.action === "set_permission_mode") {
         const mode = value.mode as string;
         state.setPermissionMode(mode);
-        await state.getSession()?.session.setPermissionMode(mode);
+        try {
+          await state.getSession()?.session.setPermissionMode(mode);
+        } catch (error) {
+          logError("BOT", "set_permission_mode_failed", error, { mode });
+          await ctx.sendActivity("Failed to set permission mode.");
+          return;
+        }
         await ctx.sendActivity(`Permission mode set to \`${mode}\``);
         return;
       }
@@ -332,7 +361,17 @@ export class ClaudeCodeBot extends ActivityHandler {
       (a) => a.contentType !== "text/html",
     );
     if (attachments && attachments.length > 0) {
-      const processed = await processAttachments(ctx, attachments);
+      let processed;
+      try {
+        processed = await processAttachments(ctx, attachments);
+      } catch (error) {
+        logError("MESSAGE", "attachment_processing_failed", error, {
+          activityId: ctx.activity.id,
+          attachmentCount: attachments.length,
+        });
+        await ctx.sendActivity("Some attachments could not be processed.");
+        processed = { images: [], textSnippets: [], unsupported: [] };
+      }
       if (processed.images.length > 0) {
         images = processed.images;
       }
@@ -353,13 +392,22 @@ export class ClaudeCodeBot extends ActivityHandler {
     if (!text && !images) return;
 
     // Handle slash commands
-    if (!images && (await handleCommand(text, ctx))) return;
+    if (!images && (await handleCommand(text, ctx))) {
+      logInfo("MESSAGE", "command_handled", {
+        activityId: ctx.activity.id,
+        conversationId: ctx.activity.conversation?.id,
+      });
+      return;
+    }
 
     // Get or create the managed session
     let managed = state.getSession();
     if (!managed) {
       managed = this.createManagedSession();
       state.setSession(managed);
+      logInfo("SESSION", "created", {
+        conversationId: ctx.activity.conversation?.id,
+      });
     }
 
     // Save conversation ref for proactive messaging (survives after handler returns)
@@ -367,12 +415,16 @@ export class ClaudeCodeBot extends ActivityHandler {
 
     // Run init prompt on new sessions (first send starts the query)
     if (!managed.session.hasQuery && config.sessionInitPrompt) {
-      console.log("[BOT] Running session init prompt...");
+      logInfo("SESSION", "init_prompt_send");
       managed.session.send(config.sessionInitPrompt);
     }
 
     // Fire and forget — replies sent via continueConversation in onResult
-    console.log("[BOT] Sending message to session...");
+    logInfo("MESSAGE", "sent_to_session", {
+      activityId: ctx.activity.id,
+      conversationId: ctx.activity.conversation?.id,
+      hasImages: !!images,
+    });
     managed.session.send(text || "What is in this image?", images);
   }
 
@@ -390,30 +442,23 @@ export class ClaudeCodeBot extends ActivityHandler {
     const sendActivity = async (
       activity: Record<string, unknown>,
     ) => {
-      if (!conversationRef || !adapter) return undefined;
+      if (!conversationRef || !adapter) {
+        logWarn("MESSAGE", "send_skipped_missing_conversation_ref");
+        return undefined;
+      }
       let result: { id?: string } | undefined;
-      await adapter.continueConversation(conversationRef, async (ctx) => {
-        const resp = await ctx.sendActivity(
-          activity as Parameters<TurnContext["sendActivity"]>[0],
-        );
-        result = resp ? { id: resp.id } : undefined;
-      });
+      try {
+        await adapter.continueConversation(conversationRef, async (ctx) => {
+          const resp = await ctx.sendActivity(
+            activity as Parameters<TurnContext["sendActivity"]>[0],
+          );
+          result = resp ? { id: resp.id } : undefined;
+        });
+      } catch (error) {
+        logError("MESSAGE", "continue_conversation_failed", error);
+        return undefined;
+      }
       return result;
-    };
-
-    // Proactive updateActivity — update an existing message by id
-    const updateActivity = async (
-      activityId: string,
-      activity: Record<string, unknown>,
-    ) => {
-      if (!conversationRef || !adapter) return;
-      await adapter.continueConversation(conversationRef, async (ctx) => {
-        await ctx.updateActivity({
-          ...activity,
-          id: activityId,
-          conversation: ctx.activity.conversation,
-        } as Parameters<TurnContext["updateActivity"]>[0]);
-      });
     };
 
     const sendCard = async (card: Record<string, unknown>) => {
@@ -455,6 +500,10 @@ export class ClaudeCodeBot extends ActivityHandler {
           input: req.input,
           decisionReason: req.decisionReason,
           suggestions: req.suggestions,
+        });
+        logInfo("PERM", "card_tracked", {
+          toolUseID: req.toolUseID,
+          toolName: req.toolName,
         });
       }
     };
@@ -507,6 +556,7 @@ export class ClaudeCodeBot extends ActivityHandler {
       onPromptRequest,
       onSessionId: (id) => {
         state.persistSessionId(id);
+        logInfo("SESSION", "id_persisted", { sessionId: id });
         // Cache SDK commands on first init (fire-and-forget)
         setTimeout(async () => {
           try {
@@ -514,37 +564,49 @@ export class ClaudeCodeBot extends ActivityHandler {
             const cmds = await managed?.session.getSupportedCommands();
             if (cmds && cmds.length > 0) {
               state.setCachedCommands(cmds);
+              logInfo("SESSION", "commands_cached", { count: cmds.length });
             }
-          } catch {
-            // Ignore — commands will be fetched on next /help
+          } catch (error) {
+            logError("SESSION", "commands_cache_failed", error);
           }
         }, 1000);
       },
       onProgress: (event: ProgressEvent) => {
         if (!currentProgress) {
-          currentProgress = this.createProgressNotifier(sendActivity, updateActivity);
+          currentProgress = this.createProgressNotifier(sendActivity);
         }
         currentProgress.onProgress(event);
       },
       onResult: async (result: ClaudeResult) => {
         if (!currentProgress) {
-          currentProgress = this.createProgressNotifier(sendActivity, updateActivity);
+          currentProgress = this.createProgressNotifier(sendActivity);
         }
         const progress = currentProgress;
         currentProgress = null;
 
         state.addUsage(result.costUsd, result.usage);
+        logInfo("SESSION", "result_handled", {
+          sessionId: result.sessionId,
+          hasError: !!result.error,
+          interrupted: !!result.interrupted,
+          errorCode: result.errorCode,
+        });
 
         if (result.error) {
-          console.error(`[BOT] Error from session: ${result.error}`);
+          logError("SESSION", "result_error", new Error(result.error), {
+            sessionId: result.sessionId,
+            errorCode: result.errorCode,
+          });
           await progress.finalize([
-            friendlyError(result.error, result.stopReason),
+            friendlyError(result.error, result.stopReason, result.errorCode),
           ]);
           return;
         }
 
         if (result.interrupted) {
-          console.log("[BOT] Turn was interrupted");
+          logInfo("SESSION", "turn_interrupted", {
+            sessionId: result.sessionId,
+          });
           const parts: string[] = ["🛑 Interrupted."];
           if (result.result) {
             parts.push(result.result);
@@ -553,7 +615,9 @@ export class ClaudeCodeBot extends ActivityHandler {
           return;
         }
 
-        console.log("[BOT] Formatting and sending response");
+        logInfo("MESSAGE", "response_formatting", {
+          sessionId: result.sessionId,
+        });
         await progress.finalize(splitMessage(formatResponse(result)));
 
         // Send prompt suggestion as quick-reply button
@@ -570,12 +634,16 @@ export class ClaudeCodeBot extends ActivityHandler {
                 ],
               },
             });
-          } catch {
-            // suggestedActions not supported — skip
+          } catch (error) {
+            logError("MESSAGE", "suggested_action_send_failed", error, {
+              sessionId: result.sessionId,
+            });
           }
         }
 
-        console.log("[BOT] Response sent successfully");
+        logInfo("MESSAGE", "response_sent", {
+          sessionId: result.sessionId,
+        });
       },
     };
 
@@ -616,7 +684,10 @@ export class ClaudeCodeBot extends ActivityHandler {
         `🔄 Session handed off to Teams\n📂 \`${workDir}\`\n\nWhen you're done, use \`/handoff back\` to return control to Terminal.`,
       );
 
-      console.log(`[HANDOFF] Fork: sessionId=${sessionId}, workDir=${workDir}`);
+      logInfo("HANDOFF", "accepted", {
+        sessionId,
+        workDir,
+      });
 
       const managed = this.createManagedSession({
         resume: sessionId,
@@ -632,13 +703,14 @@ export class ClaudeCodeBot extends ActivityHandler {
 
       // Fire and forget — reply sent via onResult callback
       managed.session.send(prompt);
+      logInfo("HANDOFF", "prompt_sent", {
+        sessionId,
+        workDir,
+      });
     }
   }
 
-  createProgressNotifier(
-    sendFn: (activity: Record<string, unknown>) => Promise<{ id?: string } | undefined>,
-    updateFn: (activityId: string, activity: Record<string, unknown>) => Promise<void>,
-  ): {
+  createProgressNotifier(sendFn: (activity: Record<string, unknown>) => Promise<{ id?: string } | undefined>): {
     onProgress: (event: ProgressEvent) => void;
     finalize: (chunks: string[]) => Promise<void>;
     getPromptSuggestion: () => string | undefined;
@@ -655,7 +727,7 @@ export class ClaudeCodeBot extends ActivityHandler {
     let todoDisplay: string | undefined;
     let pendingUpdate = false;
     let promptSuggestion: string | undefined;
-    let streamingActivityId: string | undefined;
+    let streamSequence = 1;
     const buildDisplay = (): string => {
       const parts: string[] = [];
       if (todoDisplay) {
@@ -682,14 +754,14 @@ export class ClaudeCodeBot extends ActivityHandler {
       const text = buildDisplay();
       if (!text) return;
       try {
-        if (!streamingActivityId) {
-          // First update — send a new message and remember its id
-          const resp = await sendFn({ type: "message", text });
-          streamingActivityId = resp?.id;
-        } else {
-          // Subsequent updates — update the same message in place
-          await updateFn(streamingActivityId, { type: "message", text });
-        }
+        await sendFn({
+          type: "typing",
+          text,
+          channelData: {
+            streamType: "streaming",
+            streamSequence: streamSequence++,
+          },
+        });
       } catch {
         // Ignore transient update failures.
       }
@@ -739,7 +811,11 @@ export class ClaudeCodeBot extends ActivityHandler {
             text: diffText
               ? `${label}\n\n\`\`\`diff\n${diffText}\n\`\`\``
               : `📝 Edited ${label}`,
-          }).catch(() => {});
+          }).catch((error) => {
+            logError("MESSAGE", "file_diff_send_failed", error, {
+              filePath: event.filePath,
+            });
+          });
           return;
         }
 
@@ -753,7 +829,7 @@ export class ClaudeCodeBot extends ActivityHandler {
 
         if (event.type === "auth_error") {
           progressLines.push(
-            `🔑 Login expired — run \`claude login\` in terminal`,
+            "🔑 Login expired — run `claude login` in terminal",
           );
           scheduleUpdate(TOOL_THROTTLE_MS);
           return;
@@ -768,25 +844,63 @@ export class ClaudeCodeBot extends ActivityHandler {
               t.status === "completed"
                 ? "✅"
                 : t.status === "in_progress"
-                  ? "🔧"
-                  : "⏳";
-            const text =
-              t.status === "in_progress" && t.activeForm
-                ? t.activeForm
-                : t.content;
-            return `${icon} ${text}`;
+                  ? "🔄"
+                  : "⬜";
+            const marker = t.activeForm ? ` *${t.activeForm}*` : "";
+            return `${icon} ${this.truncateProgress(t.content, 120)}${marker}`;
           });
-          todoDisplay = `📋 ${completed}/${event.todos.length}\n\n${lines.join("\n\n")}`;
+          todoDisplay = `📋 Todo (${completed}/${event.todos.length})\n${lines.join("\n")}`;
+          scheduleUpdate(TOOL_THROTTLE_MS);
+          return;
+        }
+
+        if (event.type === "tool_use") {
+          const detail =
+            event.tool.file ?? event.tool.command ?? event.tool.pattern;
+          const suffix = detail ? `: ${this.truncateProgress(detail, 100)}` : "";
+          progressLines.push(`🛠️ ${event.tool.name}${suffix}`);
+          if (progressLines.length > MAX_LINES) {
+            progressLines.splice(0, progressLines.length - MAX_LINES);
+          }
+          scheduleUpdate(TOOL_THROTTLE_MS);
+          return;
+        }
+
+        if (event.type === "tool_summary") {
+          progressLines.push(`🧾 ${this.truncateProgress(event.summary, 180)}`);
+          if (progressLines.length > MAX_LINES) {
+            progressLines.splice(0, progressLines.length - MAX_LINES);
+          }
+          scheduleUpdate(TOOL_THROTTLE_MS);
+          return;
+        }
+
+        if (event.type === "task_status") {
+          const icon =
+            event.status === "completed"
+              ? "✅"
+              : event.status === "failed"
+                ? "❌"
+                : "🧠";
+          progressLines.push(
+            `${icon} Task ${event.taskId.slice(0, 8)}: ${this.truncateProgress(event.summary || event.status, 140)}`,
+          );
+          if (progressLines.length > MAX_LINES) {
+            progressLines.splice(0, progressLines.length - MAX_LINES);
+          }
           scheduleUpdate(TOOL_THROTTLE_MS);
           return;
         }
 
         if (event.type === "rate_limit") {
-          const msg =
-            event.status === "rejected"
-              ? `⚠️ Rate limited.${event.resetsAt ? ` Resets at ${new Date(event.resetsAt).toLocaleTimeString()}.` : ""}`
-              : `⚠️ Approaching rate limit.${event.resetsAt ? ` Resets at ${new Date(event.resetsAt).toLocaleTimeString()}.` : ""}`;
-          progressLines.push(msg);
+          if (event.status === "rejected") {
+            progressLines.push("⏳ Rate limit hit. Waiting before retry...");
+          } else {
+            progressLines.push("⚠️ Approaching rate limit.");
+          }
+          if (progressLines.length > MAX_LINES) {
+            progressLines.splice(0, progressLines.length - MAX_LINES);
+          }
           scheduleUpdate(TOOL_THROTTLE_MS);
           return;
         }
@@ -796,89 +910,42 @@ export class ClaudeCodeBot extends ActivityHandler {
           scheduleUpdate(TEXT_THROTTLE_MS);
           return;
         }
-
-        const message = this.formatProgressMessage(event);
-        if (!message) return;
-        if (progressLines.length >= MAX_LINES) {
-          progressLines.shift();
-        }
-        progressLines.push(message);
-        streamingText = undefined;
-        scheduleUpdate(TOOL_THROTTLE_MS);
       },
       finalize: async (chunks: string[]) => {
         if (timer) {
           clearTimeout(timer);
           timer = undefined;
         }
+        pendingUpdate = false;
         if (inflightUpdate) {
           await inflightUpdate;
           inflightUpdate = undefined;
         }
-        if (chunks.length === 0) return;
 
-        if (streamingActivityId) {
-          // Update the streaming message with the first final chunk
-          await updateFn(streamingActivityId, { type: "message", text: chunks[0] });
-          streamingActivityId = undefined;
-        } else {
-          await sendFn({ type: "message", text: chunks[0] });
+        const hasProgress = !!buildDisplay();
+        if (hasProgress) {
+          await sendFn({
+            type: "typing",
+            channelData: {
+              streamType: "final",
+              streamSequence: streamSequence++,
+            },
+          });
         }
 
-        for (let i = 1; i < chunks.length; i++) {
-          await sendFn({ type: "message", text: chunks[i] });
+        for (const chunk of chunks) {
+          await sendFn({
+            type: "message",
+            text: chunk,
+          });
         }
       },
       getPromptSuggestion: () => promptSuggestion,
     };
   }
 
-  private formatProgressMessage(event: ProgressEvent): string | undefined {
-    if (event.type === "tool_summary") {
-      return `📋 ${this.truncateProgress(event.summary, 200)}`;
-    }
-
-    if (event.type === "task_status") {
-      const icon =
-        event.status === "started"
-          ? "🚀"
-          : event.status === "completed"
-            ? "✅"
-            : "⚠️";
-      return `${icon} Task: ${this.truncateProgress(event.summary, 150)}`;
-    }
-
-    if (event.type !== "tool_use") return undefined;
-    const tool = event.tool;
-
-    if (tool.name === "Bash") {
-      return `🔧 Running: ${this.truncateProgress(tool.command ?? "bash", 100)}`;
-    }
-    if (tool.name === "Grep") {
-      return `🔎 Searching: ${this.truncateProgress(tool.pattern ?? "pattern", 100)}`;
-    }
-    if (tool.name === "Read") {
-      return tool.file
-        ? `📖 Reading: ${this.truncateProgress(tool.file, 100)}`
-        : "📖 Reading file...";
-    }
-    if (tool.name === "Edit") {
-      return tool.file
-        ? `✍️ Editing: ${this.truncateProgress(tool.file, 100)}`
-        : "✍️ Editing file...";
-    }
-    if (tool.name === "Write") {
-      return tool.file
-        ? `✍️ Writing: ${this.truncateProgress(tool.file, 100)}`
-        : "✍️ Writing file...";
-    }
-
-    return `🔧 Running: ${tool.name}`;
+  private truncateProgress(text: string, maxLen: number): string {
+    if (text.length <= maxLen) return text;
+    return `${text.slice(0, maxLen - 1)}…`;
   }
-
-  private truncateProgress(value: string, max: number): string {
-    if (value.length <= max) return value;
-    return `${value.slice(0, max - 3)}...`;
-  }
-
 }

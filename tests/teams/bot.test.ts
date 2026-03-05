@@ -10,7 +10,7 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
   getSessionMessages: vi.fn().mockResolvedValue([]),
 }));
 
-vi.mock("../src/handoff/store.js", () => ({
+vi.mock("../../src/handoff/store.js", () => ({
   saveConversationRef: vi.fn(),
 }));
 
@@ -25,7 +25,7 @@ const stateValues = {
   managed: null as unknown,
 };
 
-vi.mock("../src/session/state.js", async (importOriginal) => {
+vi.mock("../../src/session/state.js", async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
   return {
     ...actual,
@@ -77,8 +77,8 @@ vi.mock("../src/session/state.js", async (importOriginal) => {
   };
 });
 
-import * as state from "../src/session/state.js";
-import { ClaudeCodeBot } from "../src/bot/teams-bot.js";
+import * as state from "../../src/session/state.js";
+import { ClaudeCodeBot } from "../../src/bot/teams-bot.js";
 
 const serviceUrl = "https://amer.ng.msg.teams.microsoft.com";
 
@@ -133,12 +133,9 @@ function assertInformativeTyping(activity: Partial<Activity>): void {
   expect(activity.channelData).toMatchObject({ streamType: "informative" });
 }
 
-/** Extract the user text from the async generator prompt passed to SDK query. */
-async function extractPromptText(
-  prompt: AsyncGenerator<{ message: { content: string } }>,
-): Promise<string> {
-  const first = await prompt.next();
-  return first.value.message.content;
+/** Extract the user text from the string prompt passed to SDK query. */
+function extractPromptText(prompt: string): string {
+  return prompt;
 }
 
 /** Helper: set up mockQuery to yield init + result messages */
@@ -178,7 +175,7 @@ describe("ClaudeCodeBot e2e (TestAdapter)", () => {
 
     expect(mockQuery).toHaveBeenCalledOnce();
     const call = mockQuery.mock.calls[0][0];
-    expect(await extractPromptText(call.prompt)).toBe("Hello");
+    expect(extractPromptText(call.prompt)).toBe("Hello");
     expect(call.options.cwd).toBe("/work/test");
     expect(call.options.permissionMode).toBe("bypassPermissions");
 
@@ -464,7 +461,7 @@ describe("user input (PromptRequest) flow", () => {
 
   it("handles prompt_response with valid pending request", async () => {
     const { registerPromptRequest } =
-      await import("../src/claude/user-input.js");
+      await import("../../src/claude/user-input.js");
 
     const promptPromise = registerPromptRequest("test-prompt-123", {
       timeoutMs: 5000,
@@ -535,86 +532,6 @@ describe("session resume failure recovery", () => {
 
     expect(mockQuery).toHaveBeenCalledTimes(2);
     expect(vi.mocked(state.clearPersistedSessionId)).toHaveBeenCalled();
-  });
-});
-
-describe("progress notifier streaming via updateActivity", () => {
-  it("sends first update as new message, subsequent updates via updateActivity", async () => {
-    const bot = new ClaudeCodeBot();
-    const sent: Array<{ action: string; activity: Record<string, unknown> }> = [];
-
-    const sendFn = vi.fn(async (activity: Record<string, unknown>) => {
-      sent.push({ action: "send", activity });
-      return { id: "msg-1" };
-    });
-    const updateFn = vi.fn(async (_id: string, activity: Record<string, unknown>) => {
-      sent.push({ action: "update", activity });
-    });
-
-    const notifier = bot.createProgressNotifier(sendFn, updateFn);
-
-    // First text event — should send a new message
-    notifier.onProgress({ type: "text", text: "Hello" });
-    await new Promise((r) => setTimeout(r, 50));
-    expect(sendFn).toHaveBeenCalledTimes(1);
-    expect(sent[0].action).toBe("send");
-    expect(sent[0].activity.type).toBe("message");
-    expect(sent[0].activity.text).toBe("Hello");
-
-    // Second text event — should update the same message
-    notifier.onProgress({ type: "text", text: "Hello world" });
-    // Wait for throttle
-    await new Promise((r) => setTimeout(r, 1100));
-    expect(updateFn).toHaveBeenCalled();
-    const updateCall = sent.find((s) => s.action === "update");
-    expect(updateCall?.activity.text).toBe("Hello world");
-  });
-
-  it("finalize updates the streaming message with final content", async () => {
-    const bot = new ClaudeCodeBot();
-    const sent: Array<{ action: string; id?: string; activity: Record<string, unknown> }> = [];
-
-    const sendFn = vi.fn(async (activity: Record<string, unknown>) => {
-      sent.push({ action: "send", activity });
-      return { id: "msg-stream" };
-    });
-    const updateFn = vi.fn(async (id: string, activity: Record<string, unknown>) => {
-      sent.push({ action: "update", id, activity });
-    });
-
-    const notifier = bot.createProgressNotifier(sendFn, updateFn);
-
-    // Trigger a streaming message
-    notifier.onProgress({ type: "text", text: "partial" });
-    await new Promise((r) => setTimeout(r, 50));
-
-    // Finalize with final content
-    await notifier.finalize(["Final result"]);
-
-    // Should have updated the streaming message, not sent a new one
-    const finalUpdate = sent.filter((s) => s.action === "update");
-    expect(finalUpdate.length).toBeGreaterThanOrEqual(1);
-    const last = finalUpdate[finalUpdate.length - 1];
-    expect(last.id).toBe("msg-stream");
-    expect(last.activity.text).toBe("Final result");
-
-    // sendFn should only have been called once (for the initial streaming message)
-    expect(sendFn).toHaveBeenCalledTimes(1);
-  });
-
-  it("finalize sends new message when no streaming activity exists", async () => {
-    const bot = new ClaudeCodeBot();
-
-    const sendFn = vi.fn(async () => ({ id: "msg-new" }));
-    const updateFn = vi.fn(async () => {});
-
-    const notifier = bot.createProgressNotifier(sendFn, updateFn);
-
-    // Finalize without any prior streaming
-    await notifier.finalize(["Direct result"]);
-
-    expect(sendFn).toHaveBeenCalledWith({ type: "message", text: "Direct result" });
-    expect(updateFn).not.toHaveBeenCalled();
   });
 });
 

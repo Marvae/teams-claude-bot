@@ -1,4 +1,5 @@
 import type { PermissionRequest, PermissionResult } from "./permissions.js";
+import { logError, logInfo } from "../logging/logger.js";
 
 export type UserQuestionOption = {
   label: string;
@@ -214,6 +215,7 @@ export function registerAskUserQuestion(
   return new Promise<PermissionResult>((resolve) => {
     const timeout = setTimeout(() => {
       pendingUserQuestions.delete(toolUseID);
+      logInfo("QUESTION", "request_timed_out", { toolUseID });
       resolve({
         behavior: "deny",
         message: "AskUserQuestion request timed out",
@@ -225,6 +227,12 @@ export function registerAskUserQuestion(
       resolve,
       timeout,
       input,
+    });
+
+    logInfo("QUESTION", "request_registered", {
+      toolUseID,
+      questionCount: input.questions.length,
+      timeoutMs,
     });
 
     return;
@@ -240,6 +248,7 @@ export function resolveAskUserQuestion(
 
   clearTimeout(pending.timeout);
   pendingUserQuestions.delete(toolUseID);
+  logInfo("QUESTION", "request_resolved", { toolUseID });
 
   pending.resolve({
     ...buildAskUserQuestionResponse(pending.input, rawAnswers),
@@ -258,6 +267,7 @@ export function handleAskUserQuestion(
   },
 ): Promise<PermissionResult> {
   if (!isAskUserQuestionInput(input)) {
+    logInfo("QUESTION", "request_invalid", { toolUseID: context.toolUseID });
     return Promise.resolve({
       behavior: "deny",
       message: "Invalid AskUserQuestion input",
@@ -266,11 +276,26 @@ export function handleAskUserQuestion(
   }
 
   return (async () => {
-    await context.sendCard({
-      toolName: "AskUserQuestion",
-      input,
-      toolUseID: context.toolUseID,
-    });
+    try {
+      await context.sendCard({
+        toolName: "AskUserQuestion",
+        input,
+        toolUseID: context.toolUseID,
+      });
+      logInfo("QUESTION", "card_sent", {
+        toolUseID: context.toolUseID,
+        questionCount: input.questions.length,
+      });
+    } catch (error) {
+      logError("QUESTION", "card_send_failed", error, {
+        toolUseID: context.toolUseID,
+      });
+      return {
+        behavior: "deny",
+        message: "AskUserQuestion failed to send",
+        toolUseID: context.toolUseID,
+      };
+    }
 
     return registerAskUserQuestion(context.toolUseID, input, {
       timeoutMs: context.timeoutMs,
@@ -282,5 +307,6 @@ export function clearPendingUserQuestions(): void {
   for (const pending of pendingUserQuestions.values()) {
     clearTimeout(pending.timeout);
   }
+  logInfo("QUESTION", "pending_cleared", { count: pendingUserQuestions.size });
   pendingUserQuestions.clear();
 }

@@ -1,0 +1,48 @@
+{
+  "meta": {
+    "description": "Tool call flow: assistant tool_use, user tool_use_result, assistant summary"
+  },
+  "messagesByInput": [
+    [
+      {
+        "type": "system",
+        "subtype": "init",
+        "session_id": "{{session_id}}"
+      },
+      {
+        "type": "assistant",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "tool_use",
+              "id": "toolu_read_1",
+              "name": "Read",
+              "input": {
+                "file_path": "README.md"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "type": "user",
+        "tool_use_result": {
+          "content": "# teams-claude-bot"
+        }
+      },
+      {
+        "type": "tool_use_summary",
+        "summary": "Read README.md successfully"
+      },
+      {
+        "type": "result",
+        "subtype": "success",
+        "is_error": false,
+        "result": "Summary: README contains project overview.",
+        "stop_reason": "end_turn",
+        "session_id": "{{session_id}}"
+      }
+    ]
+  ]
+}
