@@ -38,6 +38,7 @@ const SESSION_FILE =
 
 interface PersistedData {
   sessionId?: string;
+  cwd?: string;
   permissionMode?: string;
 }
 
@@ -62,12 +63,14 @@ export function loadPersistedSessionId(): string | undefined {
 export function persistSessionId(id: string): void {
   const data = loadPersisted();
   data.sessionId = id;
+  data.cwd = workDir;
   savePersisted(data);
 }
 
 export function clearPersistedSessionId(): void {
   const data = loadPersisted();
   delete data.sessionId;
+  delete data.cwd;
   savePersisted(data);
 }
 
@@ -76,6 +79,16 @@ export function loadPersistedState(): void {
   const data = loadPersisted();
   if (data.permissionMode) {
     permissionMode = data.permissionMode;
+  }
+  // Restore cwd if valid; if invalid, leave sessionId so resume
+  // fails naturally and the user sees the "could not resume" message.
+  if (data.cwd && data.sessionId) {
+    const r = setWorkDir(data.cwd);
+    if (!r.ok) {
+      console.warn(
+        `[STATE] Persisted cwd no longer valid (${data.cwd}), resume will fail gracefully`,
+      );
+    }
   }
 }
 

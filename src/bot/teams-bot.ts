@@ -3,11 +3,7 @@ import {
   createPromptCard,
   registerPromptRequest,
 } from "../claude/user-input.js";
-import {
-  ActivityHandler,
-  BotFrameworkAdapter,
-  TurnContext,
-} from "botbuilder";
+import { ActivityHandler, BotFrameworkAdapter, TurnContext } from "botbuilder";
 import { stripMention } from "./mention.js";
 import { handleCommand } from "./commands.js";
 import * as state from "../session/state.js";
@@ -36,10 +32,7 @@ import {
 import { processAttachments } from "./attachments.js";
 import { config } from "../config.js";
 import { saveConversationRef } from "../handoff/store.js";
-import {
-  renderDiffImage,
-  type FileDiffInput,
-} from "./diff-renderer.js";
+import { renderDiffImage, type FileDiffInput } from "./diff-renderer.js";
 
 function friendlyError(error: string, stopReason?: string | null): string {
   if (stopReason === "refusal") {
@@ -431,12 +424,17 @@ export class ClaudeCodeBot extends ActivityHandler {
         // If the underlying process crashed, destroy and retry with a
         // fresh session so the user doesn't see the error.
         if (managed.session.isClosed && !retried) {
-          console.log("[BOT] Session crashed, retrying with fresh session");
+          console.log(
+            "[BOT] Session closed/crashed, retrying with fresh session",
+          );
           state.destroySession();
           state.clearPersistedSessionId();
           const fresh = this.createManagedSession();
           state.setSession(fresh);
           fresh.setCtx(ctx);
+          await ctx.sendActivity(
+            "⚠️ Previous session could not be resumed. Starting a new session.",
+          );
           return this.processUserMessage(fresh, ctx, text, images, true);
         }
         await progress.finalize([
@@ -690,9 +688,7 @@ export class ClaudeCodeBot extends ActivityHandler {
     }
   }
 
-  createProgressNotifier(
-    ctx: TurnContext,
-  ): {
+  createProgressNotifier(ctx: TurnContext): {
     onProgress: (event: ProgressEvent) => void;
     finalize: (chunks: string[]) => Promise<void>;
     getPromptSuggestion: () => string | undefined;
@@ -794,7 +790,9 @@ export class ClaudeCodeBot extends ActivityHandler {
         }
 
         if (event.type === "tool_error") {
-          progressLines.push(`⚠️ Tool error: ${this.truncateProgress(event.error, 200)}`);
+          progressLines.push(
+            `⚠️ Tool error: ${this.truncateProgress(event.error, 200)}`,
+          );
           scheduleUpdate(TOOL_THROTTLE_MS);
           return;
         }
