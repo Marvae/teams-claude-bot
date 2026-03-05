@@ -31,9 +31,6 @@ export interface SessionConfig {
   resume?: string;
   forkSession?: boolean;
 
-  // Continue most recent session in cwd (cross-restart memory)
-  continue?: boolean;
-
   // SDK callbacks — closures over mutable ctx, set once
   canUseTool?: CanUseTool;
   onElicitation?: OnElicitation;
@@ -76,6 +73,9 @@ export class ConversationSession {
   }
   get currentSessionId(): string | undefined {
     return this.sessionId;
+  }
+  get isClosed(): boolean {
+    return this.closed;
   }
 
   /** Get SDK slash commands (available only after query is started). */
@@ -218,6 +218,7 @@ export class ConversationSession {
 
     this.eventConsumer = this.consumeEvents().catch((err) => {
       console.error("[SESSION] Event consumer error:", err);
+      this.closed = true;
       this.resolveCurrentTurn({
         error: err instanceof Error ? err.message : String(err),
         tools: this.turnResolver?.tools ?? [],
@@ -597,8 +598,6 @@ export class ConversationSession {
     if (this.config.resume) {
       opts.resume = this.config.resume;
       if (this.config.forkSession) opts.forkSession = true;
-    } else if (this.config.continue) {
-      opts.continue = true;
     }
     if (this.config.canUseTool) opts.canUseTool = this.config.canUseTool;
     if (this.config.onElicitation)

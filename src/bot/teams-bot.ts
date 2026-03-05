@@ -403,6 +403,7 @@ export class ClaudeCodeBot extends ActivityHandler {
     ctx: TurnContext,
     text: string,
     images?: ImageInput[],
+    retried = false,
   ): Promise<void> {
     // Run init prompt on new sessions (first send starts the query)
     if (!managed.session.hasQuery && config.sessionInitPrompt) {
@@ -426,10 +427,20 @@ export class ClaudeCodeBot extends ActivityHandler {
       state.addUsage(result.costUsd, result.usage);
 
       if (result.error) {
-        // result.error means SDK returned a result message with is_error=true.
-        // The query process is still alive — don't destroy it.
-        // Only the catch block (exception/crash) should destroy.
         console.error(`[BOT] Error from session: ${result.error}`);
+        // If the underlying process crashed, destroy and retry with a
+        // fresh session so the user doesn't see the error.
+        if (managed.session.isClosed && !retried) {
+          console.log("[BOT] Session crashed, retrying with fresh session");
+          state.destroySession();
+          state.clearPersistedSessionId();
+          typingController.abort();
+          await typingLoop;
+          const fresh = this.createManagedSession();
+          state.setSession(fresh);
+          fresh.setCtx(ctx);
+          return this.processUserMessage(fresh, ctx, text, images, true);
+        }
         await progress.finalize([
           friendlyError(result.error, result.stopReason),
         ]);
@@ -565,7 +576,6 @@ export class ClaudeCodeBot extends ActivityHandler {
       permissionMode: state.getPermissionMode(),
       resume: overrides?.resume ?? savedId,
       forkSession: overrides?.forkSession,
-      continue: !overrides?.resume && !savedId,
       canUseTool: createPermissionHandler(sendPermCard),
       onElicitation,
       onPromptRequest,
