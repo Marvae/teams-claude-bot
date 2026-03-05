@@ -114,6 +114,12 @@ export function getWorkDir(): string {
 export function setWorkDir(
   dir: string,
 ): { ok: true } | { ok: false; error: string } {
+  // Convert MSYS2/Git Bash Unix-style paths to Windows paths
+  // e.g. /d/office/src -> D:/office/src (when pwd -W fails in the skill)
+  if (process.platform === "win32" && /^\/[a-zA-Z]\//.test(dir)) {
+    dir = dir[1].toUpperCase() + ":" + dir.slice(2);
+  }
+
   let resolved: string;
   try {
     resolved = realpathSync(resolve(dir));

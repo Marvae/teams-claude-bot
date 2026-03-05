@@ -635,7 +635,7 @@ export class ClaudeCodeBot extends ActivityHandler {
       const managed = this.createManagedSession({
         resume: sessionId,
         forkSession: !!sessionId,
-        cwd: workDir,
+        cwd: state.getWorkDir(),
       });
       state.setSession(managed);
       managed.setCtx(ctx);

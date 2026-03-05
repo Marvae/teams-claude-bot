@@ -6,6 +6,7 @@ import {
   type SDKMessage,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
+import { join, dirname, resolve } from "path";
 import { AsyncQueue } from "../session/async-queue.js";
 import type {
   ClaudeResult,
@@ -16,6 +17,16 @@ import type {
   OnElicitation,
 } from "./agent.js";
 import { extractToolInfo, saveImagesToTmp } from "./agent.js";
+
+// Resolve cli.js path explicitly. process.argv[1] is the entry file (dist/index.js or
+// src/index.ts), always one directory below the project root, so dirname x2 = root.
+const CLAUDE_CLI_PATH = join(
+  dirname(dirname(resolve(process.argv[1]))),
+  "node_modules",
+  "@anthropic-ai",
+  "claude-agent-sdk",
+  "cli.js",
+);
 
 // ─── Session config (set once at creation) ───
 
@@ -577,7 +588,8 @@ export class ConversationSession {
         append:
           "You are running inside Microsoft Teams as a bot. Keep responses concise and use markdown formatting compatible with Teams.",
       },
-      executable: "node",
+      executable: process.argv[0],
+      pathToClaudeCodeExecutable: CLAUDE_CLI_PATH,
       settingSources: ["project"],
       includePartialMessages: true,
       promptSuggestions: true,
