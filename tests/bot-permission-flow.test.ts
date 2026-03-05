@@ -113,10 +113,7 @@ function createAdapter(): TestAdapter {
   return adapter;
 }
 
-function assertInformativeTyping(activity: Partial<Activity>): void {
-  expect(activity.type).toBe(ActivityTypes.Typing);
-  expect(activity.channelData).toMatchObject({ streamType: "informative" });
-}
+
 
 function setupMockQuery(result: string, sessionId = "sess-1") {
   mockQuery.mockImplementation(async function* () {

@@ -14,9 +14,8 @@ const cliDir = path.dirname(fileURLToPath(import.meta.url));
 const projectDir = path.resolve(cliDir, '..');
 const homeDir = os.homedir();
 
-// On Windows, npm/npx are .cmd files and need the extension when shell is not used.
+// On Windows, npm is a .cmd file and needs the extension when shell is not used.
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx';
 
 const macLabel = 'com.teams-claude-bot';
 const winTaskName = 'TeamsClaudeBot';

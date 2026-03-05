@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { execSync } from "child_process";
+import { type execSync as _execSync } from "child_process";
 
 // Mock execSync for devtunnel tests
 vi.mock("child_process", async () => {
@@ -77,7 +77,7 @@ describe("resolvePublicUrl", () => {
 describe("staticDir", () => {
   it("creates directory in tmpdir", async () => {
     const { tmpdir } = await import("os");
-    const { existsSync } = await import("fs");
+    const { existsSync: _existsSync } = await import("fs");
     const { resolve } = await import("path");
 
     const expectedDir = resolve(tmpdir(), "teams-bot-static");
