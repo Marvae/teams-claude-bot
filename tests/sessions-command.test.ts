@@ -160,7 +160,7 @@ describe("/sessions command", () => {
     expect(body[1].text).toContain("▶");
     expect(body[1].text).toContain("Active one");
 
-    expect(body[3].text).toContain("2.");
+    expect(body[3].text).toContain("#2");
     expect(body[3].text).toContain("Other one");
 
     expect(actions.length).toBe(1);
