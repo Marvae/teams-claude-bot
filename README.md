@@ -31,7 +31,7 @@ A lightweight Microsoft Teams bot that bridges to Claude Code on your local mach
 - **MCP & Elicitation** — MCP server auth flows (form + URL) via Adaptive Cards
 - **Access control** — Restrict usage via Azure AD object ID or email whitelist
 - **Security** — Rate limiting, security headers, file permission hardening, activity dedup
-- **Slash commands** — `/new`, `/stop`, `/model`, `/project`, `/thinking`, `/permission`, `/sessions`, `/status`, `/handoff`, `/help`
+- **Slash commands** — `/new`, `/stop`, `/undo`, `/model`, `/project`, `/thinking`, `/permission`, `/sessions`, `/status`, `/handoff`, `/help`
 - **SDK commands** — Claude Code skills (compact, cost, review, etc.) available via `/help`
 
 ## Architecture
@@ -192,6 +192,7 @@ Teams → Terminal:
 |---------|-------------|
 | `/new` | Start a fresh Claude session |
 | `/stop` | Interrupt current task, clear pending queue |
+| `/undo [N]` | Revert file changes — show history or undo last N turns |
 | `/project <path>` | Set working directory |
 | `/model [name]` | Show or set model (sonnet/opus/haiku) — applies immediately |
 | `/models` | List available models |
