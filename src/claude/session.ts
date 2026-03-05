@@ -479,6 +479,7 @@ export class ConversationSession {
           (msg.subtype as string).startsWith("error_"));
 
       if (isError) {
+        this.closed = true;
         const errors = msg.errors as string[] | undefined;
         const errorMsg =
           errors && errors.length > 0

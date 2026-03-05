@@ -434,8 +434,6 @@ export class ClaudeCodeBot extends ActivityHandler {
           console.log("[BOT] Session crashed, retrying with fresh session");
           state.destroySession();
           state.clearPersistedSessionId();
-          typingController.abort();
-          await typingLoop;
           const fresh = this.createManagedSession();
           state.setSession(fresh);
           fresh.setCtx(ctx);
