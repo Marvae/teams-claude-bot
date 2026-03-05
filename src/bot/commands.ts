@@ -204,6 +204,26 @@ export async function handleCommand(
       return true;
     }
 
+    case "/session": {
+      const sub = parts[1]?.toLowerCase();
+      if (sub === "name") {
+        const title = parts.slice(2).join(" ").trim();
+        if (!title) {
+          await ctx.sendActivity("Usage: `/session name <title>`");
+          return true;
+        }
+        const currentId = state.getSession()?.session.currentSessionId;
+        if (!currentId) {
+          await ctx.sendActivity("No active session.");
+          return true;
+        }
+        state.setSessionTitle(currentId, title);
+        await ctx.sendActivity(`Session named: **${title}**`);
+        return true;
+      }
+      return false;
+    }
+
     case "/sessions": {
       const currentId = state.getSession()?.session.currentSessionId;
       const MAX_SESSIONS = 8;
@@ -238,7 +258,7 @@ export async function handleCommand(
       for (const s of sdkSessions) {
         num++;
         const isActive = s.sessionId === currentId;
-        const label = s.customTitle || s.summary || "Untitled";
+        const label = state.getBotTitle(s.sessionId) || s.customTitle || s.summary || "Untitled";
         const age = formatAge(new Date(s.lastModified).toISOString());
         const dirName = s.cwd?.split("/").pop() ?? "";
         const meta = [dirName ? `${dirName}` : null, age, s.gitBranch ?? null]

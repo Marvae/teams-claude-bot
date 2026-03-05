@@ -34,10 +34,13 @@ vi.mock("../src/session/state.js", async (importOriginal) => {
     clearHandoffMode: vi.fn(),
     getCachedCommands: vi.fn(() => undefined),
     setCachedCommands: vi.fn(),
+    getBotTitle: vi.fn(() => undefined),
+    setSessionTitle: vi.fn(),
   };
 });
 
 import { handleCommand } from "../src/bot/commands.js";
+import * as state from "../src/session/state.js";
 
 function makeMockCtx() {
   const sent: unknown[] = [];
@@ -71,6 +74,7 @@ describe("/sessions command", () => {
     listSessionsMock.mockReset();
     stateValues.managed = null;
     stateValues.workDir = "/work/test";
+    vi.mocked(state.getBotTitle).mockReturnValue(undefined);
   });
 
   it("shows empty message when no sessions", async () => {
@@ -222,6 +226,23 @@ describe("/sessions command", () => {
     expect(meta).not.toContain("/home/user/my-app");
   });
 
+  it("shows bot title over customTitle", async () => {
+    vi.mocked(state.getBotTitle).mockReturnValue("Bot Title");
+    listSessionsMock.mockResolvedValue([
+      makeSession({ customTitle: "SDK Title", summary: "auto summary" }),
+    ]);
+    const { ctx, sent } = makeMockCtx();
+
+    await handleCommand("/sessions", ctx);
+
+    const card = (
+      sent[0] as { attachments: Array<{ content: Record<string, unknown> }> }
+    ).attachments[0].content;
+    const body = card.body as Array<{ text: string }>;
+    expect(body[1].text).toContain("Bot Title");
+    expect(body[1].text).not.toContain("SDK Title");
+  });
+
   it("sorts by lastModified descending", async () => {
     listSessionsMock.mockResolvedValue([
       makeSession({
@@ -245,5 +266,49 @@ describe("/sessions command", () => {
     const body = card.body as Array<{ text: string }>;
     expect(body[1].text).toContain("New");
     expect(body[3].text).toContain("Old");
+  });
+});
+
+describe("/session name command", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    stateValues.managed = null;
+  });
+
+  it("shows usage when no title provided", async () => {
+    const { ctx, sent } = makeMockCtx();
+    const handled = await handleCommand("/session name", ctx);
+    expect(handled).toBe(true);
+    expect(sent[0]).toContain("Usage:");
+  });
+
+  it("shows error when no active session", async () => {
+    stateValues.managed = null;
+    const { ctx, sent } = makeMockCtx();
+    const handled = await handleCommand("/session name My Project", ctx);
+    expect(handled).toBe(true);
+    expect(sent[0]).toContain("No active session");
+  });
+
+  it("sets title and confirms when session is active", async () => {
+    stateValues.managed = {
+      session: { currentSessionId: "s1" },
+      setCtx: vi.fn(),
+      pendingMessages: [],
+    };
+    const { ctx, sent } = makeMockCtx();
+    const handled = await handleCommand("/session name My Project", ctx);
+    expect(handled).toBe(true);
+    expect(vi.mocked(state.setSessionTitle)).toHaveBeenCalledWith(
+      "s1",
+      "My Project",
+    );
+    expect(sent[0]).toContain("My Project");
+  });
+
+  it("returns false for unknown /session subcommand", async () => {
+    const { ctx } = makeMockCtx();
+    const handled = await handleCommand("/session unknown", ctx);
+    expect(handled).toBe(false);
   });
 });

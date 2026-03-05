@@ -37,6 +37,7 @@ interface PersistedData {
   sessionId?: string;
   cwd?: string;
   permissionMode?: string;
+  titles?: Record<string, string>;
 }
 
 function loadPersisted(): PersistedData {
@@ -222,6 +223,18 @@ function resetUsageStats(): void {
   totalInputTokens = 0;
   totalOutputTokens = 0;
   totalTurns = 0;
+}
+
+// ─── Bot-managed session titles ───
+
+export function setSessionTitle(sessionId: string, title: string): void {
+  const data = loadPersisted();
+  data.titles = { ...data.titles, [sessionId]: title };
+  savePersisted(data);
+}
+
+export function getBotTitle(sessionId: string): string | undefined {
+  return loadPersisted().titles?.[sessionId];
 }
 
 // ─── Cached SDK commands ───
