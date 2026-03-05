@@ -14,6 +14,10 @@ const cliDir = path.dirname(fileURLToPath(import.meta.url));
 const projectDir = path.resolve(cliDir, '..');
 const homeDir = os.homedir();
 
+// On Windows, npm/npx are .cmd files and need the extension when shell is not used.
+const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+
 const macLabel = 'com.teams-claude-bot';
 const winTaskName = 'TeamsClaudeBot';
 const linuxServiceName = 'teams-claude-bot.service';
@@ -37,13 +41,14 @@ function detectPlatform(): Platform {
 function runCommand(
   command: string,
   args: string[],
-  options: { cwd?: string; stdio?: 'inherit' | 'pipe'; allowFailure?: boolean } = {},
+  options: { cwd?: string; stdio?: 'inherit' | 'pipe'; allowFailure?: boolean; shell?: boolean } = {},
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd: options.cwd,
       stdio: options.stdio ?? 'inherit',
       env: process.env,
+      shell: options.shell ?? false,
     });
 
     let stdout = '';
@@ -156,13 +161,13 @@ function pathExistsAndNonEmpty(filePath: string): boolean {
 
 async function runBuild(): Promise<void> {
   console.log('Building...');
-  await runCommand('npm', ['run', 'build'], { cwd: projectDir });
+  await runCommand(npm, ['run', 'build'], { cwd: projectDir, shell: true });
 }
 
 async function enableDiff(): Promise<void> {
   console.log('Installing diff rendering dependencies...');
-  await runCommand('npm', ['install', '@pierre/diffs', 'playwright-core'], { cwd: projectDir });
-  await runCommand('npx', ['playwright', 'install', 'chromium'], { cwd: projectDir });
+  await runCommand(npm, ['install', '@pierre/diffs', 'playwright-core'], { cwd: projectDir, shell: true });
+  await runCommand(npx, ['playwright', 'install', 'chromium'], { cwd: projectDir, shell: true });
   console.log('Done. Diff images are now enabled.');
 }
 
@@ -344,8 +349,8 @@ async function windowsStartService(): Promise<void> {
 
 async function windowsStatus(): Promise<void> {
   const runningOut = await runPowerShell(`
-$pid = (Get-NetTCPConnection -LocalPort 3978 -ErrorAction SilentlyContinue).OwningProcess | Select-Object -First 1
-if ($pid) { Write-Output "running:$pid" } else { Write-Output 'running:no' }
+$portPid = (Get-NetTCPConnection -LocalPort 3978 -ErrorAction SilentlyContinue).OwningProcess | Select-Object -First 1
+if ($portPid) { Write-Output "running:$portPid" } else { Write-Output 'running:no' }
 `, true);
 
   const taskOut = await runPowerShell(`
