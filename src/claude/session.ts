@@ -132,7 +132,6 @@ export class ConversationSession {
     }
 
     this._lastActivity = Date.now();
-    this.resetTurnState();
 
     if (!this.activeQuery) {
       this.startQuery(prompt, images).catch((err) => {
@@ -142,6 +141,7 @@ export class ConversationSession {
         });
       });
     } else {
+      // Don't reset turn state — SDK is still processing the current turn
       this.streamMessage(prompt, images);
     }
   }

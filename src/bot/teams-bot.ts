@@ -401,6 +401,21 @@ export class ClaudeCodeBot extends ActivityHandler {
       return result;
     };
 
+    // Proactive updateActivity — update an existing message by id
+    const updateActivity = async (
+      activityId: string,
+      activity: Record<string, unknown>,
+    ) => {
+      if (!conversationRef || !adapter) return;
+      await adapter.continueConversation(conversationRef, async (ctx) => {
+        await ctx.updateActivity({
+          ...activity,
+          id: activityId,
+          conversation: ctx.activity.conversation,
+        } as Parameters<TurnContext["updateActivity"]>[0]);
+      });
+    };
+
     const sendCard = async (card: Record<string, unknown>) => {
       await sendActivity({
         attachments: [
@@ -507,13 +522,13 @@ export class ClaudeCodeBot extends ActivityHandler {
       },
       onProgress: (event: ProgressEvent) => {
         if (!currentProgress) {
-          currentProgress = this.createProgressNotifier(sendActivity);
+          currentProgress = this.createProgressNotifier(sendActivity, updateActivity);
         }
         currentProgress.onProgress(event);
       },
       onResult: async (result: ClaudeResult) => {
         if (!currentProgress) {
-          currentProgress = this.createProgressNotifier(sendActivity);
+          currentProgress = this.createProgressNotifier(sendActivity, updateActivity);
         }
         const progress = currentProgress;
         currentProgress = null;
@@ -620,7 +635,10 @@ export class ClaudeCodeBot extends ActivityHandler {
     }
   }
 
-  createProgressNotifier(sendFn: (activity: Record<string, unknown>) => Promise<{ id?: string } | undefined>): {
+  createProgressNotifier(
+    sendFn: (activity: Record<string, unknown>) => Promise<{ id?: string } | undefined>,
+    updateFn: (activityId: string, activity: Record<string, unknown>) => Promise<void>,
+  ): {
     onProgress: (event: ProgressEvent) => void;
     finalize: (chunks: string[]) => Promise<void>;
     getPromptSuggestion: () => string | undefined;
@@ -637,7 +655,7 @@ export class ClaudeCodeBot extends ActivityHandler {
     let todoDisplay: string | undefined;
     let pendingUpdate = false;
     let promptSuggestion: string | undefined;
-    let streamSequence = 1;
+    let streamingActivityId: string | undefined;
     const buildDisplay = (): string => {
       const parts: string[] = [];
       if (todoDisplay) {
@@ -664,14 +682,14 @@ export class ClaudeCodeBot extends ActivityHandler {
       const text = buildDisplay();
       if (!text) return;
       try {
-        await sendFn({
-          type: "typing",
-          text,
-          channelData: {
-            streamType: "streaming",
-            streamSequence: streamSequence++,
-          },
-        });
+        if (!streamingActivityId) {
+          // First update — send a new message and remember its id
+          const resp = await sendFn({ type: "message", text });
+          streamingActivityId = resp?.id;
+        } else {
+          // Subsequent updates — update the same message in place
+          await updateFn(streamingActivityId, { type: "message", text });
+        }
       } catch {
         // Ignore transient update failures.
       }
@@ -799,7 +817,13 @@ export class ClaudeCodeBot extends ActivityHandler {
         }
         if (chunks.length === 0) return;
 
-        await sendFn({ type: "message", text: chunks[0] });
+        if (streamingActivityId) {
+          // Update the streaming message with the first final chunk
+          await updateFn(streamingActivityId, { type: "message", text: chunks[0] });
+          streamingActivityId = undefined;
+        } else {
+          await sendFn({ type: "message", text: chunks[0] });
+        }
 
         for (let i = 1; i < chunks.length; i++) {
           await sendFn({ type: "message", text: chunks[i] });

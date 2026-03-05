@@ -216,6 +216,73 @@ describe("ConversationSession", () => {
     });
   });
 
+  describe("streaming text accumulation", () => {
+    it("does not reset streaming text when sending to existing query", async () => {
+      // Use a controllable async iterator to yield messages on demand
+      const pending: Array<(msg: IteratorResult<unknown>) => void> = [];
+      mockQuery.mockImplementation(() => ({
+        [Symbol.asyncIterator]() { return this; },
+        async next() {
+          return new Promise<IteratorResult<unknown>>((resolve) => {
+            pending.push(resolve);
+          });
+        },
+        async return() { return { value: undefined, done: true as const }; },
+        async throw(e: unknown) { throw e; },
+      }));
+
+      const yieldMsg = async (msg: unknown) => {
+        await vi.waitFor(() => expect(pending.length).toBeGreaterThan(0));
+        pending.shift()!({ value: msg, done: false });
+        await new Promise((r) => setTimeout(r, 10));
+      };
+      const finish = async () => {
+        await vi.waitFor(() => expect(pending.length).toBeGreaterThan(0));
+        pending.shift()!({ value: undefined, done: true });
+      };
+
+      const { session, events } = makeSession();
+
+      // Start query
+      session.send("hello");
+      await yieldMsg({ type: "system", subtype: "init", session_id: "s1" });
+
+      // Yield some streaming text
+      await yieldMsg({
+        type: "stream_event",
+        parent_tool_use_id: null,
+        event: { type: "content_block_delta", delta: { type: "text_delta", text: "Hello " } },
+      });
+      await yieldMsg({
+        type: "stream_event",
+        parent_tool_use_id: null,
+        event: { type: "content_block_delta", delta: { type: "text_delta", text: "world" } },
+      });
+
+      // Verify accumulated text
+      const textEvents = events.filter((e) => e.type === "text");
+      expect(textEvents).toHaveLength(2);
+      expect(textEvents[1]).toEqual({ type: "text", text: "Hello world" });
+
+      // User sends another message mid-stream — should NOT reset streaming text
+      session.send("follow up");
+
+      // Yield more streaming text — should continue accumulating
+      await yieldMsg({
+        type: "stream_event",
+        parent_tool_use_id: null,
+        event: { type: "content_block_delta", delta: { type: "text_delta", text: "!" } },
+      });
+
+      const allTextEvents = events.filter((e) => e.type === "text");
+      const last = allTextEvents[allTextEvents.length - 1];
+      expect(last).toEqual({ type: "text", text: "Hello world!" });
+
+      // Clean up
+      await finish();
+    });
+  });
+
   describe("prompt suggestions", () => {
     it("passes prompt suggestion through done event", async () => {
       mockQuery.mockImplementation(async function* () {

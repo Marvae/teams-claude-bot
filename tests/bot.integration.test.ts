@@ -538,6 +538,86 @@ describe("session resume failure recovery", () => {
   });
 });
 
+describe("progress notifier streaming via updateActivity", () => {
+  it("sends first update as new message, subsequent updates via updateActivity", async () => {
+    const bot = new ClaudeCodeBot();
+    const sent: Array<{ action: string; activity: Record<string, unknown> }> = [];
+
+    const sendFn = vi.fn(async (activity: Record<string, unknown>) => {
+      sent.push({ action: "send", activity });
+      return { id: "msg-1" };
+    });
+    const updateFn = vi.fn(async (_id: string, activity: Record<string, unknown>) => {
+      sent.push({ action: "update", activity });
+    });
+
+    const notifier = bot.createProgressNotifier(sendFn, updateFn);
+
+    // First text event — should send a new message
+    notifier.onProgress({ type: "text", text: "Hello" });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(sendFn).toHaveBeenCalledTimes(1);
+    expect(sent[0].action).toBe("send");
+    expect(sent[0].activity.type).toBe("message");
+    expect(sent[0].activity.text).toBe("Hello");
+
+    // Second text event — should update the same message
+    notifier.onProgress({ type: "text", text: "Hello world" });
+    // Wait for throttle
+    await new Promise((r) => setTimeout(r, 1100));
+    expect(updateFn).toHaveBeenCalled();
+    const updateCall = sent.find((s) => s.action === "update");
+    expect(updateCall?.activity.text).toBe("Hello world");
+  });
+
+  it("finalize updates the streaming message with final content", async () => {
+    const bot = new ClaudeCodeBot();
+    const sent: Array<{ action: string; id?: string; activity: Record<string, unknown> }> = [];
+
+    const sendFn = vi.fn(async (activity: Record<string, unknown>) => {
+      sent.push({ action: "send", activity });
+      return { id: "msg-stream" };
+    });
+    const updateFn = vi.fn(async (id: string, activity: Record<string, unknown>) => {
+      sent.push({ action: "update", id, activity });
+    });
+
+    const notifier = bot.createProgressNotifier(sendFn, updateFn);
+
+    // Trigger a streaming message
+    notifier.onProgress({ type: "text", text: "partial" });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Finalize with final content
+    await notifier.finalize(["Final result"]);
+
+    // Should have updated the streaming message, not sent a new one
+    const finalUpdate = sent.filter((s) => s.action === "update");
+    expect(finalUpdate.length).toBeGreaterThanOrEqual(1);
+    const last = finalUpdate[finalUpdate.length - 1];
+    expect(last.id).toBe("msg-stream");
+    expect(last.activity.text).toBe("Final result");
+
+    // sendFn should only have been called once (for the initial streaming message)
+    expect(sendFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("finalize sends new message when no streaming activity exists", async () => {
+    const bot = new ClaudeCodeBot();
+
+    const sendFn = vi.fn(async () => ({ id: "msg-new" }));
+    const updateFn = vi.fn(async () => {});
+
+    const notifier = bot.createProgressNotifier(sendFn, updateFn);
+
+    // Finalize without any prior streaming
+    await notifier.finalize(["Direct result"]);
+
+    expect(sendFn).toHaveBeenCalledWith({ type: "message", text: "Direct result" });
+    expect(updateFn).not.toHaveBeenCalled();
+  });
+});
+
 describe("handoff flow", () => {
   beforeEach(() => {
     vi.clearAllMocks();
