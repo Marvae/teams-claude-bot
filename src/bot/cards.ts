@@ -33,6 +33,11 @@ const COMMAND_GROUPS: CommandGroup[] = [
         description: "Interrupt current task",
       },
       {
+        title: "/undo",
+        command: "/undo",
+        description: "Revert file changes",
+      },
+      {
         title: "/status",
         command: "/status",
         description: "Show session info",

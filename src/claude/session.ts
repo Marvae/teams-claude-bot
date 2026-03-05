@@ -3,6 +3,7 @@ import {
   type CanUseTool,
   type PromptRequestOption,
   type Query,
+  type RewindFilesResult,
   type SDKMessage,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
@@ -66,6 +67,9 @@ export class ConversationSession {
   private closed = false;
   private lastPromptSuggestion: string | undefined;
 
+  // Checkpoint history for /undo (most recent last)
+  private userMessageHistory: Array<{ uuid: string; preview: string }> = [];
+
   // Per-turn tracking (reset on each result)
   private turnTools: ToolInfo[] = [];
   private turnStreamingText = "";
@@ -118,6 +122,22 @@ export class ConversationSession {
     if (this.activeQuery) {
       await this.activeQuery.stopTask(taskId);
     }
+  }
+
+  /** Get recent user message history for /undo (most recent first). */
+  getUndoHistory(): Array<{ uuid: string; preview: string }> {
+    return [...this.userMessageHistory].reverse();
+  }
+
+  /** Rewind files to the state at a specific user message. */
+  async rewindFiles(
+    userMessageId: string,
+    options?: { dryRun?: boolean },
+  ): Promise<RewindFilesResult> {
+    if (!this.activeQuery) {
+      return { canRewind: false, error: "No active session" };
+    }
+    return this.activeQuery.rewindFiles(userMessageId, options);
   }
 
   /**
@@ -333,6 +353,34 @@ export class ConversationSession {
 
     // ── User message (tool_use_result payloads from tool responses) ──
     if (msg.type === "user") {
+      // Track non-synthetic user messages for /undo checkpoints
+      if (
+        typeof msg.uuid === "string" &&
+        !msg.isSynthetic &&
+        !msg.tool_use_result &&
+        !msg.parent_tool_use_id
+      ) {
+        const content = msg.message as { content?: unknown } | undefined;
+        const text =
+          typeof content?.content === "string"
+            ? content.content
+            : Array.isArray(content?.content)
+              ? (
+                  content.content.find(
+                    (b: Record<string, unknown>) => b.type === "text",
+                  ) as { text?: string } | undefined
+                )?.text ?? ""
+              : "";
+        this.userMessageHistory.push({
+          uuid: msg.uuid,
+          preview: text.slice(0, 50),
+        });
+        // Keep last 10
+        if (this.userMessageHistory.length > 10) {
+          this.userMessageHistory.shift();
+        }
+      }
+
       const toolUseResult = msg.tool_use_result;
       if (toolUseResult && typeof toolUseResult === "object") {
         const payload = toolUseResult as Record<string, unknown>;
@@ -560,6 +608,7 @@ export class ConversationSession {
       settingSources: ["project"],
       includePartialMessages: true,
       promptSuggestions: true,
+      enableFileCheckpointing: true,
       env: { ...process.env, CLAUDECODE: undefined },
     };
 

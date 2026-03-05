@@ -327,6 +327,58 @@ export async function handleCommand(
       return true;
     }
 
+    case "/undo": {
+      const managed = state.getSession();
+      if (!managed) {
+        await ctx.sendActivity("No active session.");
+        return true;
+      }
+
+      const history = managed.session.getUndoHistory();
+      if (history.length === 0) {
+        await ctx.sendActivity("Nothing to undo.");
+        return true;
+      }
+
+      // No arg → show history
+      if (!arg) {
+        const lines = history.map(
+          (h, i) => `${i + 1}. ${h.preview || "(no text)"}`,
+        );
+        await ctx.sendActivity(
+          "**Recent turns:**\n\n" +
+            lines.join("\n") +
+            "\n\nReply `/undo 1` to revert last turn, `/undo 3` to revert last 3 turns.",
+        );
+        return true;
+      }
+
+      const n = parseInt(arg, 10);
+      if (isNaN(n) || n < 1 || n > history.length) {
+        await ctx.sendActivity(
+          `Invalid. Use \`/undo 1\` to \`/undo ${history.length}\`.`,
+        );
+        return true;
+      }
+
+      // Rewind to the nth most recent user message
+      const target = history[n - 1];
+      const result = await managed.session.rewindFiles(target.uuid);
+
+      if (!result.canRewind) {
+        await ctx.sendActivity(result.error ?? "Nothing to undo.");
+        return true;
+      }
+
+      const files = result.filesChanged?.length ?? 0;
+      const ins = result.insertions ?? 0;
+      const del = result.deletions ?? 0;
+      await ctx.sendActivity(
+        `Undo complete — reverted ${files} file${files !== 1 ? "s" : ""} (+${ins} / -${del})`,
+      );
+      return true;
+    }
+
     case "/help": {
       const managed = state.getSession();
       let sdkCommands = await managed?.session.getSupportedCommands();
