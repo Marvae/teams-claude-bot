@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
-  createPermissionHandler,
+  createToolInterceptor,
   resolvePermission,
   clearPendingPermissions,
-} from "../src/claude/permissions.js";
+} from "../src/claude/tool-interceptor.js";
 
 describe("permissions", () => {
   beforeEach(() => {
@@ -14,10 +14,10 @@ describe("permissions", () => {
     clearPendingPermissions();
   });
 
-  describe("createPermissionHandler", () => {
+  describe("createToolInterceptor", () => {
     it("returns a canUseTool callback function", () => {
       const sendCard = vi.fn();
-      const handler = createPermissionHandler(sendCard);
+      const handler = createToolInterceptor(sendCard);
       expect(typeof handler).toBe("function");
     });
 
@@ -28,7 +28,7 @@ describe("permissions", () => {
         cardSent();
         return Promise.resolve();
       });
-      const handler = createPermissionHandler(sendCard);
+      const handler = createToolInterceptor(sendCard);
 
       // Start the handler but don't await
       const resultPromise = handler(
@@ -63,7 +63,7 @@ describe("permissions", () => {
         cardSent();
         return Promise.resolve();
       });
-      const handler = createPermissionHandler(sendCard);
+      const handler = createToolInterceptor(sendCard);
 
       const resultPromise = handler(
         "Bash",
@@ -88,7 +88,7 @@ describe("permissions", () => {
         cardSent();
         return Promise.resolve();
       });
-      const handler = createPermissionHandler(sendCard);
+      const handler = createToolInterceptor(sendCard);
 
       const resultPromise = handler(
         "Bash",
@@ -127,7 +127,7 @@ describe("permissions", () => {
         cardSent();
         return Promise.resolve();
       });
-      const handler = createPermissionHandler(sendCard, { timeoutMs: 5000 });
+      const handler = createToolInterceptor(sendCard, { timeoutMs: 5000 });
 
       const resultPromise = handler(
         "Bash",
@@ -152,7 +152,7 @@ describe("permissions", () => {
         return Promise.resolve();
       });
       const onTimeout = vi.fn();
-      const handler = createPermissionHandler(sendCard, {
+      const handler = createToolInterceptor(sendCard, {
         timeoutMs: 5000,
         onTimeout,
       });
@@ -179,7 +179,7 @@ describe("permissions", () => {
         return Promise.resolve();
       });
       const onTimeout = vi.fn();
-      const handler = createPermissionHandler(sendCard, {
+      const handler = createToolInterceptor(sendCard, {
         timeoutMs: 5000,
         onTimeout,
       });

@@ -6,9 +6,9 @@ import {
   type AskUserQuestionInput,
 } from "../src/claude/user-questions.js";
 import {
-  createPermissionHandler,
+  createToolInterceptor,
   clearPendingPermissions,
-} from "../src/claude/permissions.js";
+} from "../src/claude/tool-interceptor.js";
 
 describe("user-questions", () => {
   beforeEach(() => {
@@ -148,7 +148,7 @@ describe("user-questions", () => {
 
   it("integrates with canUseTool handler for AskUserQuestion", async () => {
     const sendCard = vi.fn().mockResolvedValue(undefined);
-    const handler = createPermissionHandler(sendCard);
+    const handler = createToolInterceptor(sendCard);
 
     const input = {
       questions: [

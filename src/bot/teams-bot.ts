@@ -17,14 +17,14 @@ import { formatResponse, splitMessage } from "../claude/formatter.js";
 import {
   resolvePermission,
   resolvePermissionWithSuggestion,
-  createPermissionHandler,
-} from "../claude/permissions.js";
+  createToolInterceptor,
+} from "../claude/tool-interceptor.js";
 import type { PermissionUpdate } from "@anthropic-ai/claude-agent-sdk";
 import {
   buildElicitationFormCard,
   buildElicitationUrlCard,
   buildHandoffCard,
-  buildPermissionCard,
+  buildToolCard,
 } from "./cards.js";
 import { resolveAskUserQuestion } from "../claude/user-questions.js";
 import {
@@ -257,9 +257,16 @@ export class ClaudeCodeBot extends ActivityHandler {
       if (value.action === "ask_user_question_submit") {
         const toolUseID = value.toolUseID as string;
         const resolved = resolveAskUserQuestion(toolUseID, value);
-        if (resolved) {
-          await ctx.sendActivity("✅ Submitted");
-        } else {
+        const cardInfo = this.permissionCards.get(toolUseID);
+        this.permissionCards.delete(toolUseID);
+        if (cardInfo) {
+          try {
+            await ctx.deleteActivity(cardInfo.activityId);
+          } catch {
+            // Card may already be deleted
+          }
+        }
+        if (!resolved) {
           await ctx.sendActivity("Question request expired or not found.");
         }
         return;
@@ -432,14 +439,14 @@ export class ClaudeCodeBot extends ActivityHandler {
       });
     };
 
-    const sendPermCard = async (req: {
+    const sendToolCard = async (req: {
       toolName: string;
       input: Record<string, unknown>;
       toolUseID: string;
       decisionReason?: string;
       suggestions?: PermissionUpdate[];
     }) => {
-      const card = buildPermissionCard(
+      const card = buildToolCard(
         req.toolName,
         req.input,
         req.toolUseID,
@@ -508,7 +515,7 @@ export class ClaudeCodeBot extends ActivityHandler {
       permissionMode: state.getPermissionMode(),
       resume: overrides?.resume ?? savedId,
       forkSession: overrides?.forkSession,
-      canUseTool: createPermissionHandler(sendPermCard, {
+      canUseTool: createToolInterceptor(sendToolCard, {
         onTimeout: async (toolUseID) => {
           const cardInfo = this.permissionCards.get(toolUseID);
           this.permissionCards.delete(toolUseID);

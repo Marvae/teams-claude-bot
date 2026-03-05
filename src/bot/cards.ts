@@ -230,7 +230,7 @@ function suggestionLabel(s: PermissionUpdate): string {
   return `Allow ${scope}`;
 }
 
-export function buildPermissionCard(
+export function buildToolCard(
   toolName: string,
   input: Record<string, unknown>,
   toolUseID: string,

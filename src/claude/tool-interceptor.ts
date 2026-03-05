@@ -16,7 +16,7 @@ export type PermissionRequest = {
 
 export type PermissionResult = SDKPermissionResult;
 
-export type PermissionHandlerOptions = {
+export type ToolInterceptorOptions = {
   timeoutMs?: number;
   onTimeout?: (toolUseID: string) => void;
 };
@@ -33,9 +33,9 @@ const pendingPermissions = new Map<string, PendingPermission>();
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 
-export function createPermissionHandler(
+export function createToolInterceptor(
   sendCard: (request: PermissionRequest) => Promise<void>,
-  options?: PermissionHandlerOptions,
+  options?: ToolInterceptorOptions,
 ) {
   const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
@@ -52,6 +52,7 @@ export function createPermissionHandler(
         toolUseID,
         sendCard,
         timeoutMs,
+        onTimeout: options?.onTimeout,
       });
     }
 

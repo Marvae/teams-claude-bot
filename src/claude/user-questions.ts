@@ -1,4 +1,4 @@
-import type { PermissionRequest, PermissionResult } from "./permissions.js";
+import type { PermissionRequest, PermissionResult } from "./tool-interceptor.js";
 
 export type UserQuestionOption = {
   label: string;
@@ -30,6 +30,7 @@ type PendingUserQuestion = {
 
 export type AskUserQuestionHandlerOptions = {
   timeoutMs?: number;
+  onTimeout?: (toolUseID: string) => void;
 };
 
 const pendingUserQuestions = new Map<string, PendingUserQuestion>();
@@ -214,6 +215,7 @@ export function registerAskUserQuestion(
   return new Promise<PermissionResult>((resolve) => {
     const timeout = setTimeout(() => {
       pendingUserQuestions.delete(toolUseID);
+      opts?.onTimeout?.(toolUseID);
       resolve({
         behavior: "deny",
         message: "AskUserQuestion request timed out",
@@ -255,6 +257,7 @@ export function handleAskUserQuestion(
     toolUseID: string;
     sendCard: (request: PermissionRequest) => Promise<void>;
     timeoutMs?: number;
+    onTimeout?: (toolUseID: string) => void;
   },
 ): Promise<PermissionResult> {
   if (!isAskUserQuestionInput(input)) {
@@ -274,6 +277,7 @@ export function handleAskUserQuestion(
 
     return registerAskUserQuestion(context.toolUseID, input, {
       timeoutMs: context.timeoutMs,
+      onTimeout: context.onTimeout,
     });
   })();
 }

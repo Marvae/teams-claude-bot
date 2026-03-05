@@ -204,7 +204,7 @@ describe("handleMessage passes permission + prompt handlers", () => {
 
           if (capturedCanUseTool) {
             const { resolvePermission } =
-              await import("../src/claude/permissions.js");
+              await import("../src/claude/tool-interceptor.js");
             const resultPromise = capturedCanUseTool(
               "Bash",
               { command: "rm -rf /tmp/test" },
