@@ -25,19 +25,19 @@ echo "SESSION_ID=${SID:-not found}"
 3. Call the handoff API:
 
 ```bash
-curl -s -X POST "${TEAMS_BOT_URL:-http://localhost:3978}/api/handoff" \
+curl -s --ipv4 -w "\nHTTP_STATUS:%{http_code}" -X POST "${TEAMS_BOT_URL:-http://localhost:3978}/api/handoff" \
   -H "Content-Type: application/json" \
   ${HANDOFF_TOKEN:+-H "x-handoff-token: $HANDOFF_TOKEN"} \
   -d "{\"sessionId\": \"$SID\", \"workDir\": \"$(pwd)\"}"
 ```
 
-4. If the response contains `"success": true`:
+4. If the response contains `"success":true` or HTTP_STATUS is 200:
 
 ```
 Handoff sent! Check Teams to continue. You can keep working here — both sides work independently.
 ```
 
-5. If the API call fails:
+5. If the API call fails or HTTP_STATUS is not 200:
 
 ```
 Handoff failed - is the Teams Bot running?
