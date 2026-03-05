@@ -122,6 +122,16 @@ function ensureFile(filePath: string, fallback = '{}\n'): void {
   fs.writeFileSync(filePath, fallback, 'utf8');
 }
 
+function readHandoffTokenFromEnv(envPath: string): string | undefined {
+  try {
+    const content = fs.readFileSync(envPath, 'utf8');
+    const match = content.match(/^HANDOFF_TOKEN=(.+)$/m);
+    return match?.[1]?.trim();
+  } catch {
+    return undefined;
+  }
+}
+
 function readJson(filePath: string): Record<string, unknown> {
   ensureFile(filePath);
 
@@ -707,11 +717,20 @@ async function installSkill(): Promise<void> {
     console.log('✓ Bot URL saved');
   } else if (env.TEAMS_BOT_URL) {
     delete env.TEAMS_BOT_URL;
-    if (Object.keys(env).length === 0) {
-      delete settings.env;
-    } else {
-      settings.env = env;
-    }
+  }
+
+  // Save HANDOFF_TOKEN to settings.json so it's available in all projects,
+  // not just when ~/.bashrc is sourced (Claude Code uses non-interactive shells).
+  const botEnvPath = path.join(projectDir, '.env');
+  const handoffToken = readHandoffTokenFromEnv(botEnvPath);
+  if (handoffToken) {
+    env.HANDOFF_TOKEN = handoffToken;
+    settings.env = env;
+    console.log('✓ Handoff token saved');
+  }
+
+  if (settings.env && Object.keys(settings.env as object).length === 0) {
+    delete settings.env;
   }
 
   writeJson(settingsFile, settings);
