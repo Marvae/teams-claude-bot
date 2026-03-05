@@ -254,7 +254,7 @@ export async function handleCommand(
           .filter(Boolean)
           .join(" · ");
 
-        const prefix = isActive ? "▶ " : `${num}. `;
+        const prefix = isActive ? "▶ " : `#${num} `;
         bodyItems.push({
           type: "TextBlock",
           text: `${prefix}**${label}**`,
