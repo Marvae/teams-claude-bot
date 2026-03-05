@@ -669,6 +669,7 @@ export class ClaudeCodeBot extends ActivityHandler {
     let timer: NodeJS.Timeout | undefined;
     let inflightUpdate: Promise<void> | undefined;
     const progressLines: string[] = [];
+    let completedText = "";
     let streamingText: string | undefined;
     let todoDisplay: string | undefined;
     let pendingUpdate = false;
@@ -682,12 +683,13 @@ export class ClaudeCodeBot extends ActivityHandler {
       if (progressLines.length > 0) {
         parts.push(progressLines.join("\n\n"));
       }
-      if (streamingText) {
+      const fullText = completedText + (streamingText ?? "");
+      if (fullText) {
         if (parts.length > 0) parts.push("---");
         const display =
-          streamingText.length > MAX_STREAMING_LEN
-            ? "…" + streamingText.slice(-MAX_STREAMING_LEN)
-            : streamingText;
+          fullText.length > MAX_STREAMING_LEN
+            ? "…" + fullText.slice(-MAX_STREAMING_LEN)
+            : fullText;
         parts.push(display);
       }
       return parts.join("\n\n");
@@ -752,17 +754,18 @@ export class ClaudeCodeBot extends ActivityHandler {
             event.originalFile,
             event.newString,
           );
-          sendFn({
-            type: "message",
-            text: diffText
-              ? `${label}\n\n\`\`\`diff\n${diffText}\n\`\`\``
-              : `📝 Edited ${label}`,
-          }).catch(() => {});
+          const diffDisplay = diffText
+            ? `<details><summary>📝 ${label}</summary>\n\n\`\`\`diff\n${diffText}\n\`\`\`\n</details>`
+            : `📝 Edited ${label}`;
+          completedText += (streamingText ?? "") + "\n\n" + diffDisplay;
+          streamingText = undefined;
+          scheduleUpdate(TEXT_THROTTLE_MS);
           return;
         }
 
         if (event.type === "tool_result") {
-          streamingText = (streamingText ?? "") + "\n\n" + event.result;
+          completedText += (streamingText ?? "") + "\n\n" + event.result;
+          streamingText = undefined;
           scheduleUpdate(TEXT_THROTTLE_MS);
           return;
         }
@@ -819,7 +822,6 @@ export class ClaudeCodeBot extends ActivityHandler {
           progressLines.shift();
         }
         progressLines.push(message);
-        streamingText = undefined;
         scheduleUpdate(TOOL_THROTTLE_MS);
       },
       finalize: async (chunks: string[]) => {
@@ -831,10 +833,26 @@ export class ClaudeCodeBot extends ActivityHandler {
           await inflightUpdate;
           inflightUpdate = undefined;
         }
+
+        // Prepend progress lines and accumulated text to the first chunk
+        const prefix: string[] = [];
+        if (progressLines.length > 0) {
+          prefix.push(progressLines.join("\n\n"));
+        }
+        if (completedText) {
+          prefix.push(completedText.trim());
+        }
+        if (prefix.length > 0) {
+          if (chunks.length > 0) {
+            chunks[0] = prefix.join("\n\n") + "\n\n---\n\n" + chunks[0];
+          } else {
+            chunks = [prefix.join("\n\n")];
+          }
+        }
+
         if (chunks.length === 0) return;
 
         if (streamingActivityId) {
-          // Update the streaming message with the first final chunk
           await updateFn(streamingActivityId, { type: "message", text: chunks[0] });
           streamingActivityId = undefined;
         } else {

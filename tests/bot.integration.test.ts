@@ -610,6 +610,133 @@ describe("progress notifier streaming via updateActivity", () => {
     expect(sendFn).toHaveBeenCalledWith({ type: "message", text: "Direct result" });
     expect(updateFn).not.toHaveBeenCalled();
   });
+
+  it("tool_result appends to streaming text without clearing previous content", async () => {
+    const bot = new ClaudeCodeBot();
+    const sent: Array<{ action: string; activity: Record<string, unknown> }> = [];
+
+    const sendFn = vi.fn(async (activity: Record<string, unknown>) => {
+      sent.push({ action: "send", activity });
+      return { id: "msg-tr" };
+    });
+    const updateFn = vi.fn(async (_id: string, activity: Record<string, unknown>) => {
+      sent.push({ action: "update", activity });
+    });
+
+    const notifier = bot.createProgressNotifier(sendFn, updateFn);
+
+    // Claude outputs text
+    notifier.onProgress({ type: "text", text: "Let me run that." });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Tool result arrives
+    notifier.onProgress({ type: "tool_result", result: "command output here" });
+    await new Promise((r) => setTimeout(r, 1100));
+
+    // New text from Claude after tool use
+    notifier.onProgress({ type: "text", text: "Done!" });
+    await new Promise((r) => setTimeout(r, 1100));
+
+    // The display should contain all three parts
+    const lastUpdate = sent.filter((s) => s.action === "update").pop();
+    const text = lastUpdate?.activity.text as string;
+    expect(text).toContain("Let me run that.");
+    expect(text).toContain("command output here");
+    expect(text).toContain("Done!");
+  });
+
+  it("file_diff is included in streaming text flow", async () => {
+    const bot = new ClaudeCodeBot();
+    const sent: Array<{ action: string; activity: Record<string, unknown> }> = [];
+
+    const sendFn = vi.fn(async (activity: Record<string, unknown>) => {
+      sent.push({ action: "send", activity });
+      return { id: "msg-fd" };
+    });
+    const updateFn = vi.fn(async (_id: string, activity: Record<string, unknown>) => {
+      sent.push({ action: "update", activity });
+    });
+
+    const notifier = bot.createProgressNotifier(sendFn, updateFn);
+
+    // Claude outputs text
+    notifier.onProgress({ type: "text", text: "Editing file." });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // File diff arrives
+    notifier.onProgress({
+      type: "file_diff",
+      filePath: "src/index.ts",
+      originalFile: "const a = 1;",
+      newString: "const a = 2;",
+    });
+    await new Promise((r) => setTimeout(r, 1100));
+
+    // Display should contain the file path
+    const lastUpdate = sent.filter((s) => s.action === "update").pop();
+    const text = lastUpdate?.activity.text as string;
+    expect(text).toContain("src/index.ts");
+    expect(text).toContain("Editing file.");
+  });
+
+  it("progress lines are preserved in finalize", async () => {
+    const bot = new ClaudeCodeBot();
+    const sent: Array<{ action: string; activity: Record<string, unknown> }> = [];
+
+    const sendFn = vi.fn(async (activity: Record<string, unknown>) => {
+      sent.push({ action: "send", activity });
+      return { id: "msg-pl" };
+    });
+    const updateFn = vi.fn(async (_id: string, activity: Record<string, unknown>) => {
+      sent.push({ action: "update", activity });
+    });
+
+    const notifier = bot.createProgressNotifier(sendFn, updateFn);
+
+    // Tool use progress
+    notifier.onProgress({ type: "tool_use", tool: { name: "Bash", args: "ls" } });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Finalize with result
+    await notifier.finalize(["All done."]);
+
+    const lastUpdate = sent.filter((s) => s.action === "update").pop();
+    const text = lastUpdate?.activity.text as string;
+    expect(text).toContain("bash");
+    expect(text).toContain("All done.");
+  });
+
+  it("completedText is prepended in finalize", async () => {
+    const bot = new ClaudeCodeBot();
+    const sent: Array<{ action: string; activity: Record<string, unknown> }> = [];
+
+    const sendFn = vi.fn(async (activity: Record<string, unknown>) => {
+      sent.push({ action: "send", activity });
+      return { id: "msg-ct" };
+    });
+    const updateFn = vi.fn(async (_id: string, activity: Record<string, unknown>) => {
+      sent.push({ action: "update", activity });
+    });
+
+    const notifier = bot.createProgressNotifier(sendFn, updateFn);
+
+    // First turn text
+    notifier.onProgress({ type: "text", text: "Checking..." });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Tool result freezes text
+    notifier.onProgress({ type: "tool_result", result: "OK" });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Finalize with final text
+    await notifier.finalize(["Summary."]);
+
+    const lastUpdate = sent.filter((s) => s.action === "update").pop();
+    const text = lastUpdate?.activity.text as string;
+    expect(text).toContain("Checking...");
+    expect(text).toContain("OK");
+    expect(text).toContain("Summary.");
+  });
 });
 
 describe("handoff flow", () => {
