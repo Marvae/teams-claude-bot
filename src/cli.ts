@@ -795,11 +795,34 @@ async function uninstallCommand(): Promise<void> {
   console.log("Uninstalled service/task. Run 'teams-bot uninstall-skill' to remove /handoff skill.");
 }
 
+async function syncHandoffToken(): Promise<void> {
+  const botEnvPath = path.join(projectDir, '.env');
+  let token: string | undefined;
+  for (let i = 0; i < 6; i++) {
+    token = readHandoffTokenFromEnv(botEnvPath);
+    if (token) break;
+    await new Promise(r => setTimeout(r, 500));
+  }
+  if (!token) {
+    console.log('⚠ Could not read HANDOFF_TOKEN from .env — run teams-bot setup if /handoff fails');
+    return;
+  }
+
+  const settingsFile = path.join(homeDir, '.claude', 'settings.json');
+  const settings = readJson(settingsFile);
+  const env = ((settings.env as Record<string, unknown> | undefined) ?? {}) as Record<string, unknown>;
+  env.HANDOFF_TOKEN = token;
+  settings.env = env;
+  writeJson(settingsFile, settings);
+  console.log('✓ Handoff token synced');
+}
+
 async function restartCommand(): Promise<void> {
   const platform = detectPlatform();
   await stopService(platform);
   await runBuild();
   await startService(platform);
+  await syncHandoffToken();
   console.log('Restarted.');
 }
 

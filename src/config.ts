@@ -2,7 +2,7 @@ import "dotenv/config";
 import { randomBytes } from "crypto";
 import { homedir } from "os";
 import { resolve } from "path";
-import { existsSync, readFileSync, appendFileSync } from "fs";
+import { existsSync, readFileSync, writeFileSync } from "fs";
 
 function required(name: string): string {
   const value = process.env[name];
@@ -49,8 +49,11 @@ export const config = {
       const envContent = existsSync(envPath)
         ? readFileSync(envPath, "utf-8")
         : "";
-      if (!envContent.includes("HANDOFF_TOKEN=")) {
-        appendFileSync(envPath, `\nHANDOFF_TOKEN=${generated}\n`);
+      if (!envContent.match(/^HANDOFF_TOKEN=.+$/m)) {
+        const updated = envContent.match(/^HANDOFF_TOKEN=.*$/m)
+          ? envContent.replace(/^HANDOFF_TOKEN=.*$/m, `HANDOFF_TOKEN=${generated}`)
+          : envContent + `\nHANDOFF_TOKEN=${generated}\n`;
+        writeFileSync(envPath, updated);
         console.log(`[SECURITY] Generated HANDOFF_TOKEN and saved to .env`);
       }
     } catch {
