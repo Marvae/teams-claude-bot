@@ -26,11 +26,14 @@ function parseAllowedUsers(raw?: string): Set<string> {
   );
 }
 
-// Auto-detected from first incoming request Host header
+// Auto-detected from first authenticated Bot Framework request
 let detectedPublicUrl: string | undefined;
 
+const HOST_PATTERN = /^[a-zA-Z0-9.-]+(:\d+)?$/;
+
+/** Only call from authenticated request handlers (e.g. after adapter.process). */
 export function setDetectedPublicUrl(host: string): void {
-  if (!detectedPublicUrl && !process.env.BOT_PUBLIC_URL) {
+  if (!detectedPublicUrl && !process.env.BOT_PUBLIC_URL && HOST_PATTERN.test(host)) {
     detectedPublicUrl = `https://${host}`;
     console.log(`[CONFIG] Auto-detected public URL: ${detectedPublicUrl}`);
   }

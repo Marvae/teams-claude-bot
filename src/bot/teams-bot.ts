@@ -739,7 +739,7 @@ export class ClaudeCodeBot extends ActivityHandler {
               type: "message",
               text: `📝 Edited ${label} (${lines} lines)`,
             }).catch(() => {});
-          })();
+          })().catch((err) => console.error(`[DIFF] Unhandled diff error: ${err}`));
           return;
         }
 

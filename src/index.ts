@@ -62,9 +62,7 @@ const bot = new ClaudeCodeBot();
 const app = express();
 
 // Security headers
-app.use((req, res, next) => {
-  const host = req.headers.host;
-  if (host) setDetectedPublicUrl(host);
+app.use((_req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("Referrer-Policy", "no-referrer");
@@ -75,7 +73,12 @@ app.use(express.json());
 
 app.post("/api/messages", async (req, res) => {
   try {
-    await adapter.process(req, res, (context) => bot.run(context));
+    await adapter.process(req, res, (context) => {
+      // Auto-detect public URL from authenticated Bot Framework request
+      const host = req.headers.host;
+      if (host) setDetectedPublicUrl(host);
+      return bot.run(context);
+    });
   } catch (err) {
     console.error(`[AUTH] ${err instanceof Error ? err.message : err}`);
     if (!res.headersSent) {
@@ -128,19 +131,20 @@ app.post("/api/handoff", rateLimit(60_000, 10), async (req, res) => {
 });
 
 // Serve diff images — Teams fetches these via URL
-app.get("/api/diffs/:filename", (req, res) => {
-  const { filename } = req.params;
+app.get("/api/diffs/:filename", rateLimit(60_000, 60), (req, res) => {
+  const filename = req.params.filename as string;
   if (!/^[a-f0-9-]+\.png$/.test(filename)) {
     res.status(400).end();
     return;
   }
-  res.sendFile(filename, { root: diffDir }, (err) => {
+  res.setHeader("Cache-Control", "private, no-store");
+  res.sendFile(filename, { root: diffDir as string }, (err) => {
     if (err && !res.headersSent) res.status(404).end();
   });
 });
 
 // Clean up expired diff images every 5 minutes
-setInterval(cleanupOldDiffs, 5 * 60 * 1000);
+setInterval(cleanupOldDiffs, 5 * 60 * 1000).unref();
 
 app.listen(config.port, () => {
   console.log(`Bot running on http://localhost:${config.port}/api/messages`);
