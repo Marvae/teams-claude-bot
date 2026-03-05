@@ -1,4 +1,4 @@
-import { config } from "./config.js";
+import { config, setDetectedPublicUrl } from "./config.js";
 import { BotFrameworkAdapter, TurnContext } from "botbuilder";
 import express, {
   type Request,
@@ -9,6 +9,7 @@ import { ClaudeCodeBot } from "./bot/teams-bot.js";
 import { buildHandoffCard } from "./bot/cards.js";
 import { loadConversationRefs, getConversationRef } from "./handoff/store.js";
 import { loadPersistedState } from "./session/state.js";
+import { diffDir, cleanupOldDiffs } from "./bot/diff-renderer.js";
 
 // Simple in-memory rate limiter (no external dependencies)
 function rateLimit(windowMs: number, maxRequests: number) {
@@ -61,7 +62,9 @@ const bot = new ClaudeCodeBot();
 const app = express();
 
 // Security headers
-app.use((_req, res, next) => {
+app.use((req, res, next) => {
+  const host = req.headers.host;
+  if (host) setDetectedPublicUrl(host);
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("Referrer-Policy", "no-referrer");
@@ -123,6 +126,21 @@ app.post("/api/handoff", rateLimit(60_000, 10), async (req, res) => {
     });
   }
 });
+
+// Serve diff images — Teams fetches these via URL
+app.get("/api/diffs/:filename", (req, res) => {
+  const { filename } = req.params;
+  if (!/^[a-f0-9-]+\.png$/.test(filename)) {
+    res.status(400).end();
+    return;
+  }
+  res.sendFile(filename, { root: diffDir }, (err) => {
+    if (err && !res.headersSent) res.status(404).end();
+  });
+});
+
+// Clean up expired diff images every 5 minutes
+setInterval(cleanupOldDiffs, 5 * 60 * 1000);
 
 app.listen(config.port, () => {
   console.log(`Bot running on http://localhost:${config.port}/api/messages`);

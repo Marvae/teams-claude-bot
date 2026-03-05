@@ -34,9 +34,9 @@ import {
   resolveElicitationUrlComplete,
 } from "../claude/elicitation.js";
 import { processAttachments } from "./attachments.js";
-import { config } from "../config.js";
+import { config, getPublicUrl } from "../config.js";
 import { saveConversationRef } from "../handoff/store.js";
-import { renderDiffImage, type FileDiffInput } from "./diff-renderer.js";
+import { renderDiffImage } from "./diff-renderer.js";
 
 function friendlyError(error: string, stopReason?: string | null): string {
   if (stopReason === "refusal") {
@@ -638,7 +638,6 @@ export class ClaudeCodeBot extends ActivityHandler {
     let pendingUpdate = false;
     let promptSuggestion: string | undefined;
     let streamSequence = 1;
-    const fileDiffs: FileDiffInput[] = [];
 
     const buildDisplay = (): string => {
       const parts: string[] = [];
@@ -713,11 +712,34 @@ export class ClaudeCodeBot extends ActivityHandler {
         }
 
         if (event.type === "file_diff") {
-          fileDiffs.push({
-            filePath: event.filePath,
-            originalFile: event.originalFile,
-            newString: event.newString,
-          });
+          const publicUrl = getPublicUrl();
+          const diffEvent = event;
+          (async () => {
+            try {
+              if (publicUrl) {
+                const filename = await renderDiffImage(diffEvent);
+                await sendFn({
+                  type: "message",
+                  text: diffEvent.filePath ?? "Diff",
+                  attachments: [{
+                    contentType: "image/png",
+                    name: diffEvent.filePath ?? "diff.png",
+                    contentUrl: `${publicUrl}/api/diffs/${filename}`,
+                  }],
+                });
+                return;
+              }
+            } catch (err) {
+              console.log(`[DIFF] Image render failed, falling back to text: ${err instanceof Error ? err.message : err}`);
+            }
+            // Text fallback — no Playwright or render failed
+            const label = diffEvent.filePath ? `\`${diffEvent.filePath}\`` : "file";
+            const lines = diffEvent.newString.split("\n").length;
+            await sendFn({
+              type: "message",
+              text: `📝 Edited ${label} (${lines} lines)`,
+            }).catch(() => {});
+          })();
           return;
         }
 
@@ -801,26 +823,6 @@ export class ClaudeCodeBot extends ActivityHandler {
           await sendFn({ type: "message", text: chunks[i] });
         }
 
-        for (const fileDiff of fileDiffs) {
-          try {
-            const image = await renderDiffImage(fileDiff);
-            await sendFn({
-              type: "message",
-              text: fileDiff.filePath
-                ? `Diff preview: \`${fileDiff.filePath}\``
-                : "Diff preview",
-              attachments: [
-                {
-                  contentType: "image/png",
-                  name: "diff.png",
-                  contentUrl: `data:image/png;base64,${image}`,
-                },
-              ],
-            });
-          } catch {
-            // Playwright not installed, skip diff image
-          }
-        }
       },
       getPromptSuggestion: () => promptSuggestion,
     };

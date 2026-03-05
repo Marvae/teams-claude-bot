@@ -26,6 +26,20 @@ function parseAllowedUsers(raw?: string): Set<string> {
   );
 }
 
+// Auto-detected from first incoming request Host header
+let detectedPublicUrl: string | undefined;
+
+export function setDetectedPublicUrl(host: string): void {
+  if (!detectedPublicUrl && !process.env.BOT_PUBLIC_URL) {
+    detectedPublicUrl = `https://${host}`;
+    console.log(`[CONFIG] Auto-detected public URL: ${detectedPublicUrl}`);
+  }
+}
+
+export function getPublicUrl(): string | undefined {
+  return process.env.BOT_PUBLIC_URL ?? detectedPublicUrl;
+}
+
 export const config = {
   microsoftAppId: required("MICROSOFT_APP_ID"),
   microsoftAppPassword: required("MICROSOFT_APP_PASSWORD"),
