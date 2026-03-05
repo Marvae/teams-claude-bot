@@ -114,20 +114,15 @@ export function getWorkDir(): string {
 export function setWorkDir(
   dir: string,
 ): { ok: true } | { ok: false; error: string } {
-  const allowedRoot = realpathSync(config.claudeWorkDir);
   let resolved: string;
   try {
     resolved = realpathSync(resolve(dir));
   } catch {
-    return { ok: false, error: `Not found: \`${dir}\`` };
-  }
-
-  if (!resolved.startsWith(allowedRoot)) {
-    return { ok: false, error: `Path must be under \`${allowedRoot}\`` };
+    return { ok: false, error: `Directory not found: \`${dir}\`` };
   }
 
   if (!existsSync(resolved)) {
-    return { ok: false, error: `Not found: \`${dir}\`` };
+    return { ok: false, error: `Directory not found: \`${dir}\`` };
   }
 
   workDir = resolved;

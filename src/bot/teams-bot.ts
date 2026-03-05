@@ -605,13 +605,7 @@ export class ClaudeCodeBot extends ActivityHandler {
     sessionId?: string,
   ): Promise<void> {
     if (action === "handoff_accept") {
-      await ctx.sendActivity(
-        `🔄 📂 ${workDir}\n\n⚠️ 完成后请 /handoff 切回，否则两边会各走各的`,
-      );
-
-      state.setHandoffMode("pickup");
-      state.destroySession();
-      state.clearPersistedSessionId();
+      // Validate path before making any state changes
       if (workDir) {
         const r = state.setWorkDir(workDir);
         if (!r.ok) {
@@ -619,6 +613,14 @@ export class ClaudeCodeBot extends ActivityHandler {
           return;
         }
       }
+
+      state.setHandoffMode("pickup");
+      state.destroySession();
+      state.clearPersistedSessionId();
+
+      await ctx.sendActivity(
+        `🔄 Session handed off to Teams\n📂 \`${workDir}\`\n\nWhen you're done, use \`/handoff back\` to return control to Terminal.`,
+      );
 
       console.log(`[HANDOFF] Fork: sessionId=${sessionId}, workDir=${workDir}`);
 
