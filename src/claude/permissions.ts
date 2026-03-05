@@ -18,6 +18,7 @@ export type PermissionResult = SDKPermissionResult;
 
 export type PermissionHandlerOptions = {
   timeoutMs?: number;
+  onTimeout?: (toolUseID: string) => void;
 };
 
 type PendingPermission = {
@@ -61,6 +62,7 @@ export function createPermissionHandler(
     return new Promise<PermissionResult>((resolve) => {
       const timeout = setTimeout(() => {
         pendingPermissions.delete(toolUseID);
+        options?.onTimeout?.(toolUseID);
         resolve({
           behavior: "deny",
           message: "Permission request timed out",

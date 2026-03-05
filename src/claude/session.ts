@@ -353,10 +353,13 @@ export class ConversationSession {
           });
         }
       } else if (typeof toolUseResult === "string" && toolUseResult.trim()) {
-        this.emitProgress({
-          type: "tool_error",
-          error: toolUseResult,
-        });
+        // Don't surface permission timeout
+        if (!toolUseResult.includes("Permission request timed out")) {
+          this.emitProgress({
+            type: "tool_result",
+            result: toolUseResult,
+          });
+        }
       }
     }
 

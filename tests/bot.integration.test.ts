@@ -411,32 +411,26 @@ describe("permission card interactions", () => {
 
   it("handles permission_allow action for unknown toolUseID", async () => {
     const adapter = createAdapter();
-    await adapter
-      .send({
-        type: ActivityTypes.Message,
-        value: {
-          action: "permission_allow",
-          toolUseID: "nonexistent-123",
-        },
-      })
-      .assertReply((reply) => {
-        expect(reply.text).toContain("expired");
-      });
+    // Unknown toolUseID: no cardInfo, no reply — just silently returns
+    await adapter.send({
+      type: ActivityTypes.Message,
+      value: {
+        action: "permission_allow",
+        toolUseID: "nonexistent-123",
+      },
+    });
   });
 
   it("handles permission_deny action for unknown toolUseID", async () => {
     const adapter = createAdapter();
-    await adapter
-      .send({
-        type: ActivityTypes.Message,
-        value: {
-          action: "permission_deny",
-          toolUseID: "nonexistent-456",
-        },
-      })
-      .assertReply((reply) => {
-        expect(reply.text).toContain("expired");
-      });
+    // Unknown toolUseID: no cardInfo, no reply — just silently returns
+    await adapter.send({
+      type: ActivityTypes.Message,
+      value: {
+        action: "permission_deny",
+        toolUseID: "nonexistent-456",
+      },
+    });
   });
 });
 

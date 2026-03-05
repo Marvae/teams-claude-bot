@@ -80,6 +80,7 @@ export class ClaudeCodeBot extends ActivityHandler {
       input: Record<string, unknown>;
       decisionReason?: string;
       suggestions?: PermissionUpdate[];
+      activityId: string;
     }
   >();
 
@@ -240,19 +241,15 @@ export class ClaudeCodeBot extends ActivityHandler {
         } else {
           resolved = resolvePermission(toolUseID, allow);
         }
-        const label = allow ? "✅ Allowed" : "❌ Denied";
-
         const cardInfo = this.permissionCards.get(toolUseID);
         this.permissionCards.delete(toolUseID);
 
         if (cardInfo) {
-          await ctx.sendActivity(
-            resolved ? label : "Permission request expired or not found.",
-          );
-        } else {
-          await ctx.sendActivity(
-            resolved ? label : "Permission request expired or not found.",
-          );
+          try {
+            await ctx.deleteActivity(cardInfo.activityId);
+          } catch {
+            // Card may already be deleted by timeout handler
+          }
         }
         return;
       }
@@ -416,6 +413,14 @@ export class ClaudeCodeBot extends ActivityHandler {
       });
     };
 
+    // Proactive deleteActivity — delete a message by id
+    const deleteActivity = async (activityId: string) => {
+      if (!conversationRef || !adapter) return;
+      await adapter.continueConversation(conversationRef, async (ctx) => {
+        await ctx.deleteActivity(activityId);
+      });
+    };
+
     const sendCard = async (card: Record<string, unknown>) => {
       await sendActivity({
         attachments: [
@@ -455,6 +460,7 @@ export class ClaudeCodeBot extends ActivityHandler {
           input: req.input,
           decisionReason: req.decisionReason,
           suggestions: req.suggestions,
+          activityId: resp.id,
         });
       }
     };
@@ -502,7 +508,19 @@ export class ClaudeCodeBot extends ActivityHandler {
       permissionMode: state.getPermissionMode(),
       resume: overrides?.resume ?? savedId,
       forkSession: overrides?.forkSession,
-      canUseTool: createPermissionHandler(sendPermCard),
+      canUseTool: createPermissionHandler(sendPermCard, {
+        onTimeout: async (toolUseID) => {
+          const cardInfo = this.permissionCards.get(toolUseID);
+          this.permissionCards.delete(toolUseID);
+          if (cardInfo) {
+            try {
+              await deleteActivity(cardInfo.activityId);
+            } catch {
+              // ignore
+            }
+          }
+        },
+      }),
       onElicitation,
       onPromptRequest,
       onSessionId: (id) => {
@@ -743,11 +761,9 @@ export class ClaudeCodeBot extends ActivityHandler {
           return;
         }
 
-        if (event.type === "tool_error") {
-          progressLines.push(
-            `⚠️ Tool error: ${this.truncateProgress(event.error, 200)}`,
-          );
-          scheduleUpdate(TOOL_THROTTLE_MS);
+        if (event.type === "tool_result") {
+          streamingText = (streamingText ?? "") + "\n\n" + event.result;
+          scheduleUpdate(TEXT_THROTTLE_MS);
           return;
         }
 

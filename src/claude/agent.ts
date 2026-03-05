@@ -44,7 +44,7 @@ export type ProgressEvent =
       originalFile: string;
       newString: string;
     }
-  | { type: "tool_error"; error: string }
+  | { type: "tool_result"; result: string }
   | {
       type: "rate_limit";
       status: "allowed_warning" | "rejected";

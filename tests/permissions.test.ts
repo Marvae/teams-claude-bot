@@ -143,5 +143,60 @@ describe("permissions", () => {
       expect(result.behavior).toBe("deny");
       expect(result.message).toContain("timed out");
     });
+
+    it("calls onTimeout callback with toolUseID when permission times out", async () => {
+      let cardSent: () => void;
+      const cardSentPromise = new Promise<void>((r) => (cardSent = r));
+      const sendCard = vi.fn().mockImplementation(() => {
+        cardSent();
+        return Promise.resolve();
+      });
+      const onTimeout = vi.fn();
+      const handler = createPermissionHandler(sendCard, {
+        timeoutMs: 5000,
+        onTimeout,
+      });
+
+      const resultPromise = handler(
+        "Bash",
+        { command: "ls" },
+        { signal: new AbortController().signal, toolUseID: "tool-timeout-cb" },
+      );
+
+      await cardSentPromise;
+
+      vi.advanceTimersByTime(5000);
+
+      await resultPromise;
+      expect(onTimeout).toHaveBeenCalledWith("tool-timeout-cb");
+    });
+
+    it("does not call onTimeout when permission is resolved before timeout", async () => {
+      let cardSent: () => void;
+      const cardSentPromise = new Promise<void>((r) => (cardSent = r));
+      const sendCard = vi.fn().mockImplementation(() => {
+        cardSent();
+        return Promise.resolve();
+      });
+      const onTimeout = vi.fn();
+      const handler = createPermissionHandler(sendCard, {
+        timeoutMs: 5000,
+        onTimeout,
+      });
+
+      const resultPromise = handler(
+        "Bash",
+        { command: "ls" },
+        { signal: new AbortController().signal, toolUseID: "tool-no-timeout" },
+      );
+
+      await cardSentPromise;
+
+      resolvePermission("tool-no-timeout", true);
+      await resultPromise;
+
+      vi.advanceTimersByTime(5000);
+      expect(onTimeout).not.toHaveBeenCalled();
+    });
   });
 });
