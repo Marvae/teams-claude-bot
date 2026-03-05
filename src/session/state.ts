@@ -17,17 +17,13 @@ import {
 import { join, dirname, resolve } from "path";
 import { homedir } from "os";
 import { ConversationSession } from "../claude/session.js";
-import type { ImageInput } from "../claude/agent.js";
 import { config } from "../config.js";
 
 // ─── Types ───
 
-export type PendingMessage = { text: string; images?: ImageInput[] };
-
 export interface ManagedSession {
   session: ConversationSession;
-  setCtx: (ctx: unknown) => void;
-  pendingMessages: PendingMessage[];
+  setRef: (ctx: unknown) => void;
 }
 
 // ─── Persistence ───

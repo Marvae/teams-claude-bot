@@ -55,17 +55,8 @@ export async function handleCommand(
     case "/stop":
     case "/cancel": {
       const managed = state.getSession();
-      if (managed?.session.isBusy) {
-        const dropped = managed.pendingMessages.splice(0);
+      if (managed?.session.hasQuery) {
         await ctx.sendActivity("🛑 Stopping...");
-        if (dropped.length > 0) {
-          const list = dropped
-            .map((m, i) => `${i + 1}. ${m.text.slice(0, 80)}`)
-            .join("\n");
-          await ctx.sendActivity(
-            `Dropped ${dropped.length} pending message(s):\n${list}`,
-          );
-        }
         managed.session.interrupt().catch(() => {});
       } else {
         await ctx.sendActivity("Nothing to interrupt.");

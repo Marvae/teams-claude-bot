@@ -2,7 +2,7 @@
  * Integration test: Full Teams permission + user-input flow
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { TestAdapter, ActivityTypes, type Activity } from "botbuilder";
+import { TestAdapter, TurnContext, ActivityTypes, type Activity } from "botbuilder";
 
 // ---- Mocks ----
 
@@ -85,9 +85,32 @@ function makeActivity(text: string, extra?: Partial<Activity>): Activity {
 
 function createAdapter(): TestAdapter {
   const bot = new ClaudeCodeBot();
-  return new TestAdapter(async (context) => {
+  const adapter = new TestAdapter(async (context) => {
     await bot.run(context);
   });
+  // Patch continueConversation for proactive messaging
+  (adapter as Record<string, unknown>).continueConversation = async (
+    _ref: unknown,
+    callback: (ctx: TurnContext) => Promise<void>,
+  ) => {
+    const activity = {
+      type: "event",
+      channelId: "test",
+      conversation: { id: "conv-1" },
+      from: { id: "bot", name: "Bot" },
+      recipient: { id: "user", name: "User" },
+      serviceUrl: "https://test",
+    } as Activity;
+    const ctx = new TurnContext(adapter, activity);
+    ctx.onSendActivities(async (_ctx, activities, next) => {
+      for (const a of activities) {
+        (adapter as unknown as { activeQueue: unknown[] }).activeQueue.push(a);
+      }
+      return await next();
+    });
+    await callback(ctx);
+  };
+  return adapter;
 }
 
 function assertInformativeTyping(activity: Partial<Activity>): void {
@@ -121,7 +144,7 @@ describe("handleMessage passes permission + prompt handlers", () => {
 
     await adapter
       .send(makeActivity("Write a file"))
-      .assertReply((activity) => assertInformativeTyping(activity))
+
       .assertReply((activity) => {
         expect(activity.text).toBe("Done");
       })
@@ -140,7 +163,7 @@ describe("handleMessage passes permission + prompt handlers", () => {
 
     await adapter
       .send(makeActivity("Connect MCP"))
-      .assertReply((activity) => assertInformativeTyping(activity))
+
       .assertReply((activity) => {
         expect(activity.text).toBe("Done");
       })
@@ -159,7 +182,7 @@ describe("handleMessage passes permission + prompt handlers", () => {
 
     await adapter
       .send(makeActivity("Do stuff"))
-      .assertReply((activity) => assertInformativeTyping(activity))
+
       .assertReply((activity) => {
         expect(activity.text).toBe("Done fast");
       })
@@ -209,7 +232,7 @@ describe("handleMessage passes permission + prompt handlers", () => {
 
     await adapter
       .send(makeActivity("Delete temp files"))
-      .assertReply((activity) => assertInformativeTyping(activity))
+
       .assertReply(() => {
         // Permission card or result
       })
@@ -279,7 +302,7 @@ describe("handleMessage passes permission + prompt handlers", () => {
 
     await adapter
       .send(makeActivity("Connect MCP with form"))
-      .assertReply((activity) => assertInformativeTyping(activity))
+
       .assertReply(() => {
         // Elicitation card or result
       })

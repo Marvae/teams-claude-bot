@@ -49,13 +49,10 @@ export interface SessionConfig {
   // App-level callbacks
   onPromptRequest?: (info: PromptRequestInfo) => Promise<string>;
   onSessionId?: (sessionId: string) => void;
-}
 
-// ─── Per-turn options ───
-
-export interface TurnOptions {
+  // Event callbacks — session pushes events, bot layer handles UI
   onProgress?: (event: ProgressEvent) => void;
-  images?: ImageInput[];
+  onResult?: (result: ClaudeResult) => void | Promise<void>;
 }
 
 // ─── ConversationSession ───
@@ -64,18 +61,17 @@ export class ConversationSession {
   private activeQuery: Query | null = null;
   private inputQueue: AsyncQueue<SDKUserMessage> | null = null;
   private sessionId: string | undefined;
-  private _isBusy = false;
   private eventConsumer: Promise<void> | null = null;
-  private turnResolver: TurnResolver | null = null;
   private _lastActivity = Date.now();
   private closed = false;
   private lastPromptSuggestion: string | undefined;
 
+  // Per-turn tracking (reset on each result)
+  private turnTools: ToolInfo[] = [];
+  private turnStreamingText = "";
+
   constructor(private config: SessionConfig) {}
 
-  get isBusy(): boolean {
-    return this._isBusy;
-  }
   get hasQuery(): boolean {
     return this.activeQuery !== null;
   }
@@ -125,46 +121,29 @@ export class ConversationSession {
   }
 
   /**
-   * Send a message to the session. Blocks until the turn completes.
-   * First call starts the query; subsequent calls use streamInput.
+   * Send a message to the session (fire-and-forget).
+   * First call starts the query; subsequent calls push to the SDK's internal queue.
+   * Results are delivered via config.onResult callback.
    */
-  async send(
-    prompt: string,
-    turnOptions: TurnOptions = {},
-  ): Promise<ClaudeResult> {
+  send(prompt: string, images?: ImageInput[]): void {
     if (this.closed) {
-      return { error: "Session is closed", tools: [] };
+      this.config.onResult?.({ error: "Session is closed", tools: [] });
+      return;
     }
 
-    this._isBusy = true;
     this._lastActivity = Date.now();
-    const sendStart = Date.now();
+    this.resetTurnState();
 
-    return new Promise<ClaudeResult>((resolve) => {
-      const wrappedResolve = (result: ClaudeResult) => {
-        console.log(
-          `[SESSION] Turn completed in ${Date.now() - sendStart}ms (${this.activeQuery ? "queue push" : "new query"})`,
-        );
-        resolve(result);
-      };
-      this.turnResolver = {
-        resolve: wrappedResolve,
-        onProgress: turnOptions.onProgress,
-        tools: [],
-        streamingText: "",
-      };
-
-      if (!this.activeQuery) {
-        this.startQuery(prompt, turnOptions.images).catch((err) => {
-          this.resolveCurrentTurn({
-            error: err instanceof Error ? err.message : String(err),
-            tools: [],
-          });
+    if (!this.activeQuery) {
+      this.startQuery(prompt, images).catch((err) => {
+        this.emitResult({
+          error: err instanceof Error ? err.message : String(err),
+          tools: [],
         });
-      } else {
-        this.streamMessage(prompt, turnOptions.images);
-      }
-    });
+      });
+    } else {
+      this.streamMessage(prompt, images);
+    }
   }
 
   /** Interrupt the current execution. */
@@ -189,18 +168,25 @@ export class ConversationSession {
       }
       this.activeQuery = null;
     }
-    if (this.turnResolver) {
-      this.turnResolver.resolve({
-        error: "Session closed",
-        tools: this.turnResolver.tools,
-      });
-      this.turnResolver = null;
-    }
     this.eventConsumer = null;
-    this._isBusy = false;
   }
 
   // ─── Private ───
+
+  private resetTurnState(): void {
+    this.turnTools = [];
+    this.turnStreamingText = "";
+  }
+
+  private emitProgress(event: ProgressEvent): void {
+    this.config.onProgress?.(event);
+  }
+
+  private async emitResult(result: ClaudeResult): Promise<void> {
+    this._lastActivity = Date.now();
+    this.resetTurnState();
+    await this.config.onResult?.(result);
+  }
 
   private async startQuery(
     prompt: string,
@@ -230,9 +216,9 @@ export class ConversationSession {
     this.eventConsumer = this.consumeEvents().catch((err) => {
       console.error("[SESSION] Event consumer error:", err);
       this.closed = true;
-      this.resolveCurrentTurn({
+      this.emitResult({
         error: err instanceof Error ? err.message : String(err),
-        tools: this.turnResolver?.tools ?? [],
+        tools: [...this.turnTools],
       });
     });
   }
@@ -258,15 +244,12 @@ export class ConversationSession {
     }
 
     // Query process exited (could be interrupt or crash)
-    if (this.turnResolver) {
-      const partialText = this.turnResolver.streamingText || undefined;
-      this.resolveCurrentTurn({
-        result: partialText,
-        interrupted: true,
-        tools: this.turnResolver.tools,
-        sessionId: this.sessionId,
-      });
-    }
+    await this.emitResult({
+      result: this.turnStreamingText || undefined,
+      interrupted: true,
+      tools: [...this.turnTools],
+      sessionId: this.sessionId,
+    });
     this.activeQuery = null;
   }
 
@@ -286,7 +269,7 @@ export class ConversationSession {
       const error = msg.error as string | undefined;
       if (error) {
         console.error(`[SESSION] Auth error: ${error}`);
-        this.turnResolver?.onProgress?.({ type: "auth_error", error });
+        this.emitProgress({ type: "auth_error", error });
       }
     }
 
@@ -306,24 +289,20 @@ export class ConversationSession {
           toolName,
           msg.input as Record<string, unknown> | undefined,
         );
-        this.turnResolver?.onProgress?.({ type: "tool_use", tool: toolInfo });
+        this.emitProgress({ type: "tool_use", tool: toolInfo });
       }
     }
 
     // ── Streaming text ──
-    if (
-      msg.type === "stream_event" &&
-      msg.parent_tool_use_id === null &&
-      this.turnResolver
-    ) {
+    if (msg.type === "stream_event" && msg.parent_tool_use_id === null) {
       const evt = msg.event as Record<string, unknown> | undefined;
       if (evt?.type === "content_block_delta") {
         const delta = evt.delta as Record<string, unknown> | undefined;
         if (delta?.type === "text_delta" && typeof delta.text === "string") {
-          this.turnResolver.streamingText += delta.text;
-          this.turnResolver.onProgress?.({
+          this.turnStreamingText += delta.text;
+          this.emitProgress({
             type: "text",
-            text: this.turnResolver.streamingText,
+            text: this.turnStreamingText,
           });
         }
       }
@@ -336,7 +315,7 @@ export class ConversationSession {
         info &&
         (info.status === "allowed_warning" || info.status === "rejected")
       ) {
-        this.turnResolver?.onProgress?.({
+        this.emitProgress({
           type: "rate_limit",
           status: info.status,
           resetsAt: info.resetsAt as number | undefined,
@@ -346,7 +325,7 @@ export class ConversationSession {
 
     // ── Tool use summary ──
     if (msg.type === "tool_use_summary" && typeof msg.summary === "string") {
-      this.turnResolver?.onProgress?.({
+      this.emitProgress({
         type: "tool_summary",
         summary: msg.summary,
       });
@@ -361,7 +340,7 @@ export class ConversationSession {
           typeof payload.originalFile === "string" &&
           typeof payload.newString === "string"
         ) {
-          this.turnResolver?.onProgress?.({
+          this.emitProgress({
             type: "file_diff",
             filePath:
               typeof payload.filePath === "string"
@@ -374,7 +353,7 @@ export class ConversationSession {
           });
         }
       } else if (typeof toolUseResult === "string" && toolUseResult.trim()) {
-        this.turnResolver?.onProgress?.({
+        this.emitProgress({
           type: "tool_error",
           error: toolUseResult,
         });
@@ -393,7 +372,7 @@ export class ConversationSession {
           : ((msg.status as string) ?? "unknown");
       const summary =
         (msg.summary as string) ?? (msg.description as string) ?? "";
-      this.turnResolver?.onProgress?.({
+      this.emitProgress({
         type: "task_status",
         taskId: msg.task_id,
         status,
@@ -402,8 +381,8 @@ export class ConversationSession {
     }
 
     // ── Assistant message (collect tools, extract todos, reset streaming) ──
-    if (msg.type === "assistant" && this.turnResolver) {
-      this.turnResolver.streamingText = "";
+    if (msg.type === "assistant") {
+      this.turnStreamingText = "";
       const inner = msg.message as Record<string, unknown> | undefined;
       const content = inner?.content ?? msg.content;
       if (Array.isArray(content)) {
@@ -426,7 +405,7 @@ export class ConversationSession {
                 | Array<Record<string, unknown>>
                 | undefined;
               if (Array.isArray(todos)) {
-                this.turnResolver.onProgress?.({
+                this.emitProgress({
                   type: "todo",
                   todos: todos.map((t) => ({
                     content:
@@ -439,7 +418,7 @@ export class ConversationSession {
                 });
               }
             }
-            this.turnResolver.tools.push(
+            this.turnTools.push(
               extractToolInfo(
                 (b.name as string) ?? "unknown",
                 b.input as Record<string, unknown> | undefined,
@@ -457,7 +436,7 @@ export class ConversationSession {
 
     // ── Result ──
     if (msg.type === "result") {
-      this.turnResolver?.onProgress?.({
+      this.emitProgress({
         type: "done",
         promptSuggestion: this.lastPromptSuggestion,
       });
@@ -471,14 +450,12 @@ export class ConversationSession {
         (msg as Record<string, unknown>).is_interrupt === true
       ) {
         const partialText =
-          (msg.result as string) ||
-          this.turnResolver?.streamingText ||
-          undefined;
-        this.resolveCurrentTurn({
+          (msg.result as string) || this.turnStreamingText || undefined;
+        await this.emitResult({
           sessionId: this.sessionId,
           result: partialText,
           interrupted: true,
-          tools: this.turnResolver?.tools ?? [],
+          tools: [...this.turnTools],
           stopReason,
         });
         return;
@@ -496,10 +473,10 @@ export class ConversationSession {
           errors && errors.length > 0
             ? errors.join("; ")
             : `Error: ${msg.subtype ?? "unknown"}`;
-        this.resolveCurrentTurn({
+        await this.emitResult({
           error: errorMsg,
           sessionId: this.sessionId,
-          tools: this.turnResolver?.tools ?? [],
+          tools: [...this.turnTools],
           stopReason,
         });
         return;
@@ -508,10 +485,10 @@ export class ConversationSession {
       const usage = msg.usage as
         | { input_tokens: number; output_tokens: number }
         | undefined;
-      this.resolveCurrentTurn({
+      await this.emitResult({
         sessionId: this.sessionId,
         result: (msg.result as string) ?? "",
-        tools: this.turnResolver?.tools ?? [],
+        tools: [...this.turnTools],
         stopReason,
         costUsd: (msg.total_cost_usd as number) ?? undefined,
         durationMs: (msg.duration_ms as number) ?? undefined,
@@ -526,10 +503,10 @@ export class ConversationSession {
 
     // ── Legacy result (no type field) ──
     if (!("type" in msg) && "result" in msg) {
-      this.resolveCurrentTurn({
+      await this.emitResult({
         sessionId: this.sessionId,
         result: msg.result as string,
-        tools: this.turnResolver?.tools ?? [],
+        tools: [...this.turnTools],
       });
     }
   }
@@ -557,16 +534,6 @@ export class ConversationSession {
         prompt_response: req.prompt,
         selected,
       } as unknown as SDKUserMessage);
-    }
-  }
-
-  private resolveCurrentTurn(result: ClaudeResult): void {
-    this._isBusy = false;
-    this._lastActivity = Date.now();
-    if (this.turnResolver) {
-      const resolver = this.turnResolver;
-      this.turnResolver = null;
-      resolver.resolve(result);
     }
   }
 
@@ -621,13 +588,6 @@ export class ConversationSession {
 }
 
 // ─── Helpers ───
-
-interface TurnResolver {
-  resolve: (result: ClaudeResult) => void;
-  onProgress?: (event: ProgressEvent) => void;
-  tools: ToolInfo[];
-  streamingText: string;
-}
 
 async function preparePrompt(
   prompt: string,

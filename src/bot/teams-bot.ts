@@ -7,7 +7,11 @@ import { ActivityHandler, BotFrameworkAdapter, TurnContext } from "botbuilder";
 import { stripMention } from "./mention.js";
 import { handleCommand } from "./commands.js";
 import * as state from "../session/state.js";
-import { type ImageInput, type ProgressEvent } from "../claude/agent.js";
+import {
+  type ClaudeResult,
+  type ImageInput,
+  type ProgressEvent,
+} from "../claude/agent.js";
 import { ConversationSession, type SessionConfig } from "../claude/session.js";
 import { formatResponse, splitMessage } from "../claude/formatter.js";
 import {
@@ -358,117 +362,18 @@ export class ClaudeCodeBot extends ActivityHandler {
       state.setSession(managed);
     }
 
-    if (managed.session.isBusy) {
-      managed.pendingMessages.push({
-        text: text || "What is in this image?",
-        images,
-      });
-      console.log(
-        `[BOT] Message queued (${managed.pendingMessages.length} pending)`,
-      );
-      await ctx.sendActivity(
-        `⏳ Queued (${managed.pendingMessages.length}) — will process after the current task. Send \`/stop\` to cancel.`,
-      );
-      return;
-    }
+    // Save conversation ref for proactive messaging (survives after handler returns)
+    managed.setRef(ctx);
 
-    // Update ctx reference for this turn
-    managed.setCtx(ctx);
-
-    // Process current message, then drain any queued messages
-    await this.processUserMessage(
-      managed,
-      ctx,
-      text || "What is in this image?",
-      images,
-    );
-
-    // Drain pending messages that arrived while we were busy
-    while (managed.pendingMessages.length > 0) {
-      const next = managed.pendingMessages.shift()!;
-      console.log("[BOT] Processing queued message");
-      await this.processUserMessage(managed, ctx, next.text, next.images);
-    }
-  }
-
-  private async processUserMessage(
-    managed: state.ManagedSession,
-    ctx: TurnContext,
-    text: string,
-    images?: ImageInput[],
-    retried = false,
-  ): Promise<void> {
     // Run init prompt on new sessions (first send starts the query)
     if (!managed.session.hasQuery && config.sessionInitPrompt) {
       console.log("[BOT] Running session init prompt...");
-      const initResult = await managed.session.send(config.sessionInitPrompt);
-      if (initResult.error) {
-        console.warn(`[BOT] Session init error: ${initResult.error}`);
-      }
+      managed.session.send(config.sessionInitPrompt);
     }
 
-    await this.sendInformativeTyping(ctx);
-    const progress = this.createProgressNotifier(ctx);
-
-    try {
-      console.log("[BOT] Sending message to session...");
-      const result = await managed.session.send(text, {
-        onProgress: progress.onProgress,
-        images,
-      });
-
-      state.addUsage(result.costUsd, result.usage);
-
-      if (result.error) {
-        console.error(`[BOT] Error from session: ${result.error}`);
-        // If the underlying process crashed, destroy and retry with a
-        // fresh session so the user doesn't see the error.
-        if (managed.session.isClosed && !retried) {
-          console.log(
-            "[BOT] Session closed/crashed, retrying with fresh session",
-          );
-          state.destroySession();
-          state.clearPersistedSessionId();
-          const fresh = this.createManagedSession();
-          state.setSession(fresh);
-          fresh.setCtx(ctx);
-          await ctx.sendActivity(
-            "⚠️ Previous session could not be resumed. Starting a new session.",
-          );
-          return this.processUserMessage(fresh, ctx, text, images, true);
-        }
-        await progress.finalize([
-          friendlyError(result.error, result.stopReason),
-        ]);
-        return;
-      }
-
-      if (result.interrupted) {
-        console.log("[BOT] Turn was interrupted");
-        const parts: string[] = ["🛑 Interrupted."];
-        if (result.result) {
-          parts.push(result.result);
-        }
-        await progress.finalize(splitMessage(parts.join("\n\n")));
-        return;
-      }
-
-      console.log("[BOT] Formatting and sending response");
-      await progress.finalize(splitMessage(formatResponse(result)));
-
-      // Send prompt suggestion as quick-reply button
-      const suggestion = progress.getPromptSuggestion();
-      if (suggestion) {
-        await this.sendSuggestedAction(ctx, suggestion);
-      }
-
-      console.log("[BOT] Response sent successfully");
-    } catch (err) {
-      console.error("[BOT] Error in handleMessage:", err);
-      state.destroySession();
-      const msg = err instanceof Error ? err.message : String(err);
-      await progress.finalize([friendlyError(msg)]);
-    }
+    // Fire and forget — replies sent via continueConversation in onResult
+    console.log("[BOT] Sending message to session...");
+    managed.session.send(text || "What is in this image?", images);
   }
 
   /** Create a ManagedSession with all callbacks wired up. */
@@ -477,18 +382,23 @@ export class ClaudeCodeBot extends ActivityHandler {
     forkSession?: boolean;
     cwd?: string;
   }): state.ManagedSession {
-    let currentCtx: TurnContext;
+    let conversationRef: Partial<import("botbuilder").ConversationReference> | null =
+      null;
+    let adapter: BotFrameworkAdapter | null = null;
 
+    // Proactive sendActivity — works after handleMessage returns
     const sendActivity = async (
-      activity: Partial<{
-        attachments: unknown[];
-        type: string;
-        text: string;
-      }>,
+      activity: Record<string, unknown>,
     ) => {
-      return currentCtx?.sendActivity(
-        activity as Parameters<TurnContext["sendActivity"]>[0],
-      );
+      if (!conversationRef || !adapter) return undefined;
+      let result: { id?: string } | undefined;
+      await adapter.continueConversation(conversationRef, async (ctx) => {
+        const resp = await ctx.sendActivity(
+          activity as Parameters<TurnContext["sendActivity"]>[0],
+        );
+        result = resp ? { id: resp.id } : undefined;
+      });
+      return result;
     };
 
     const sendCard = async (card: Record<string, unknown>) => {
@@ -565,6 +475,11 @@ export class ClaudeCodeBot extends ActivityHandler {
     const cwd = overrides?.cwd ?? state.getWorkDir();
     const savedId = state.loadPersistedSessionId();
 
+    // Auto-managed progress — created on first event, destroyed on result
+    let currentProgress: ReturnType<
+      typeof ClaudeCodeBot.prototype.createProgressNotifier
+    > | null = null;
+
     const sessionConfig: SessionConfig = {
       cwd,
       model: state.getModel(),
@@ -590,16 +505,74 @@ export class ClaudeCodeBot extends ActivityHandler {
           }
         }, 1000);
       },
+      onProgress: (event: ProgressEvent) => {
+        if (!currentProgress) {
+          currentProgress = this.createProgressNotifier(sendActivity);
+        }
+        currentProgress.onProgress(event);
+      },
+      onResult: async (result: ClaudeResult) => {
+        if (!currentProgress) {
+          currentProgress = this.createProgressNotifier(sendActivity);
+        }
+        const progress = currentProgress;
+        currentProgress = null;
+
+        state.addUsage(result.costUsd, result.usage);
+
+        if (result.error) {
+          console.error(`[BOT] Error from session: ${result.error}`);
+          await progress.finalize([
+            friendlyError(result.error, result.stopReason),
+          ]);
+          return;
+        }
+
+        if (result.interrupted) {
+          console.log("[BOT] Turn was interrupted");
+          const parts: string[] = ["🛑 Interrupted."];
+          if (result.result) {
+            parts.push(result.result);
+          }
+          await progress.finalize(splitMessage(parts.join("\n\n")));
+          return;
+        }
+
+        console.log("[BOT] Formatting and sending response");
+        await progress.finalize(splitMessage(formatResponse(result)));
+
+        // Send prompt suggestion as quick-reply button
+        const suggestion = progress.getPromptSuggestion();
+        if (suggestion) {
+          try {
+            await sendActivity({
+              type: "message",
+              text: "",
+              suggestedActions: {
+                to: [],
+                actions: [
+                  { type: "imBack", title: suggestion, value: suggestion },
+                ],
+              },
+            });
+          } catch {
+            // suggestedActions not supported — skip
+          }
+        }
+
+        console.log("[BOT] Response sent successfully");
+      },
     };
 
     const session = new ConversationSession(sessionConfig);
 
     return {
       session,
-      setCtx: (ctx: unknown) => {
-        currentCtx = ctx as TurnContext;
+      setRef: (ctx: unknown) => {
+        const tc = ctx as TurnContext;
+        conversationRef = TurnContext.getConversationReference(tc.activity);
+        adapter = tc.adapter as BotFrameworkAdapter;
       },
-      pendingMessages: [],
     };
   }
 
@@ -636,59 +609,18 @@ export class ClaudeCodeBot extends ActivityHandler {
         cwd: state.getWorkDir(),
       });
       state.setSession(managed);
-      managed.setCtx(ctx);
+      managed.setRef(ctx);
 
       const prompt = sessionId
         ? `The user handed off from Terminal to Teams (project: ${workDir ?? "unknown"}). You have the full terminal conversation history. Welcome them briefly, summarize what was being worked on, and ask what they need help with. Reply in the same language as the conversation above.`
         : `The user started a new session from Teams (project: ${workDir ?? "unknown"}). Welcome them briefly and ask what they need help with.`;
 
-      await this.sendInformativeTyping(ctx);
-      const progress = this.createProgressNotifier(ctx);
-
-      try {
-        const result = await managed.session.send(prompt);
-
-        if (result.error) {
-          await progress.finalize([
-            friendlyError(result.error, result.stopReason),
-          ]);
-          return;
-        }
-
-        await progress.finalize(splitMessage(formatResponse(result)));
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        await progress.finalize([friendlyError(msg)]);
-      }
+      // Fire and forget — reply sent via onResult callback
+      managed.session.send(prompt);
     }
   }
 
-  private async sendInformativeTyping(ctx: TurnContext): Promise<void> {
-    await ctx.sendActivity({
-      type: "typing",
-      channelData: { streamType: "informative" },
-    });
-  }
-
-  private async sendSuggestedAction(
-    ctx: TurnContext,
-    suggestion: string,
-  ): Promise<void> {
-    try {
-      await ctx.sendActivity({
-        type: "message",
-        text: "",
-        suggestedActions: {
-          to: [],
-          actions: [{ type: "imBack", title: suggestion, value: suggestion }],
-        },
-      });
-    } catch {
-      // suggestedActions not supported in this context — silently skip
-    }
-  }
-
-  createProgressNotifier(ctx: TurnContext): {
+  createProgressNotifier(sendFn: (activity: Record<string, unknown>) => Promise<{ id?: string } | undefined>): {
     onProgress: (event: ProgressEvent) => void;
     finalize: (chunks: string[]) => Promise<void>;
     getPromptSuggestion: () => string | undefined;
@@ -734,7 +666,7 @@ export class ClaudeCodeBot extends ActivityHandler {
       const text = buildDisplay();
       if (!text) return;
       try {
-        await ctx.sendActivity({
+        await sendFn({
           type: "typing",
           text,
           channelData: {
@@ -863,16 +795,16 @@ export class ClaudeCodeBot extends ActivityHandler {
         }
         if (chunks.length === 0) return;
 
-        await ctx.sendActivity({ type: "message", text: chunks[0] });
+        await sendFn({ type: "message", text: chunks[0] });
 
         for (let i = 1; i < chunks.length; i++) {
-          await ctx.sendActivity({ type: "message", text: chunks[i] });
+          await sendFn({ type: "message", text: chunks[i] });
         }
 
         for (const fileDiff of fileDiffs) {
           try {
             const image = await renderDiffImage(fileDiff);
-            await ctx.sendActivity({
+            await sendFn({
               type: "message",
               text: fileDiff.filePath
                 ? `Diff preview: \`${fileDiff.filePath}\``
