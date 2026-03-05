@@ -737,6 +737,114 @@ describe("progress notifier streaming via updateActivity", () => {
     expect(text).toContain("OK");
     expect(text).toContain("Summary.");
   });
+
+  it("todo update freezes streaming text and preserves it", async () => {
+    const bot = new ClaudeCodeBot();
+    const sent: Array<{ action: string; activity: Record<string, unknown> }> = [];
+
+    const sendFn = vi.fn(async (activity: Record<string, unknown>) => {
+      sent.push({ action: "send", activity });
+      return { id: "msg-todo" };
+    });
+    const updateFn = vi.fn(async (_id: string, activity: Record<string, unknown>) => {
+      sent.push({ action: "update", activity });
+    });
+
+    const notifier = bot.createProgressNotifier(sendFn, updateFn);
+
+    // Claude outputs text
+    notifier.onProgress({ type: "text", text: "Working on task 1." });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Todo update arrives — should freeze streaming text
+    notifier.onProgress({
+      type: "todo",
+      todos: [
+        { content: "Task 1", status: "completed" },
+        { content: "Task 2", status: "in_progress" },
+      ],
+    });
+    await new Promise((r) => setTimeout(r, 2100));
+
+    // New text from Claude
+    notifier.onProgress({ type: "text", text: "Working on task 2." });
+    await new Promise((r) => setTimeout(r, 1100));
+
+    // Display should contain both texts and todo
+    const lastUpdate = sent.filter((s) => s.action === "update").pop();
+    const text = lastUpdate?.activity.text as string;
+    expect(text).toContain("Working on task 1.");
+    expect(text).toContain("Working on task 2.");
+    expect(text).toContain("Task 1");
+    expect(text).toContain("Task 2");
+  });
+
+  it("todo display is preserved in finalize", async () => {
+    const bot = new ClaudeCodeBot();
+    const sent: Array<{ action: string; activity: Record<string, unknown> }> = [];
+
+    const sendFn = vi.fn(async (activity: Record<string, unknown>) => {
+      sent.push({ action: "send", activity });
+      return { id: "msg-todo-fin" };
+    });
+    const updateFn = vi.fn(async (_id: string, activity: Record<string, unknown>) => {
+      sent.push({ action: "update", activity });
+    });
+
+    const notifier = bot.createProgressNotifier(sendFn, updateFn);
+
+    // Todo event
+    notifier.onProgress({
+      type: "todo",
+      todos: [
+        { content: "Step 1", status: "completed" },
+        { content: "Step 2", status: "completed" },
+      ],
+    });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Finalize
+    await notifier.finalize(["All tasks done."]);
+
+    const lastUpdate = sent.filter((s) => s.action === "update").pop();
+    const text = lastUpdate?.activity.text as string;
+    expect(text).toContain("Step 1");
+    expect(text).toContain("Step 2");
+    expect(text).toContain("All tasks done.");
+  });
+
+  it("tool_use progress appears in streaming text flow", async () => {
+    const bot = new ClaudeCodeBot();
+    const sent: Array<{ action: string; activity: Record<string, unknown> }> = [];
+
+    const sendFn = vi.fn(async (activity: Record<string, unknown>) => {
+      sent.push({ action: "send", activity });
+      return { id: "msg-tu" };
+    });
+    const updateFn = vi.fn(async (_id: string, activity: Record<string, unknown>) => {
+      sent.push({ action: "update", activity });
+    });
+
+    const notifier = bot.createProgressNotifier(sendFn, updateFn);
+
+    // Claude outputs text
+    notifier.onProgress({ type: "text", text: "Let me check." });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Tool use event
+    notifier.onProgress({ type: "tool_use", tool: { name: "Read", file: "src/app.ts" } });
+    await new Promise((r) => setTimeout(r, 2100));
+
+    // New text from Claude
+    notifier.onProgress({ type: "text", text: "Found the issue." });
+    await new Promise((r) => setTimeout(r, 1100));
+
+    const lastUpdate = sent.filter((s) => s.action === "update").pop();
+    const text = lastUpdate?.activity.text as string;
+    expect(text).toContain("Let me check.");
+    expect(text).toContain("src/app.ts");
+    expect(text).toContain("Found the issue.");
+  });
 });
 
 describe("handoff flow", () => {

@@ -668,14 +668,12 @@ export class ClaudeCodeBot extends ActivityHandler {
     finalize: (chunks: string[]) => Promise<void>;
     getPromptSuggestion: () => string | undefined;
   } {
-    const MAX_LINES = 10;
     const TOOL_THROTTLE_MS = 2000;
     const TEXT_THROTTLE_MS = 1000;
     const MAX_STREAMING_LEN = 4000;
     let lastSentAt = 0;
     let timer: NodeJS.Timeout | undefined;
     let inflightUpdate: Promise<void> | undefined;
-    const progressLines: string[] = [];
     let completedText = "";
     let streamingText: string | undefined;
     let todoDisplay: string | undefined;
@@ -686,9 +684,6 @@ export class ClaudeCodeBot extends ActivityHandler {
       const parts: string[] = [];
       if (todoDisplay) {
         parts.push(todoDisplay);
-      }
-      if (progressLines.length > 0) {
-        parts.push(progressLines.join("\n\n"));
       }
       const fullText = completedText + (streamingText ?? "");
       if (fullText) {
@@ -778,9 +773,8 @@ export class ClaudeCodeBot extends ActivityHandler {
         }
 
         if (event.type === "auth_error") {
-          progressLines.push(
-            `🔑 Login expired — run \`claude login\` in terminal`,
-          );
+          completedText += (streamingText ?? "") + "\n\n🔑 Login expired — run `claude login` in terminal";
+          streamingText = undefined;
           scheduleUpdate(TOOL_THROTTLE_MS);
           return;
         }
@@ -802,7 +796,9 @@ export class ClaudeCodeBot extends ActivityHandler {
                 : t.content;
             return `${icon} ${text}`;
           });
-          todoDisplay = `📋 ${completed}/${event.todos.length}\n\n${lines.join("\n\n")}`;
+          completedText += (streamingText ?? "") + "\n\n";
+          streamingText = undefined;
+          todoDisplay =`📋 ${completed}/${event.todos.length}\n\n${lines.join("\n\n")}`;
           scheduleUpdate(TOOL_THROTTLE_MS);
           return;
         }
@@ -812,7 +808,8 @@ export class ClaudeCodeBot extends ActivityHandler {
             event.status === "rejected"
               ? `⚠️ Rate limited.${event.resetsAt ? ` Resets at ${new Date(event.resetsAt).toLocaleTimeString()}.` : ""}`
               : `⚠️ Approaching rate limit.${event.resetsAt ? ` Resets at ${new Date(event.resetsAt).toLocaleTimeString()}.` : ""}`;
-          progressLines.push(msg);
+          completedText += (streamingText ?? "") + "\n\n" + msg;
+          streamingText = undefined;
           scheduleUpdate(TOOL_THROTTLE_MS);
           return;
         }
@@ -825,10 +822,8 @@ export class ClaudeCodeBot extends ActivityHandler {
 
         const message = this.formatProgressMessage(event);
         if (!message) return;
-        if (progressLines.length >= MAX_LINES) {
-          progressLines.shift();
-        }
-        progressLines.push(message);
+        completedText += (streamingText ?? "") + "\n\n" + message;
+        streamingText = undefined;
         scheduleUpdate(TOOL_THROTTLE_MS);
       },
       finalize: async (chunks: string[]) => {
@@ -841,19 +836,20 @@ export class ClaudeCodeBot extends ActivityHandler {
           inflightUpdate = undefined;
         }
 
-        // Prepend progress lines and accumulated text to the first chunk
+        // Prepend todo and accumulated text to the first chunk
         const prefix: string[] = [];
-        if (progressLines.length > 0) {
-          prefix.push(progressLines.join("\n\n"));
+        if (todoDisplay) {
+          prefix.push(todoDisplay);
         }
-        if (completedText) {
+        if (completedText.trim()) {
           prefix.push(completedText.trim());
         }
         if (prefix.length > 0) {
+          const pre = prefix.join("\n\n---\n\n");
           if (chunks.length > 0) {
-            chunks[0] = prefix.join("\n\n") + "\n\n---\n\n" + chunks[0];
+            chunks[0] = pre + "\n\n---\n\n" + chunks[0];
           } else {
-            chunks = [prefix.join("\n\n")];
+            chunks = [pre];
           }
         }
 
