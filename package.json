@@ -2,6 +2,11 @@
   "name": "claude-code-teams-bot",
   "version": "0.1.0",
   "description": "Microsoft Teams bot that bridges to Claude Code",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Marvae/teams-claude-bot.git"
+  },
   "type": "module",
   "main": "dist/index.js",
   "bin": {

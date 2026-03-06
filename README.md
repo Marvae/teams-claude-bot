@@ -28,24 +28,15 @@ Teams (any device)
 
 ## Quick Start
 
-```bash
-npm install -g teams-claude-bot
-teams-bot setup            # Interactive config
-teams-bot install           # Install as background service
-teams-bot install-skill     # Enable /handoff in Claude Code
-```
-
 > **Prerequisites:** Node.js 22+, Claude Code CLI, [Azure Bot registration](docs/azure-bot-setup.md)
 
-## From Source
-
 ```bash
-git clone <repo-url> && cd teams-claude-bot && npm install
-teams-bot setup            # Or: cp .env.example .env
-npm run dev                # Hot reload + tunnel
+git clone https://github.com/Marvae/teams-claude-bot.git
+cd teams-claude-bot
+npm install && npm run build
+teams-bot setup            # Interactive config (generates manifest zip)
+teams-bot install           # Install as background service
 ```
-
-Then upload `manifest/` to Teams and set the messaging endpoint in Azure Bot to `<tunnel-url>/api/messages`.
 
 ## Commands
 
