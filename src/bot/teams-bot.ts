@@ -36,7 +36,6 @@ import {
 import { processAttachments } from "./attachments.js";
 import { config } from "../config.js";
 import { saveConversationRef } from "../handoff/store.js";
-import { formatTextDiff } from "./text-diff.js";
 
 function friendlyError(error: string, stopReason?: string | null): string {
   if (stopReason === "refusal") {
@@ -232,14 +231,13 @@ export class ClaudeCodeBot extends ActivityHandler {
       ) {
         const toolUseID = value.toolUseID as string;
         const allow = value.action !== "permission_deny";
-        let resolved: boolean;
         if (value.action === "permission_allow_session") {
-          resolved = resolvePermissionWithSuggestion(
+          resolvePermissionWithSuggestion(
             toolUseID,
             value.suggestionIndex as number,
           );
         } else {
-          resolved = resolvePermission(toolUseID, allow);
+          resolvePermission(toolUseID, allow);
         }
         const cardInfo = this.permissionCards.get(toolUseID);
         this.permissionCards.delete(toolUseID);
@@ -750,12 +748,8 @@ export class ClaudeCodeBot extends ActivityHandler {
 
         if (event.type === "file_diff") {
           const label = event.filePath ? `\`${event.filePath}\`` : "file";
-          const diffText = formatTextDiff(
-            event.originalFile,
-            event.newString,
-          );
-          const diffDisplay = diffText
-            ? `<details><summary>📝 ${label}</summary>\n\n\`\`\`diff\n${diffText}\n\`\`\`\n</details>`
+          const diffDisplay = event.patch
+            ? `📝 ${label}\n\n\`\`\`diff\n${event.patch}\n\`\`\``
             : `📝 Edited ${label}`;
           completedText += (streamingText ?? "") + "\n\n" + diffDisplay;
           streamingText = undefined;

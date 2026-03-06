@@ -336,20 +336,27 @@ export class ConversationSession {
       const toolUseResult = msg.tool_use_result;
       if (toolUseResult && typeof toolUseResult === "object") {
         const payload = toolUseResult as Record<string, unknown>;
+        // FileEditOutput or FileWriteOutput — extract gitDiff.patch or structuredPatch
         if (
-          typeof payload.originalFile === "string" &&
-          typeof payload.newString === "string"
+          typeof payload.filePath === "string" &&
+          (payload.gitDiff || payload.structuredPatch)
         ) {
+          const gitDiff = payload.gitDiff as
+            | { patch?: string }
+            | undefined;
+          let patch = gitDiff?.patch;
+          if (!patch && Array.isArray(payload.structuredPatch)) {
+            // Build patch from structuredPatch hunks
+            const hunks = payload.structuredPatch as Array<{
+              lines: string[];
+            }>;
+            const lines = hunks.flatMap((h) => h.lines);
+            if (lines.length > 0) patch = lines.join("\n");
+          }
           this.emitProgress({
             type: "file_diff",
-            filePath:
-              typeof payload.filePath === "string"
-                ? payload.filePath
-                : typeof payload.file_path === "string"
-                  ? payload.file_path
-                  : undefined,
-            originalFile: payload.originalFile,
-            newString: payload.newString,
+            filePath: payload.filePath as string,
+            patch,
           });
         }
       } else if (typeof toolUseResult === "string" && toolUseResult.trim()) {

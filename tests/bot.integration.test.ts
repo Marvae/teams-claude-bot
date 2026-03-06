@@ -667,8 +667,7 @@ describe("progress notifier streaming via updateActivity", () => {
     notifier.onProgress({
       type: "file_diff",
       filePath: "src/index.ts",
-      originalFile: "const a = 1;",
-      newString: "const a = 2;",
+      patch: "@@ -1 +1 @@\n-const a = 1;\n+const a = 2;",
     });
     await new Promise((r) => setTimeout(r, 1100));
 

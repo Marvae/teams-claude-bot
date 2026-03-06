@@ -41,8 +41,7 @@ export type ProgressEvent =
   | {
       type: "file_diff";
       filePath?: string;
-      originalFile: string;
-      newString: string;
+      patch?: string;
     }
   | { type: "tool_result"; result: string }
   | {
