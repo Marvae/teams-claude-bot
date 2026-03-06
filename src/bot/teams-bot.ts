@@ -386,6 +386,12 @@ export class ClaudeCodeBot extends ActivityHandler {
       managed.session.send(config.sessionInitPrompt);
     }
 
+    // Show typing indicator immediately so the user knows the bot is working
+    await ctx.sendActivity({
+      type: "typing",
+      channelData: { streamType: "informative" },
+    });
+
     // Fire and forget — replies sent via continueConversation in onResult
     console.log("[BOT] Sending message to session...");
     managed.session.send(text || "What is in this image?", images);

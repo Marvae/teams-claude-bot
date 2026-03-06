@@ -141,7 +141,9 @@ describe("handleMessage passes permission + prompt handlers", () => {
 
     await adapter
       .send(makeActivity("Write a file"))
-
+      .assertReply((activity) => {
+        expect(activity.type).toBe(ActivityTypes.Typing);
+      })
       .assertReply((activity) => {
         expect(activity.text).toBe("Done");
       })
@@ -160,7 +162,9 @@ describe("handleMessage passes permission + prompt handlers", () => {
 
     await adapter
       .send(makeActivity("Connect MCP"))
-
+      .assertReply((activity) => {
+        expect(activity.type).toBe(ActivityTypes.Typing);
+      })
       .assertReply((activity) => {
         expect(activity.text).toBe("Done");
       })
@@ -179,7 +183,9 @@ describe("handleMessage passes permission + prompt handlers", () => {
 
     await adapter
       .send(makeActivity("Do stuff"))
-
+      .assertReply((activity) => {
+        expect(activity.type).toBe(ActivityTypes.Typing);
+      })
       .assertReply((activity) => {
         expect(activity.text).toBe("Done fast");
       })
