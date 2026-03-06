@@ -1027,11 +1027,13 @@ async function setupCommand(): Promise<void> {
   generateHandoffToken();
   await packageManifest(appId);
 
+  console.log("");
+  await maybeInstallSkillPrompt();
+
   console.log("\nNext steps:");
   console.log("  1. Upload teams-claude-bot.zip to Teams Admin Center");
   console.log("     (or import manifest/manifest.json in Teams Developer Portal)");
   console.log("  2. teams-bot install        Install as background service");
-  console.log("  3. teams-bot install-skill  Enable /handoff in Claude Code");
 }
 
 async function installCommand(): Promise<void> {
@@ -1049,9 +1051,6 @@ async function installCommand(): Promise<void> {
       "This is a one-time setup so the bot can store your conversation ID.",
     );
   }
-
-  console.log("");
-  await maybeInstallSkillPrompt();
 }
 
 async function uninstallCommand(): Promise<void> {
