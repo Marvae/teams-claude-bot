@@ -110,6 +110,19 @@ export class ClaudeCodeBot extends ActivityHandler {
       await this.handleMessage(ctx);
       await next();
     });
+
+    // Save conversation ref on bot install so /handoff works without prior messages
+    this.onInstallationUpdate(async (ctx, next) => {
+      saveConversationRef(ctx);
+      console.log("[BOT] Installation update — conversation ref saved");
+      await next();
+    });
+
+    this.onMembersAdded(async (ctx, next) => {
+      saveConversationRef(ctx);
+      console.log("[BOT] Members added — conversation ref saved");
+      await next();
+    });
   }
 
   private isUserAllowed(ctx: TurnContext): boolean {
@@ -384,14 +397,13 @@ export class ClaudeCodeBot extends ActivityHandler {
     forkSession?: boolean;
     cwd?: string;
   }): state.ManagedSession {
-    let conversationRef: Partial<import("botbuilder").ConversationReference> | null =
-      null;
+    let conversationRef: Partial<
+      import("botbuilder").ConversationReference
+    > | null = null;
     let adapter: BotFrameworkAdapter | null = null;
 
     // Proactive sendActivity — works after handleMessage returns
-    const sendActivity = async (
-      activity: Record<string, unknown>,
-    ) => {
+    const sendActivity = async (activity: Record<string, unknown>) => {
       if (!conversationRef || !adapter) return undefined;
       let result: { id?: string } | undefined;
       await adapter.continueConversation(conversationRef, async (ctx) => {
@@ -545,13 +557,19 @@ export class ClaudeCodeBot extends ActivityHandler {
       },
       onProgress: (event: ProgressEvent) => {
         if (!currentProgress) {
-          currentProgress = this.createProgressNotifier(sendActivity, updateActivity);
+          currentProgress = this.createProgressNotifier(
+            sendActivity,
+            updateActivity,
+          );
         }
         currentProgress.onProgress(event);
       },
       onResult: async (result: ClaudeResult) => {
         if (!currentProgress) {
-          currentProgress = this.createProgressNotifier(sendActivity, updateActivity);
+          currentProgress = this.createProgressNotifier(
+            sendActivity,
+            updateActivity,
+          );
         }
         const progress = currentProgress;
         currentProgress = null;
@@ -648,7 +666,7 @@ export class ClaudeCodeBot extends ActivityHandler {
       managed.setRef(ctx);
 
       const prompt = sessionId
-        ? `The user handed off from Terminal to Teams (project: ${workDir ?? "unknown"}). You have the full terminal conversation history. Welcome them briefly, summarize what was being worked on, and ask what they need help with. Reply in the same language as the conversation above.`
+        ? `The user handed off from Terminal to Teams (project: ${workDir ?? "unknown"}). You have the full terminal conversation history. Greet them and let them know you're ready to continue. Reply in the same language as the conversation above.`
         : `The user started a new session from Teams (project: ${workDir ?? "unknown"}). Welcome them briefly and ask what they need help with.`;
 
       // Fire and forget — reply sent via onResult callback
@@ -657,8 +675,13 @@ export class ClaudeCodeBot extends ActivityHandler {
   }
 
   createProgressNotifier(
-    sendFn: (activity: Record<string, unknown>) => Promise<{ id?: string } | undefined>,
-    updateFn: (activityId: string, activity: Record<string, unknown>) => Promise<void>,
+    sendFn: (
+      activity: Record<string, unknown>,
+    ) => Promise<{ id?: string } | undefined>,
+    updateFn: (
+      activityId: string,
+      activity: Record<string, unknown>,
+    ) => Promise<void>,
   ): {
     onProgress: (event: ProgressEvent) => void;
     finalize: (chunks: string[]) => Promise<void>;
@@ -765,7 +788,9 @@ export class ClaudeCodeBot extends ActivityHandler {
         }
 
         if (event.type === "auth_error") {
-          completedText += (streamingText ?? "") + "\n\n🔑 Login expired — run `claude login` in terminal";
+          completedText +=
+            (streamingText ?? "") +
+            "\n\n🔑 Login expired — run `claude login` in terminal";
           streamingText = undefined;
           scheduleUpdate(TOOL_THROTTLE_MS);
           return;
@@ -790,7 +815,7 @@ export class ClaudeCodeBot extends ActivityHandler {
           });
           completedText += (streamingText ?? "") + "\n\n";
           streamingText = undefined;
-          todoDisplay =`📋 ${completed}/${event.todos.length}\n\n${lines.join("\n\n")}`;
+          todoDisplay = `📋 ${completed}/${event.todos.length}\n\n${lines.join("\n\n")}`;
           scheduleUpdate(TOOL_THROTTLE_MS);
           return;
         }
@@ -848,7 +873,10 @@ export class ClaudeCodeBot extends ActivityHandler {
         if (chunks.length === 0) return;
 
         if (streamingActivityId) {
-          await updateFn(streamingActivityId, { type: "message", text: chunks[0] });
+          await updateFn(streamingActivityId, {
+            type: "message",
+            text: chunks[0],
+          });
           streamingActivityId = undefined;
         } else {
           await sendFn({ type: "message", text: chunks[0] });
@@ -909,5 +937,4 @@ export class ClaudeCodeBot extends ActivityHandler {
     if (value.length <= max) return value;
     return `${value.slice(0, max - 3)}...`;
   }
-
 }

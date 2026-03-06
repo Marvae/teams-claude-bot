@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { TestAdapter, TurnContext, ActivityTypes, type Activity } from "botbuilder";
+import {
+  TestAdapter,
+  TurnContext,
+  ActivityTypes,
+  type Activity,
+} from "botbuilder";
 
 // ---- Mock SDK query to return controlled results ----
 const mockQuery = vi.fn();
@@ -336,16 +341,12 @@ describe("permission card interactions", () => {
       const card = reply.attachments![0].content as Record<string, unknown>;
       expect(card.type).toBe("AdaptiveCard");
       const actions = card.actions as Array<Record<string, unknown>>;
-      expect(actions.length).toBe(5);
+      // Current mode (bypassPermissions) is excluded from actions
+      expect(actions.length).toBe(4);
       const modeIds = actions.map((a) => (a.data as { mode: string }).mode);
+      expect(modeIds).not.toContain("bypassPermissions");
       expect(modeIds).toEqual(
-        expect.arrayContaining([
-          "default",
-          "acceptEdits",
-          "plan",
-          "dontAsk",
-          "bypassPermissions",
-        ]),
+        expect.arrayContaining(["default", "acceptEdits", "plan", "dontAsk"]),
       );
     });
   });
@@ -535,15 +536,18 @@ describe("session resume failure recovery", () => {
 describe("progress notifier streaming via updateActivity", () => {
   it("sends first update as new message, subsequent updates via updateActivity", async () => {
     const bot = new ClaudeCodeBot();
-    const sent: Array<{ action: string; activity: Record<string, unknown> }> = [];
+    const sent: Array<{ action: string; activity: Record<string, unknown> }> =
+      [];
 
     const sendFn = vi.fn(async (activity: Record<string, unknown>) => {
       sent.push({ action: "send", activity });
       return { id: "msg-1" };
     });
-    const updateFn = vi.fn(async (_id: string, activity: Record<string, unknown>) => {
-      sent.push({ action: "update", activity });
-    });
+    const updateFn = vi.fn(
+      async (_id: string, activity: Record<string, unknown>) => {
+        sent.push({ action: "update", activity });
+      },
+    );
 
     const notifier = bot.createProgressNotifier(sendFn, updateFn);
 
@@ -566,15 +570,21 @@ describe("progress notifier streaming via updateActivity", () => {
 
   it("finalize updates the streaming message with final content", async () => {
     const bot = new ClaudeCodeBot();
-    const sent: Array<{ action: string; id?: string; activity: Record<string, unknown> }> = [];
+    const sent: Array<{
+      action: string;
+      id?: string;
+      activity: Record<string, unknown>;
+    }> = [];
 
     const sendFn = vi.fn(async (activity: Record<string, unknown>) => {
       sent.push({ action: "send", activity });
       return { id: "msg-stream" };
     });
-    const updateFn = vi.fn(async (id: string, activity: Record<string, unknown>) => {
-      sent.push({ action: "update", id, activity });
-    });
+    const updateFn = vi.fn(
+      async (id: string, activity: Record<string, unknown>) => {
+        sent.push({ action: "update", id, activity });
+      },
+    );
 
     const notifier = bot.createProgressNotifier(sendFn, updateFn);
 
@@ -607,21 +617,27 @@ describe("progress notifier streaming via updateActivity", () => {
     // Finalize without any prior streaming
     await notifier.finalize(["Direct result"]);
 
-    expect(sendFn).toHaveBeenCalledWith({ type: "message", text: "Direct result" });
+    expect(sendFn).toHaveBeenCalledWith({
+      type: "message",
+      text: "Direct result",
+    });
     expect(updateFn).not.toHaveBeenCalled();
   });
 
   it("tool_result appends to streaming text without clearing previous content", async () => {
     const bot = new ClaudeCodeBot();
-    const sent: Array<{ action: string; activity: Record<string, unknown> }> = [];
+    const sent: Array<{ action: string; activity: Record<string, unknown> }> =
+      [];
 
     const sendFn = vi.fn(async (activity: Record<string, unknown>) => {
       sent.push({ action: "send", activity });
       return { id: "msg-tr" };
     });
-    const updateFn = vi.fn(async (_id: string, activity: Record<string, unknown>) => {
-      sent.push({ action: "update", activity });
-    });
+    const updateFn = vi.fn(
+      async (_id: string, activity: Record<string, unknown>) => {
+        sent.push({ action: "update", activity });
+      },
+    );
 
     const notifier = bot.createProgressNotifier(sendFn, updateFn);
 
@@ -647,15 +663,18 @@ describe("progress notifier streaming via updateActivity", () => {
 
   it("file_diff is included in streaming text flow", async () => {
     const bot = new ClaudeCodeBot();
-    const sent: Array<{ action: string; activity: Record<string, unknown> }> = [];
+    const sent: Array<{ action: string; activity: Record<string, unknown> }> =
+      [];
 
     const sendFn = vi.fn(async (activity: Record<string, unknown>) => {
       sent.push({ action: "send", activity });
       return { id: "msg-fd" };
     });
-    const updateFn = vi.fn(async (_id: string, activity: Record<string, unknown>) => {
-      sent.push({ action: "update", activity });
-    });
+    const updateFn = vi.fn(
+      async (_id: string, activity: Record<string, unknown>) => {
+        sent.push({ action: "update", activity });
+      },
+    );
 
     const notifier = bot.createProgressNotifier(sendFn, updateFn);
 
@@ -680,20 +699,26 @@ describe("progress notifier streaming via updateActivity", () => {
 
   it("progress lines are preserved in finalize", async () => {
     const bot = new ClaudeCodeBot();
-    const sent: Array<{ action: string; activity: Record<string, unknown> }> = [];
+    const sent: Array<{ action: string; activity: Record<string, unknown> }> =
+      [];
 
     const sendFn = vi.fn(async (activity: Record<string, unknown>) => {
       sent.push({ action: "send", activity });
       return { id: "msg-pl" };
     });
-    const updateFn = vi.fn(async (_id: string, activity: Record<string, unknown>) => {
-      sent.push({ action: "update", activity });
-    });
+    const updateFn = vi.fn(
+      async (_id: string, activity: Record<string, unknown>) => {
+        sent.push({ action: "update", activity });
+      },
+    );
 
     const notifier = bot.createProgressNotifier(sendFn, updateFn);
 
     // Tool use progress
-    notifier.onProgress({ type: "tool_use", tool: { name: "Bash", args: "ls" } });
+    notifier.onProgress({
+      type: "tool_use",
+      tool: { name: "Bash", args: "ls" },
+    });
     await new Promise((r) => setTimeout(r, 50));
 
     // Finalize with result
@@ -707,15 +732,18 @@ describe("progress notifier streaming via updateActivity", () => {
 
   it("completedText is prepended in finalize", async () => {
     const bot = new ClaudeCodeBot();
-    const sent: Array<{ action: string; activity: Record<string, unknown> }> = [];
+    const sent: Array<{ action: string; activity: Record<string, unknown> }> =
+      [];
 
     const sendFn = vi.fn(async (activity: Record<string, unknown>) => {
       sent.push({ action: "send", activity });
       return { id: "msg-ct" };
     });
-    const updateFn = vi.fn(async (_id: string, activity: Record<string, unknown>) => {
-      sent.push({ action: "update", activity });
-    });
+    const updateFn = vi.fn(
+      async (_id: string, activity: Record<string, unknown>) => {
+        sent.push({ action: "update", activity });
+      },
+    );
 
     const notifier = bot.createProgressNotifier(sendFn, updateFn);
 
@@ -739,15 +767,18 @@ describe("progress notifier streaming via updateActivity", () => {
 
   it("todo update freezes streaming text and preserves it", async () => {
     const bot = new ClaudeCodeBot();
-    const sent: Array<{ action: string; activity: Record<string, unknown> }> = [];
+    const sent: Array<{ action: string; activity: Record<string, unknown> }> =
+      [];
 
     const sendFn = vi.fn(async (activity: Record<string, unknown>) => {
       sent.push({ action: "send", activity });
       return { id: "msg-todo" };
     });
-    const updateFn = vi.fn(async (_id: string, activity: Record<string, unknown>) => {
-      sent.push({ action: "update", activity });
-    });
+    const updateFn = vi.fn(
+      async (_id: string, activity: Record<string, unknown>) => {
+        sent.push({ action: "update", activity });
+      },
+    );
 
     const notifier = bot.createProgressNotifier(sendFn, updateFn);
 
@@ -780,15 +811,18 @@ describe("progress notifier streaming via updateActivity", () => {
 
   it("todo display is preserved in finalize", async () => {
     const bot = new ClaudeCodeBot();
-    const sent: Array<{ action: string; activity: Record<string, unknown> }> = [];
+    const sent: Array<{ action: string; activity: Record<string, unknown> }> =
+      [];
 
     const sendFn = vi.fn(async (activity: Record<string, unknown>) => {
       sent.push({ action: "send", activity });
       return { id: "msg-todo-fin" };
     });
-    const updateFn = vi.fn(async (_id: string, activity: Record<string, unknown>) => {
-      sent.push({ action: "update", activity });
-    });
+    const updateFn = vi.fn(
+      async (_id: string, activity: Record<string, unknown>) => {
+        sent.push({ action: "update", activity });
+      },
+    );
 
     const notifier = bot.createProgressNotifier(sendFn, updateFn);
 
@@ -814,15 +848,18 @@ describe("progress notifier streaming via updateActivity", () => {
 
   it("tool_use progress appears in streaming text flow", async () => {
     const bot = new ClaudeCodeBot();
-    const sent: Array<{ action: string; activity: Record<string, unknown> }> = [];
+    const sent: Array<{ action: string; activity: Record<string, unknown> }> =
+      [];
 
     const sendFn = vi.fn(async (activity: Record<string, unknown>) => {
       sent.push({ action: "send", activity });
       return { id: "msg-tu" };
     });
-    const updateFn = vi.fn(async (_id: string, activity: Record<string, unknown>) => {
-      sent.push({ action: "update", activity });
-    });
+    const updateFn = vi.fn(
+      async (_id: string, activity: Record<string, unknown>) => {
+        sent.push({ action: "update", activity });
+      },
+    );
 
     const notifier = bot.createProgressNotifier(sendFn, updateFn);
 
@@ -831,7 +868,10 @@ describe("progress notifier streaming via updateActivity", () => {
     await new Promise((r) => setTimeout(r, 50));
 
     // Tool use event
-    notifier.onProgress({ type: "tool_use", tool: { name: "Read", file: "src/app.ts" } });
+    notifier.onProgress({
+      type: "tool_use",
+      tool: { name: "Read", file: "src/app.ts" },
+    });
     await new Promise((r) => setTimeout(r, 2100));
 
     // New text from Claude

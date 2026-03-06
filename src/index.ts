@@ -88,7 +88,15 @@ app.post("/api/handoff", rateLimit(60_000, 10), async (req, res) => {
     return res.status(401).json({ success: false, error: "Unauthorized" });
   }
 
-  const { workDir, sessionId, mode: _mode } = req.body ?? {};
+  const {
+    workDir,
+    sessionId,
+    mode: _mode,
+    summary,
+    todos,
+    buttonText,
+    title,
+  } = req.body ?? {};
 
   const ref = getConversationRef();
   if (!ref) {
@@ -102,7 +110,14 @@ app.post("/api/handoff", rateLimit(60_000, 10), async (req, res) => {
   try {
     // Send handoff card to Teams — user must click Accept to switch
     await adapter.continueConversation(ref, async (ctx: TurnContext) => {
-      const card = buildHandoffCard(workDir, sessionId);
+      const card = buildHandoffCard(
+        workDir,
+        sessionId,
+        summary,
+        todos,
+        buttonText,
+        title,
+      );
       await ctx.sendActivity({
         attachments: [
           {

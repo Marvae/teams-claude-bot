@@ -399,32 +399,72 @@ export function buildElicitationUrlCard(
 export function buildHandoffCard(
   workDir: string,
   sessionId?: string,
+  summary?: string,
+  todos?: { content: string; done: boolean }[],
+  buttonText?: string,
+  title?: string,
 ): Record<string, unknown> {
   const dirName = workDir.split("/").pop() ?? workDir;
+
+  const body: Record<string, unknown>[] = [
+    {
+      type: "ColumnSet",
+      columns: [
+        {
+          type: "Column",
+          width: "stretch",
+          items: [
+            {
+              type: "TextBlock",
+              text: title || "Session Summary",
+              size: "medium",
+              weight: "bolder",
+            },
+            {
+              type: "TextBlock",
+              text: `📂 ${dirName}`,
+              size: "small",
+              isSubtle: true,
+              spacing: "none",
+            },
+          ],
+        },
+      ],
+    },
+  ];
+
+  if (summary) {
+    body.push({
+      type: "TextBlock",
+      text: summary,
+      wrap: true,
+      spacing: "medium",
+    });
+  }
+
+  if (todos && todos.length > 0) {
+    for (let i = 0; i < todos.length; i++) {
+      const t = todos[i];
+      body.push({
+        type: "TextBlock",
+        text: `${t.done ? "✅" : "⬜"} ${t.content}`,
+        wrap: true,
+        spacing: i === 0 ? "medium" : "none",
+        isSubtle: t.done,
+      });
+    }
+  }
 
   return {
     type: "AdaptiveCard",
     version: "1.4",
     $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
-    body: [
-      {
-        type: "TextBlock",
-        text: `🔄 Handoff — **${dirName}**`,
-        size: "small",
-      },
-      {
-        type: "TextBlock",
-        text: "Accept to fork the terminal session here. Terminal keeps working independently.",
-        wrap: true,
-        size: "small",
-        isSubtle: true,
-        spacing: "small",
-      },
-    ],
+    body,
     actions: [
       {
         type: "Action.Submit",
-        title: "Accept Handoff",
+        title: buttonText || "Accept Handoff",
+        style: "positive",
         data: {
           action: "handoff_accept",
           workDir,
@@ -440,10 +480,18 @@ export function buildPermissionModeCard(
 ): Record<string, unknown> {
   const modes = [
     { id: "default", label: "🛡️ Default", desc: "Ask before risky operations" },
-    { id: "acceptEdits", label: "📝 Accept Edits", desc: "Auto-allow file edits, ask for others" },
+    {
+      id: "acceptEdits",
+      label: "📝 Accept Edits",
+      desc: "Auto-allow file edits, ask for others",
+    },
     { id: "plan", label: "📋 Plan", desc: "Preview actions without executing" },
     { id: "dontAsk", label: "✅ Don't Ask", desc: "Auto-approve all tools" },
-    { id: "bypassPermissions", label: "⚡ Bypass", desc: "Skip all permission checks" },
+    {
+      id: "bypassPermissions",
+      label: "⚡ Bypass",
+      desc: "Skip all permission checks",
+    },
   ];
 
   const current = modes.find((m) => m.id === currentMode);
