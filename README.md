@@ -35,7 +35,7 @@ teams-bot install           # Install as background service
 teams-bot install-skill     # Enable /handoff in Claude Code
 ```
 
-> **Prerequisites:** Node.js 22+, Claude Code CLI, Azure Bot registration, Teams admin access
+> **Prerequisites:** Node.js 22+, Claude Code CLI, [Azure Bot registration](docs/azure-bot-setup.md)
 
 ## From Source
 
@@ -46,22 +46,6 @@ npm run dev                # Hot reload + tunnel
 ```
 
 Then upload `manifest/` to Teams and set the messaging endpoint in Azure Bot to `<tunnel-url>/api/messages`.
-
-## Configuration
-
-Config loads in order: **env vars** > **project `.env`** > **`~/.claude/teams-bot/.env`**
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `MICROSOFT_APP_ID` | Yes | Azure Bot App ID |
-| `MICROSOFT_APP_PASSWORD` | Yes | Azure Bot client secret |
-| `MICROSOFT_APP_TENANT_ID` | Yes | Azure AD Tenant ID |
-| `CLAUDE_WORK_DIR` | Yes | Working directory for Claude Code |
-| `PORT` | No | Server port (default: 3978) |
-| `DEVTUNNEL_ID` | No | Dev tunnel name |
-| `ALLOWED_USERS` | No | Comma-separated Azure AD IDs or emails |
-
-The handoff token is auto-generated and stored at `~/.claude/teams-bot/handoff-token`. No manual setup needed.
 
 ## Commands
 
