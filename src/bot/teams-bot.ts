@@ -570,11 +570,9 @@ export class ClaudeCodeBot extends ActivityHandler {
 
         if (result.interrupted) {
           console.log("[BOT] Turn was interrupted");
-          const parts: string[] = ["🛑 Interrupted."];
           if (result.result) {
-            parts.push(result.result);
+            await progress.finalize(splitMessage(result.result));
           }
-          await progress.finalize(splitMessage(parts.join("\n\n")));
           return;
         }
 
