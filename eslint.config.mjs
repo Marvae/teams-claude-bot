@@ -13,5 +13,11 @@ export default tseslint.config(
       "require-yield": "off",
     },
   },
+  {
+    files: ["scripts/**/*.mjs"],
+    languageOptions: {
+      globals: { process: "readonly", console: "readonly" },
+    },
+  },
   { ignores: ["dist/", "node_modules/"] }
 );

@@ -936,6 +936,13 @@ function generateHandoffToken(): void {
   console.log("✓ Handoff token generated");
 }
 
+async function packageManifest(appId?: string): Promise<void> {
+  const script = path.join(projectDir, "scripts", "package-manifest.mjs");
+  const args = [script];
+  if (appId) args.push(appId);
+  await runCommand(process.execPath, args, { cwd: projectDir });
+}
+
 async function setupCommand(): Promise<void> {
   const existing = loadExistingSetupConfig();
   const hasExisting = Object.keys(existing).length > 0;
@@ -1018,10 +1025,13 @@ async function setupCommand(): Promise<void> {
   console.log(`\n✓ Config saved to ${CANONICAL_ENV_PATH}`);
 
   generateHandoffToken();
+  await packageManifest(appId);
 
   console.log("\nNext steps:");
-  console.log("  teams-bot install        Install as background service");
-  console.log("  teams-bot install-skill  Enable /handoff in Claude Code");
+  console.log("  1. Upload teams-claude-bot.zip to Teams Admin Center");
+  console.log("     (or import manifest/manifest.json in Teams Developer Portal)");
+  console.log("  2. teams-bot install        Install as background service");
+  console.log("  3. teams-bot install-skill  Enable /handoff in Claude Code");
 }
 
 async function installCommand(): Promise<void> {
@@ -1095,6 +1105,13 @@ async function main(): Promise<void> {
     .description("Interactive config setup")
     .action(async () => {
       await setupCommand();
+    });
+
+  program
+    .command("package")
+    .description("Generate teams-claude-bot.zip for Teams upload")
+    .action(async () => {
+      await packageManifest();
     });
 
   program

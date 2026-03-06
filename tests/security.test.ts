@@ -94,9 +94,11 @@ describe("conversation refs file permissions", () => {
 
     saveConversationRef(mockCtx as never);
 
-    const stats = statSync(TEMP_REFS);
-    // 0o600 = owner read+write only (no group/other)
-    const perms = stats.mode & 0o777;
-    expect(perms).toBe(0o600);
+    if (process.platform !== "win32") {
+      const stats = statSync(TEMP_REFS);
+      // 0o600 = owner read+write only (no group/other)
+      const perms = stats.mode & 0o777;
+      expect(perms).toBe(0o600);
+    }
   });
 });
