@@ -58,7 +58,7 @@ export const config = {
       }
     } catch {
       console.warn(
-        `[SECURITY] Could not write to .env — token is ephemeral: ${generated}`,
+        `[SECURITY] Could not write to .env — token is ephemeral`,
       );
     }
     return generated;
