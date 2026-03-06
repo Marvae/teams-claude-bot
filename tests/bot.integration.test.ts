@@ -884,6 +884,39 @@ describe("progress notifier streaming via updateActivity", () => {
     expect(text).toContain("src/app.ts");
     expect(text).toContain("Found the issue.");
   });
+
+  it("non-continuation text segment commits previous streaming text", async () => {
+    const bot = new ClaudeCodeBot();
+    const sent: Array<{ action: string; activity: Record<string, unknown> }> =
+      [];
+
+    const sendFn = vi.fn(async (activity: Record<string, unknown>) => {
+      sent.push({ action: "send", activity });
+      return { id: "msg-nc" };
+    });
+    const updateFn = vi.fn(
+      async (_id: string, activity: Record<string, unknown>) => {
+        sent.push({ action: "update", activity });
+      },
+    );
+
+    const notifier = bot.createProgressNotifier(sendFn, updateFn);
+
+    // First streaming segment (simulates turnStreamingText accumulation)
+    notifier.onProgress({ type: "text", text: "Let me look at the code." });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Second streaming segment — NOT a continuation of the first
+    // (simulates turnStreamingText reset + new accumulation)
+    notifier.onProgress({ type: "text", text: "OK, now fixing it." });
+    await new Promise((r) => setTimeout(r, 1100));
+
+    // Check that the streaming display includes BOTH text segments
+    const lastUpdate = sent.filter((s) => s.action === "update").pop();
+    const text = lastUpdate?.activity.text as string;
+    expect(text).toContain("Let me look at the code.");
+    expect(text).toContain("OK, now fixing it.");
+  });
 });
 
 describe("handoff flow", () => {

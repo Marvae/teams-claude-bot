@@ -832,6 +832,16 @@ export class ClaudeCodeBot extends ActivityHandler {
         }
 
         if (event.type === "text") {
+          // SDK accumulates turnStreamingText via +=, so within the same
+          // streaming segment event.text always starts with the previous
+          // streamingText.  When the assistant message resets
+          // turnStreamingText to "", the next segment starts fresh and
+          // will NOT be a prefix-continuation.  Commit the old text so
+          // it isn't overwritten.
+          if (streamingText && !event.text.startsWith(streamingText)) {
+            completedText += streamingText + "\n\n";
+            streamingText = undefined;
+          }
           streamingText = event.text;
           scheduleUpdate(TEXT_THROTTLE_MS);
           return;
