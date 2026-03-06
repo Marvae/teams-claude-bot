@@ -115,7 +115,7 @@ export function destroySession(): void {
 let workDir: string = config.claudeWorkDir;
 let model: string | undefined = "claude-opus-4-6";
 let thinkingTokens: number | null | undefined;
-let permissionMode: string = "bypassPermissions";
+let permissionMode: string = "default";
 let handoffMode: "pickup" | undefined;
 
 export function getWorkDir(): string {

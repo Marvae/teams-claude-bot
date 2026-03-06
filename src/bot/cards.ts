@@ -436,60 +436,39 @@ export function buildHandoffCard(
 }
 
 export function buildPermissionModeCard(
-  currentMode?: string,
+  currentMode: string,
 ): Record<string, unknown> {
   const modes = [
-    {
-      id: "default",
-      label: "🛡️ Default",
-      desc: "Ask before risky operations",
-    },
-    {
-      id: "acceptEdits",
-      label: "📝 Accept Edits",
-      desc: "Auto-allow file edits, ask for others",
-    },
-    {
-      id: "plan",
-      label: "Plan mode - Claude explains what it would do without executing",
-      desc: "Preview actions without running tools",
-    },
-    {
-      id: "dontAsk",
-      label: "Don't ask - Auto-approve all tools (less strict than bypass)",
-      desc: "Auto-approve tools without confirmation",
-    },
-    {
-      id: "bypassPermissions",
-      label: "⚡ Bypass",
-      desc: "Allow everything (fast but risky)",
-    },
+    { id: "default", label: "🛡️ Default", desc: "Ask before risky operations" },
+    { id: "acceptEdits", label: "📝 Accept Edits", desc: "Auto-allow file edits, ask for others" },
+    { id: "plan", label: "📋 Plan", desc: "Preview actions without executing" },
+    { id: "dontAsk", label: "✅ Don't Ask", desc: "Auto-approve all tools" },
+    { id: "bypassPermissions", label: "⚡ Bypass", desc: "Skip all permission checks" },
   ];
 
-  const body: Record<string, unknown>[] = [
-    {
-      type: "TextBlock",
-      text: currentMode
-        ? `Permission: **${currentMode}**`
-        : "Permission: **bypassPermissions**",
-      size: "small",
-    },
-  ];
+  const current = modes.find((m) => m.id === currentMode);
+  const currentLabel = current ? current.label : currentMode;
 
-  const actions = modes.map((m) => ({
-    type: "Action.Submit",
-    title: m.label,
-    data: {
-      action: "set_permission_mode",
-      mode: m.id,
-    },
-  }));
+  const actions = modes
+    .filter((m) => m.id !== currentMode)
+    .map((m) => ({
+      type: "Action.Submit",
+      title: `${m.label}  ·  ${m.desc}`,
+      data: { action: "set_permission_mode", mode: m.id },
+    }));
 
   return {
     type: "AdaptiveCard",
     version: "1.4",
     $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
-    body,
+    body: [
+      {
+        type: "TextBlock",
+        text: `Current: **${currentLabel}**`,
+        size: "medium",
+        weight: "bolder",
+      },
+    ],
     actions,
   };
 }
