@@ -33,43 +33,43 @@
           "scopes": ["personal", "groupChat"],
           "commands": [
             {
-              "title": "help",
+              "title": "/help",
               "description": "Show available commands"
             },
             {
-              "title": "new",
+              "title": "/new",
               "description": "Start a new session"
             },
             {
-              "title": "project",
+              "title": "/project",
               "description": "Switch working directory"
             },
             {
-              "title": "model",
+              "title": "/model",
               "description": "Set or show current model"
             },
             {
-              "title": "models",
+              "title": "/models",
               "description": "List available models"
             },
             {
-              "title": "status",
+              "title": "/status",
               "description": "Show session info"
             },
             {
-              "title": "thinking",
+              "title": "/thinking",
               "description": "Set thinking budget"
             },
             {
-              "title": "permission",
+              "title": "/permission",
               "description": "Set permission mode"
             },
             {
-              "title": "clear",
+              "title": "/clear",
               "description": "Clear session (alias for /new)"
             },
             {
-              "title": "compact",
+              "title": "/compact",
               "description": "Clear session with fresh context"
             }
           ]
