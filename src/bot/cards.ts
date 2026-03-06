@@ -404,7 +404,7 @@ export function buildHandoffCard(
   buttonText?: string,
   title?: string,
 ): Record<string, unknown> {
-  const dirName = workDir.split("/").pop() ?? workDir;
+  const dirName = workDir?.split("/").pop() ?? workDir ?? "unknown";
 
   const body: Record<string, unknown>[] = [
     {

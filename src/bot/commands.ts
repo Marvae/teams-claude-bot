@@ -221,7 +221,8 @@ export async function handleCommand(
         await ctx.sendActivity(`Session named: **${title}**`);
         return true;
       }
-      return false;
+      await ctx.sendActivity("Usage: `/session name <title>`");
+      return true;
     }
 
     case "/sessions": {

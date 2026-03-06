@@ -8,7 +8,7 @@ import express, {
 import { ClaudeCodeBot } from "./bot/teams-bot.js";
 import { buildHandoffCard } from "./bot/cards.js";
 import { loadConversationRefs, getConversationRef } from "./handoff/store.js";
-import { loadPersistedState } from "./session/state.js";
+import { getWorkDir, loadPersistedState } from "./session/state.js";
 
 // Simple in-memory rate limiter (no external dependencies)
 function rateLimit(windowMs: number, maxRequests: number) {
@@ -46,6 +46,11 @@ const adapter = new BotFrameworkAdapter({
 });
 
 adapter.onTurnError = async (context, error) => {
+  const msg = error instanceof Error ? error.message : String(error);
+  if (msg.includes("aborted") || msg.includes("interrupted")) {
+    console.log("[BOT] Request aborted (user interrupt)");
+    return;
+  }
   console.error(`[ERROR] ${error}`);
   try {
     await context.sendActivity("Something went wrong. Try again.");
@@ -89,7 +94,7 @@ app.post("/api/handoff", rateLimit(60_000, 10), async (req, res) => {
   }
 
   const {
-    workDir,
+    workDir: rawWorkDir,
     sessionId,
     mode: _mode,
     summary,
@@ -97,6 +102,7 @@ app.post("/api/handoff", rateLimit(60_000, 10), async (req, res) => {
     buttonText,
     title,
   } = req.body ?? {};
+  const workDir = rawWorkDir ?? state.getWorkDir();
 
   const ref = getConversationRef();
   if (!ref) {

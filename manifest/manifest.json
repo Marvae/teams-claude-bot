@@ -71,6 +71,18 @@
             {
               "title": "/compact",
               "description": "Clear session with fresh context"
+            },
+            {
+              "title": "/stop",
+              "description": "Stop current generation"
+            },
+            {
+              "title": "/sessions",
+              "description": "List and switch sessions"
+            },
+            {
+              "title": "/session",
+              "description": "Manage current session (e.g. /session name)"
             }
           ]
         }

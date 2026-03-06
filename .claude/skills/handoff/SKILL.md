@@ -23,6 +23,7 @@ echo "SESSION_ID=${SID:-not found}"
 2. If session ID is empty, ask the user to run /status and paste their Session ID.
 
 3. **Generate a session summary** before calling the API. Based on the current conversation, prepare these fields in the **same language as the conversation** (do NOT default to English):
+   - `workDir`: the current working directory (use `pwd`)
    - `title`: card title (e.g., "Session Summary" / "会话摘要" / "セッション概要" — match conversation language)
    - `summary`: 1-2 sentence summary of what was discussed/done
    - `todos`: JSON array of tasks `[{"content": "task description", "done": true/false}]` — omit if no tasks
