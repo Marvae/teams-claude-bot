@@ -2,7 +2,12 @@
  * Integration test: Full Teams permission + user-input flow
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { TestAdapter, TurnContext, ActivityTypes, type Activity } from "botbuilder";
+import {
+  TestAdapter,
+  TurnContext,
+  ActivityTypes,
+  type Activity,
+} from "botbuilder";
 
 // ---- Mocks ----
 
@@ -112,8 +117,6 @@ function createAdapter(): TestAdapter {
   };
   return adapter;
 }
-
-
 
 function setupMockQuery(result: string, sessionId = "sess-1") {
   mockQuery.mockImplementation(async function* () {

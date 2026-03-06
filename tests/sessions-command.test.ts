@@ -131,7 +131,10 @@ describe("/sessions command", () => {
     expect(choiceSet.type).toBe("Input.ChoiceSet");
     expect(choiceSet.style).toBe("expanded");
 
-    const choices = choiceSet.choices as Array<{ title: string; value: string }>;
+    const choices = choiceSet.choices as Array<{
+      title: string;
+      value: string;
+    }>;
     expect(choices.length).toBe(2);
     expect(choices[0].title).toContain("First session");
     expect(choices[0].value).toBe("s1");
@@ -168,7 +171,10 @@ describe("/sessions command", () => {
     const choiceSet = body[1];
     expect(choiceSet.value).toBe("s1");
 
-    const choices = choiceSet.choices as Array<{ title: string; value: string }>;
+    const choices = choiceSet.choices as Array<{
+      title: string;
+      value: string;
+    }>;
     expect(choices[0].title).toContain("Active one");
     expect(choices[1].title).toContain("Other one");
 
@@ -213,7 +219,9 @@ describe("/sessions command", () => {
       sent[0] as { attachments: Array<{ content: Record<string, unknown> }> }
     ).attachments[0].content;
     const body = card.body as Array<Record<string, unknown>>;
-    const choices = (body[1] as Record<string, unknown>).choices as Array<{ title: string }>;
+    const choices = (body[1] as Record<string, unknown>).choices as Array<{
+      title: string;
+    }>;
     expect(choices[0].title).toContain("My Title");
     expect(choices[0].title).not.toContain("auto summary");
   });
@@ -230,7 +238,9 @@ describe("/sessions command", () => {
       sent[0] as { attachments: Array<{ content: Record<string, unknown> }> }
     ).attachments[0].content;
     const body = card.body as Array<Record<string, unknown>>;
-    const choices = (body[1] as Record<string, unknown>).choices as Array<{ title: string }>;
+    const choices = (body[1] as Record<string, unknown>).choices as Array<{
+      title: string;
+    }>;
     const title = choices[0].title;
     expect(title).toContain("my-app");
     expect(title).toContain("feat/login");
@@ -250,7 +260,9 @@ describe("/sessions command", () => {
       sent[0] as { attachments: Array<{ content: Record<string, unknown> }> }
     ).attachments[0].content;
     const body = card.body as Array<Record<string, unknown>>;
-    const choices = (body[1] as Record<string, unknown>).choices as Array<{ title: string }>;
+    const choices = (body[1] as Record<string, unknown>).choices as Array<{
+      title: string;
+    }>;
     expect(choices[0].title).toContain("Bot Title");
     expect(choices[0].title).not.toContain("SDK Title");
   });
@@ -276,7 +288,10 @@ describe("/sessions command", () => {
       sent[0] as { attachments: Array<{ content: Record<string, unknown> }> }
     ).attachments[0].content;
     const body = card.body as Array<Record<string, unknown>>;
-    const choices = (body[1] as Record<string, unknown>).choices as Array<{ title: string; value: string }>;
+    const choices = (body[1] as Record<string, unknown>).choices as Array<{
+      title: string;
+      value: string;
+    }>;
     expect(choices[0].title).toContain("New");
     expect(choices[1].title).toContain("Old");
   });

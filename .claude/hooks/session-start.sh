@@ -22,13 +22,4 @@ fi
 if [ -n "$CLAUDE_ENV_FILE" ]; then
   printf 'export CLAUDE_SESSION_ID="%s"\n' "$SID" >> "$CLAUDE_ENV_FILE"
   printf 'export CLAUDE_SESSION_CWD="%s"\n' "$CWD" >> "$CLAUDE_ENV_FILE"
-
-  # Inject HANDOFF_TOKEN from teams-claude-bot .env so /handoff works without manual setup
-  BOT_ENV="$HOME/repos/teams-claude-bot/.env"
-  if [ -f "$BOT_ENV" ]; then
-    TOKEN=$(grep '^HANDOFF_TOKEN=' "$BOT_ENV" | cut -d= -f2-)
-    if [ -n "$TOKEN" ]; then
-      printf 'export HANDOFF_TOKEN="%s"\n' "$TOKEN" >> "$CLAUDE_ENV_FILE"
-    fi
-  fi
 fi

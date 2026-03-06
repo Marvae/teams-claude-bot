@@ -30,7 +30,7 @@ describe("resolvePublicUrl", () => {
   it("returns PUBLIC_URL when set", async () => {
     process.env.PUBLIC_URL = "https://custom.example.com";
     process.env.DEVTUNNEL_ID = "test-tunnel";
-    
+
     // We can't easily test config.ts directly due to IIFE execution
     // This tests the logic in isolation
     const publicUrl = process.env.PUBLIC_URL;
@@ -47,7 +47,7 @@ describe("resolvePublicUrl", () => {
 
     const parsed = JSON.parse(mockOutput);
     const port3978 = parsed.ports?.find(
-      (p: { portNumber: number }) => p.portNumber === 3978
+      (p: { portNumber: number }) => p.portNumber === 3978,
     );
 
     expect(port3978?.portUri).toBe("https://abc123-3978.usw2.devtunnels.ms");

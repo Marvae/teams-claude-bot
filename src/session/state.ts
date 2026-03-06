@@ -18,6 +18,7 @@ import { join, dirname, resolve } from "path";
 import { homedir } from "os";
 import { ConversationSession } from "../claude/session.js";
 import { config } from "../config.js";
+import { TEAMS_BOT_DATA_DIR } from "../paths.js";
 
 // ─── Types ───
 
@@ -29,8 +30,7 @@ export interface ManagedSession {
 // ─── Persistence ───
 
 const SESSION_FILE = (
-  process.env.BOT_SESSIONS_FILE ??
-  join(homedir(), ".claude", "teams-bot", "session.json")
+  process.env.BOT_SESSIONS_FILE ?? join(TEAMS_BOT_DATA_DIR, "session.json")
 ).replace(/^~/, homedir());
 
 interface PersistedData {

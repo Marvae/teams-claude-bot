@@ -27,7 +27,10 @@ function makeSession(overrides: Partial<SessionConfig> = {}) {
     onProgress: (e) => events.push(e),
     onResult: (r) => {
       results.push(r);
-      if (resultResolve) { resultResolve(r); resultResolve = null; }
+      if (resultResolve) {
+        resultResolve(r);
+        resultResolve = null;
+      }
     },
     ...overrides,
   };
@@ -36,15 +39,21 @@ function makeSession(overrides: Partial<SessionConfig> = {}) {
     session: new ConversationSession(config),
     events,
     results,
-    nextResult: () => new Promise<ClaudeResult>((resolve) => {
-      if (results.length > 0) { resolve(results[results.length - 1]); return; }
-      resultResolve = resolve;
-    }),
+    nextResult: () =>
+      new Promise<ClaudeResult>((resolve) => {
+        if (results.length > 0) {
+          resolve(results[results.length - 1]);
+          return;
+        }
+        resultResolve = resolve;
+      }),
   };
 }
 
 describe("file diff extraction from tool_use_result", () => {
-  beforeEach(() => { mockQuery.mockReset(); });
+  beforeEach(() => {
+    mockQuery.mockReset();
+  });
 
   it("extracts gitDiff.patch from FileEditOutput", async () => {
     mockQuery.mockImplementation(async function* () {
@@ -59,7 +68,15 @@ describe("file diff extraction from tool_use_result", () => {
           oldString: "const a = 1;",
           newString: "const a = 2;",
           originalFile: "const a = 1;\nconst b = 2;",
-          structuredPatch: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ["-const a = 1;", "+const a = 2;"] }],
+          structuredPatch: [
+            {
+              oldStart: 1,
+              oldLines: 1,
+              newStart: 1,
+              newLines: 1,
+              lines: ["-const a = 1;", "+const a = 2;"],
+            },
+          ],
           userModified: false,
           replaceAll: false,
           gitDiff: {
@@ -68,7 +85,8 @@ describe("file diff extraction from tool_use_result", () => {
             additions: 1,
             deletions: 1,
             changes: 2,
-            patch: "@@ -1,2 +1,2 @@\n-const a = 1;\n+const a = 2;\n const b = 2;",
+            patch:
+              "@@ -1,2 +1,2 @@\n-const a = 1;\n+const a = 2;\n const b = 2;",
           },
         },
       };
@@ -102,7 +120,13 @@ describe("file diff extraction from tool_use_result", () => {
           newString: "y",
           originalFile: "x",
           structuredPatch: [
-            { oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ["-x", "+y"] },
+            {
+              oldStart: 1,
+              oldLines: 1,
+              newStart: 1,
+              newLines: 1,
+              lines: ["-x", "+y"],
+            },
           ],
           userModified: false,
           replaceAll: false,
@@ -138,8 +162,20 @@ describe("file diff extraction from tool_use_result", () => {
           newString: "b",
           originalFile: "a\nc\ne",
           structuredPatch: [
-            { oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ["-a", "+b"] },
-            { oldStart: 3, oldLines: 1, newStart: 3, newLines: 1, lines: ["-e", "+f"] },
+            {
+              oldStart: 1,
+              oldLines: 1,
+              newStart: 1,
+              newLines: 1,
+              lines: ["-a", "+b"],
+            },
+            {
+              oldStart: 3,
+              oldLines: 1,
+              newStart: 3,
+              newLines: 1,
+              lines: ["-e", "+f"],
+            },
           ],
           userModified: false,
           replaceAll: false,
@@ -205,7 +241,13 @@ describe("file diff extraction from tool_use_result", () => {
           filePath: "new-file.ts",
           content: "hello",
           structuredPatch: [
-            { oldStart: 0, oldLines: 0, newStart: 1, newLines: 1, lines: ["+hello"] },
+            {
+              oldStart: 0,
+              oldLines: 0,
+              newStart: 1,
+              newLines: 1,
+              lines: ["+hello"],
+            },
           ],
           originalFile: null,
           gitDiff: {
@@ -320,7 +362,13 @@ describe("file diff extraction from tool_use_result", () => {
           newString: "new",
           originalFile: "old",
           structuredPatch: [
-            { oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ["-old", "+new"] },
+            {
+              oldStart: 1,
+              oldLines: 1,
+              newStart: 1,
+              newLines: 1,
+              lines: ["-old", "+new"],
+            },
           ],
           userModified: false,
           replaceAll: false,

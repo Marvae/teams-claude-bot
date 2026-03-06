@@ -1,12 +1,14 @@
 import { describe, it, expect, afterAll } from "vitest";
 import { rmSync, existsSync, mkdtempSync, writeFileSync } from "fs";
-import { join, resolve } from "path";
+import { join } from "path";
 import { tmpdir } from "os";
 
-// Use a temp file to isolate sessions
+// Use a temp dir to isolate test data
 const TEMP_CWD = mkdtempSync(join(tmpdir(), "claude-bot-handoff-"));
 const TEMP_SESSIONS = join(TEMP_CWD, "session.json");
+const TEMP_REFS = join(TEMP_CWD, "conversation-refs.json");
 process.env.BOT_SESSIONS_FILE = TEMP_SESSIONS;
+process.env.BOT_REFS_FILE = TEMP_REFS;
 
 describe("handoff mode (state module)", () => {
   it("sets and gets handoff mode", async () => {
@@ -35,7 +37,7 @@ describe("handoff mode (state module)", () => {
 // --- Conversation reference store tests ---
 
 describe("conversation ref store", () => {
-  const REFS_FILE = resolve(process.cwd(), ".conversation-refs.json");
+  const REFS_FILE = TEMP_REFS;
 
   afterAll(() => {
     if (existsSync(REFS_FILE)) rmSync(REFS_FILE);

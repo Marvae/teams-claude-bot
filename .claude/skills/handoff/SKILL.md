@@ -33,7 +33,7 @@ echo "SESSION_ID=${SID:-not found}"
 ```bash
 curl -s --ipv4 -w "\nHTTP_STATUS:%{http_code}" -X POST "${TEAMS_BOT_URL:-http://localhost:3978}/api/handoff" \
   -H "Content-Type: application/json" \
-  -H "x-handoff-token: $HANDOFF_TOKEN" \
+  -H "x-handoff-token: ${HANDOFF_TOKEN:-$(cat "$HOME/.claude/teams-bot/handoff-token" 2>/dev/null)}" \
   -d '{ ... your JSON here ... }'
 ```
 

@@ -328,9 +328,7 @@ export class ConversationSession {
           typeof payload.filePath === "string" &&
           (payload.gitDiff || payload.structuredPatch)
         ) {
-          const gitDiff = payload.gitDiff as
-            | { patch?: string }
-            | undefined;
+          const gitDiff = payload.gitDiff as { patch?: string } | undefined;
           let patch = gitDiff?.patch;
           if (!patch && Array.isArray(payload.structuredPatch)) {
             // Build patch from structuredPatch hunks

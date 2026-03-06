@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, afterAll } from "vitest";
-import { statSync, rmSync, existsSync } from "fs";
-import { resolve } from "path";
+import { statSync, rmSync, mkdtempSync } from "fs";
+import { join } from "path";
+import { tmpdir } from "os";
+
+const TEMP_DIR = mkdtempSync(join(tmpdir(), "claude-bot-sec-"));
+const TEMP_REFS = join(TEMP_DIR, "conversation-refs.json");
+process.env.BOT_REFS_FILE = TEMP_REFS;
 
 describe("rate limiter", () => {
   // Test the rate limiter logic directly (same algorithm as src/index.ts)
@@ -64,10 +69,8 @@ describe("handoff token", () => {
 });
 
 describe("conversation refs file permissions", () => {
-  const REFS_FILE = resolve(process.cwd(), ".conversation-refs.json");
-
   afterAll(() => {
-    if (existsSync(REFS_FILE)) rmSync(REFS_FILE);
+    rmSync(TEMP_DIR, { recursive: true, force: true });
   });
 
   it("writes refs file with owner-only permissions (0600)", async () => {
@@ -91,7 +94,7 @@ describe("conversation refs file permissions", () => {
 
     saveConversationRef(mockCtx as never);
 
-    const stats = statSync(REFS_FILE);
+    const stats = statSync(TEMP_REFS);
     // 0o600 = owner read+write only (no group/other)
     const perms = stats.mode & 0o777;
     expect(perms).toBe(0o600);

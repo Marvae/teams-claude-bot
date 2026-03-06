@@ -1,8 +1,11 @@
 #!/bin/bash
 cd "$(dirname "$0")/.."
 
-# Load env vars
+# Load env vars: canonical location first, then project .env (project overrides)
 set -a
+# shellcheck disable=SC1091
+source "$HOME/.claude/teams-bot/.env" 2>/dev/null
+# shellcheck disable=SC1091
 source .env 2>/dev/null
 set +a
 

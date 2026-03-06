@@ -45,7 +45,9 @@ export function createToolInterceptor(
     opts: Parameters<SDKCanUseTool>[2],
   ): Promise<PermissionResult> => {
     const { toolUseID, decisionReason, blockedPath, suggestions } = opts;
-    console.log(`[PERM] canUseTool called: tool=${toolName}, suggestions=${JSON.stringify(suggestions)}`);
+    console.log(
+      `[PERM] canUseTool called: tool=${toolName}, suggestions=${JSON.stringify(suggestions)}`,
+    );
 
     if (toolName === "AskUserQuestion") {
       return handleAskUserQuestion(input, {
@@ -57,7 +59,14 @@ export function createToolInterceptor(
     }
 
     // Send card to user
-    await sendCard({ toolName, input, toolUseID, decisionReason, blockedPath, suggestions });
+    await sendCard({
+      toolName,
+      input,
+      toolUseID,
+      decisionReason,
+      blockedPath,
+      suggestions,
+    });
 
     // Wait for user response or timeout
     return new Promise<PermissionResult>((resolve) => {

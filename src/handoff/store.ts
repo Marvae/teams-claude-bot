@@ -1,8 +1,11 @@
 import { ConversationReference, TurnContext } from "botbuilder";
-import { readFileSync, writeFileSync } from "fs";
-import { resolve } from "path";
+import { mkdirSync, readFileSync, writeFileSync } from "fs";
+import { dirname, resolve } from "path";
+import { TEAMS_BOT_DATA_DIR } from "../paths.js";
 
-const REFS_FILE = resolve(process.cwd(), ".conversation-refs.json");
+const REFS_FILE =
+  process.env.BOT_REFS_FILE ??
+  resolve(TEAMS_BOT_DATA_DIR, "conversation-refs.json");
 
 // userId -> ConversationReference
 let refs: Record<string, Partial<ConversationReference>> = {};
@@ -16,6 +19,7 @@ export function loadConversationRefs(): void {
 }
 
 function persist(): void {
+  mkdirSync(dirname(REFS_FILE), { recursive: true });
   writeFileSync(REFS_FILE, JSON.stringify(refs, null, 2), { mode: 0o600 });
 }
 

@@ -1,4 +1,7 @@
-import type { PermissionRequest, PermissionResult } from "./tool-interceptor.js";
+import type {
+  PermissionRequest,
+  PermissionResult,
+} from "./tool-interceptor.js";
 
 export type UserQuestionOption = {
   label: string;

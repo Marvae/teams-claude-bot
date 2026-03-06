@@ -189,7 +189,8 @@ export class ClaudeCodeBot extends ActivityHandler {
           const sessionCwds = value.sessionCwds as
             | Record<string, string | undefined>
             | undefined;
-          const cwd = sessionCwds?.[sessionId] ?? (value.cwd as string | undefined);
+          const cwd =
+            sessionCwds?.[sessionId] ?? (value.cwd as string | undefined);
           if (cwd) {
             const r = state.setWorkDir(cwd);
             if (!r.ok) {

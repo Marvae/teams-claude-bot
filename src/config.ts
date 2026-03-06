@@ -1,8 +1,13 @@
-import "dotenv/config";
+import dotenv from "dotenv";
 import { randomBytes } from "crypto";
 import { homedir } from "os";
-import { resolve } from "path";
-import { existsSync, readFileSync, writeFileSync } from "fs";
+import { resolve, dirname } from "path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { CANONICAL_ENV_PATH, HANDOFF_TOKEN_PATH } from "./paths.js";
+
+// Load config: env vars (highest) > cwd/.env (repo dev) > canonical (npm/setup)
+dotenv.config();
+dotenv.config({ path: CANONICAL_ENV_PATH });
 
 function required(name: string): string {
   const value = process.env[name];
@@ -26,6 +31,23 @@ function parseAllowedUsers(raw?: string): Set<string> {
   );
 }
 
+function persistHandoffToken(token: string): void {
+  try {
+    mkdirSync(dirname(HANDOFF_TOKEN_PATH), { recursive: true });
+    // Skip write if file already has the same token
+    if (existsSync(HANDOFF_TOKEN_PATH)) {
+      const existing = readFileSync(HANDOFF_TOKEN_PATH, "utf-8").trim();
+      if (existing === token) return;
+    }
+    writeFileSync(HANDOFF_TOKEN_PATH, token, {
+      encoding: "utf-8",
+      mode: 0o600,
+    });
+  } catch {
+    /* best-effort */
+  }
+}
+
 export const config = {
   microsoftAppId: required("MICROSOFT_APP_ID"),
   microsoftAppPassword: required("MICROSOFT_APP_PASSWORD"),
@@ -41,26 +63,22 @@ export const config = {
   allowedUsers: parseAllowedUsers(process.env.ALLOWED_USERS),
   handoffToken: (() => {
     const token = process.env.HANDOFF_TOKEN;
-    if (token) return token;
-    // Auto-generate and persist to .env so it survives restarts
-    const generated = randomBytes(32).toString("hex");
-    const envPath = resolve(process.cwd(), ".env");
+    if (token) {
+      persistHandoffToken(token);
+      return token;
+    }
+    // Try canonical file before generating a new one
     try {
-      const envContent = existsSync(envPath)
-        ? readFileSync(envPath, "utf-8")
-        : "";
-      if (!envContent.match(/^HANDOFF_TOKEN=.+$/m)) {
-        const updated = envContent.match(/^HANDOFF_TOKEN=.*$/m)
-          ? envContent.replace(/^HANDOFF_TOKEN=.*$/m, `HANDOFF_TOKEN=${generated}`)
-          : envContent + `\nHANDOFF_TOKEN=${generated}\n`;
-        writeFileSync(envPath, updated);
-        console.log(`[SECURITY] Generated HANDOFF_TOKEN and saved to .env`);
+      if (existsSync(HANDOFF_TOKEN_PATH)) {
+        const saved = readFileSync(HANDOFF_TOKEN_PATH, "utf-8").trim();
+        if (saved) return saved;
       }
     } catch {
-      console.warn(
-        `[SECURITY] Could not write to .env — token is ephemeral`,
-      );
+      /* ignore */
     }
+    // Auto-generate and persist to canonical file only
+    const generated = randomBytes(32).toString("hex");
+    persistHandoffToken(generated);
     return generated;
   })(),
   sessionInitPrompt: process.env.SESSION_INIT_PROMPT,

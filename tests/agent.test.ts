@@ -33,7 +33,10 @@ function makeSession(overrides: Partial<SessionConfig> = {}): {
     onProgress: (e) => events.push(e),
     onResult: (r) => {
       results.push(r);
-      if (resultResolve) { resultResolve(r); resultResolve = null; }
+      if (resultResolve) {
+        resultResolve(r);
+        resultResolve = null;
+      }
     },
     ...overrides,
   };
@@ -42,10 +45,14 @@ function makeSession(overrides: Partial<SessionConfig> = {}): {
     session: new ConversationSession(config),
     events,
     results,
-    nextResult: () => new Promise<ClaudeResult>((resolve) => {
-      if (results.length > 0) { resolve(results[results.length - 1]); return; }
-      resultResolve = resolve;
-    }),
+    nextResult: () =>
+      new Promise<ClaudeResult>((resolve) => {
+        if (results.length > 0) {
+          resolve(results[results.length - 1]);
+          return;
+        }
+        resultResolve = resolve;
+      }),
   };
 }
 
@@ -57,7 +64,9 @@ async function extractPromptText(
 }
 
 describe("ConversationSession", () => {
-  beforeEach(() => { mockQuery.mockReset(); });
+  beforeEach(() => {
+    mockQuery.mockReset();
+  });
 
   describe("basic execution", () => {
     it("sends first message and captures session ID", async () => {
@@ -70,7 +79,9 @@ describe("ConversationSession", () => {
       session.send("hello world");
       const result = await nextResult();
       expect(mockQuery).toHaveBeenCalledOnce();
-      expect(await extractPromptText(mockQuery.mock.calls[0][0].prompt)).toBe("hello world");
+      expect(await extractPromptText(mockQuery.mock.calls[0][0].prompt)).toBe(
+        "hello world",
+      );
       expect(result.result).toBe("Done!");
       expect(onSessionId).toHaveBeenCalledWith("sess-123");
     });
@@ -86,8 +97,12 @@ describe("ConversationSession", () => {
     });
 
     it("passes cwd to SDK options", async () => {
-      mockQuery.mockImplementation(async function* () { yield { type: "result", result: "OK" }; });
-      const { session, nextResult } = makeSession({ cwd: "/home/user/project" });
+      mockQuery.mockImplementation(async function* () {
+        yield { type: "result", result: "OK" };
+      });
+      const { session, nextResult } = makeSession({
+        cwd: "/home/user/project",
+      });
       session.send("start");
       await nextResult();
       expect(mockQuery.mock.calls[0][0].options.cwd).toBe("/home/user/project");
@@ -98,8 +113,16 @@ describe("ConversationSession", () => {
     it("calls onProgress for tool_progress messages", async () => {
       mockQuery.mockImplementation(async function* () {
         yield { type: "system", subtype: "init", session_id: "s1" };
-        yield { type: "tool_progress", tool: "Bash", input: { command: "npm test" } };
-        yield { type: "tool_progress", tool: "Read", input: { file_path: "src/index.ts" } };
+        yield {
+          type: "tool_progress",
+          tool: "Bash",
+          input: { command: "npm test" },
+        };
+        yield {
+          type: "tool_progress",
+          tool: "Read",
+          input: { file_path: "src/index.ts" },
+        };
         yield { type: "result", result: "Done" };
       });
       const { session, events, nextResult } = makeSession();
@@ -107,20 +130,29 @@ describe("ConversationSession", () => {
       await nextResult();
       const toolEvents = events.filter((e) => e.type === "tool_use");
       expect(toolEvents).toHaveLength(2);
-      expect(toolEvents[0]).toEqual({ type: "tool_use", tool: { name: "Bash", command: "npm test" } });
+      expect(toolEvents[0]).toEqual({
+        type: "tool_use",
+        tool: { name: "Bash", command: "npm test" },
+      });
     });
 
     it("truncates long commands in progress", async () => {
       mockQuery.mockImplementation(async function* () {
         yield { type: "system", subtype: "init", session_id: "s1" };
-        yield { type: "tool_progress", tool: "Bash", input: { command: "x".repeat(200) } };
+        yield {
+          type: "tool_progress",
+          tool: "Bash",
+          input: { command: "x".repeat(200) },
+        };
         yield { type: "result", result: "Done" };
       });
       const { session, events, nextResult } = makeSession();
       session.send("test");
       await nextResult();
       const toolEvent = events.find((e) => e.type === "tool_use");
-      expect(toolEvent?.type === "tool_use" && toolEvent.tool.command?.length).toBe(100);
+      expect(
+        toolEvent?.type === "tool_use" && toolEvent.tool.command?.length,
+      ).toBe(100);
     });
   });
 
@@ -128,7 +160,18 @@ describe("ConversationSession", () => {
     it("extracts tools from assistant message content", async () => {
       mockQuery.mockImplementation(async function* () {
         yield { type: "system", subtype: "init", session_id: "s1" };
-        yield { type: "assistant", message: { content: [{ type: "tool_use", name: "Write", input: { file_path: "output.txt" } }] } };
+        yield {
+          type: "assistant",
+          message: {
+            content: [
+              {
+                type: "tool_use",
+                name: "Write",
+                input: { file_path: "output.txt" },
+              },
+            ],
+          },
+        };
         yield { type: "result", result: "Done" };
       });
       const { session, nextResult } = makeSession();
@@ -141,7 +184,9 @@ describe("ConversationSession", () => {
 
   describe("error handling", () => {
     it("returns error when SDK throws during query creation", async () => {
-      mockQuery.mockImplementation(() => { throw new Error("API rate limited"); });
+      mockQuery.mockImplementation(() => {
+        throw new Error("API rate limited");
+      });
       const { session, nextResult } = makeSession();
       session.send("test");
       expect((await nextResult()).error).toContain("API rate limited");
@@ -150,7 +195,11 @@ describe("ConversationSession", () => {
     it("returns error from result message", async () => {
       mockQuery.mockImplementation(async function* () {
         yield { type: "system", subtype: "init", session_id: "s1" };
-        yield { type: "result", is_error: true, errors: ["Something went wrong"] };
+        yield {
+          type: "result",
+          is_error: true,
+          errors: ["Something went wrong"],
+        };
       });
       const { session, nextResult } = makeSession();
       session.send("test");
@@ -160,14 +209,20 @@ describe("ConversationSession", () => {
     it("session stays alive after error result — can process next message", async () => {
       const pending: Array<(msg: IteratorResult<unknown>) => void> = [];
       mockQuery.mockImplementation(() => ({
-        [Symbol.asyncIterator]() { return this; },
+        [Symbol.asyncIterator]() {
+          return this;
+        },
         async next() {
           return new Promise<IteratorResult<unknown>>((resolve) => {
             pending.push(resolve);
           });
         },
-        async return() { return { value: undefined, done: true as const }; },
-        async throw(e: unknown) { throw e; },
+        async return() {
+          return { value: undefined, done: true as const };
+        },
+        async throw(e: unknown) {
+          throw e;
+        },
       }));
 
       const yieldMsg = async (msg: unknown) => {
@@ -187,7 +242,12 @@ describe("ConversationSession", () => {
       await yieldMsg({ type: "system", subtype: "init", session_id: "s1" });
 
       // SDK returns error_during_execution — this is per-turn, query is still alive
-      await yieldMsg({ type: "result", is_error: true, subtype: "error_during_execution", errors: ["User rejected tool use"] });
+      await yieldMsg({
+        type: "result",
+        is_error: true,
+        subtype: "error_during_execution",
+        errors: ["User rejected tool use"],
+      });
 
       expect(results).toHaveLength(1);
       expect(results[0].error).toBe("User rejected tool use");
@@ -228,7 +288,9 @@ describe("ConversationSession", () => {
 
   describe("permission mode", () => {
     it("uses default permission mode by default", async () => {
-      mockQuery.mockImplementation(async function* () { yield { type: "result", result: "OK" }; });
+      mockQuery.mockImplementation(async function* () {
+        yield { type: "result", result: "OK" };
+      });
       const { session, nextResult } = makeSession();
       session.send("test");
       await nextResult();
@@ -236,11 +298,17 @@ describe("ConversationSession", () => {
     });
 
     it("uses provided permissionMode", async () => {
-      mockQuery.mockImplementation(async function* () { yield { type: "result", result: "OK" }; });
-      const { session, nextResult } = makeSession({ permissionMode: "bypassPermissions" });
+      mockQuery.mockImplementation(async function* () {
+        yield { type: "result", result: "OK" };
+      });
+      const { session, nextResult } = makeSession({
+        permissionMode: "bypassPermissions",
+      });
       session.send("test");
       await nextResult();
-      expect(mockQuery.mock.calls[0][0].options.permissionMode).toBe("bypassPermissions");
+      expect(mockQuery.mock.calls[0][0].options.permissionMode).toBe(
+        "bypassPermissions",
+      );
     });
   });
 
@@ -270,12 +338,24 @@ describe("ConversationSession", () => {
     it("cleans up resources on close", async () => {
       let closeQuery: (() => void) | undefined;
       mockQuery.mockImplementation(() => ({
-        [Symbol.asyncIterator]() { return this; },
-        async next() { return new Promise<IteratorResult<unknown>>((resolve) => { closeQuery = () => resolve({ value: undefined, done: true }); }); },
-        async return() { return { value: undefined, done: true as const }; },
-        async throw(e: unknown) { throw e; },
+        [Symbol.asyncIterator]() {
+          return this;
+        },
+        async next() {
+          return new Promise<IteratorResult<unknown>>((resolve) => {
+            closeQuery = () => resolve({ value: undefined, done: true });
+          });
+        },
+        async return() {
+          return { value: undefined, done: true as const };
+        },
+        async throw(e: unknown) {
+          throw e;
+        },
         interrupt: vi.fn(),
-        close: vi.fn(() => { closeQuery?.(); }),
+        close: vi.fn(() => {
+          closeQuery?.();
+        }),
       }));
       const { session } = makeSession();
       session.send("test");
@@ -289,14 +369,20 @@ describe("ConversationSession", () => {
       // Use a controllable async iterator to yield messages on demand
       const pending: Array<(msg: IteratorResult<unknown>) => void> = [];
       mockQuery.mockImplementation(() => ({
-        [Symbol.asyncIterator]() { return this; },
+        [Symbol.asyncIterator]() {
+          return this;
+        },
         async next() {
           return new Promise<IteratorResult<unknown>>((resolve) => {
             pending.push(resolve);
           });
         },
-        async return() { return { value: undefined, done: true as const }; },
-        async throw(e: unknown) { throw e; },
+        async return() {
+          return { value: undefined, done: true as const };
+        },
+        async throw(e: unknown) {
+          throw e;
+        },
       }));
 
       const yieldMsg = async (msg: unknown) => {
@@ -319,12 +405,18 @@ describe("ConversationSession", () => {
       await yieldMsg({
         type: "stream_event",
         parent_tool_use_id: null,
-        event: { type: "content_block_delta", delta: { type: "text_delta", text: "Hello " } },
+        event: {
+          type: "content_block_delta",
+          delta: { type: "text_delta", text: "Hello " },
+        },
       });
       await yieldMsg({
         type: "stream_event",
         parent_tool_use_id: null,
-        event: { type: "content_block_delta", delta: { type: "text_delta", text: "world" } },
+        event: {
+          type: "content_block_delta",
+          delta: { type: "text_delta", text: "world" },
+        },
       });
 
       // Verify accumulated text
@@ -339,7 +431,10 @@ describe("ConversationSession", () => {
       await yieldMsg({
         type: "stream_event",
         parent_tool_use_id: null,
-        event: { type: "content_block_delta", delta: { type: "text_delta", text: "!" } },
+        event: {
+          type: "content_block_delta",
+          delta: { type: "text_delta", text: "!" },
+        },
       });
 
       const allTextEvents = events.filter((e) => e.type === "text");
@@ -361,7 +456,10 @@ describe("ConversationSession", () => {
       const { session, events, nextResult } = makeSession();
       session.send("fix the bug");
       await nextResult();
-      expect(events.find((e) => e.type === "done")).toEqual({ type: "done", promptSuggestion: "Run the tests" });
+      expect(events.find((e) => e.type === "done")).toEqual({
+        type: "done",
+        promptSuggestion: "Run the tests",
+      });
     });
 
     it("done event has no suggestion when SDK does not emit one", async () => {
@@ -372,7 +470,10 @@ describe("ConversationSession", () => {
       const { session, events, nextResult } = makeSession();
       session.send("hello");
       await nextResult();
-      expect(events.find((e) => e.type === "done")).toEqual({ type: "done", promptSuggestion: undefined });
+      expect(events.find((e) => e.type === "done")).toEqual({
+        type: "done",
+        promptSuggestion: undefined,
+      });
     });
   });
 });
