@@ -562,6 +562,31 @@ export class ClaudeCodeBot extends ActivityHandler {
         }, 1000);
       },
       onProgress: (event: ProgressEvent) => {
+        // prompt_suggestion arrives after result — handle directly
+        if (event.type === "prompt_suggestion") {
+          console.log(
+            "[BOT] Prompt suggestion:",
+            event.suggestion.slice(0, 80),
+          );
+          sendActivity({
+            type: "message",
+            text: "",
+            suggestedActions: {
+              to: [],
+              actions: [
+                {
+                  type: "imBack",
+                  title: event.suggestion,
+                  value: event.suggestion,
+                },
+              ],
+            },
+          }).catch(() => {
+            // suggestedActions not supported — skip
+          });
+          return;
+        }
+
         if (!currentProgress) {
           currentProgress = this.createProgressNotifier(
             sendActivity,
@@ -600,25 +625,6 @@ export class ClaudeCodeBot extends ActivityHandler {
 
         console.log("[BOT] Formatting and sending response");
         await progress.finalize(splitMessage(formatResponse(result)));
-
-        // Send prompt suggestion as quick-reply button
-        const suggestion = progress.getPromptSuggestion();
-        if (suggestion) {
-          try {
-            await sendActivity({
-              type: "message",
-              text: "",
-              suggestedActions: {
-                to: [],
-                actions: [
-                  { type: "imBack", title: suggestion, value: suggestion },
-                ],
-              },
-            });
-          } catch {
-            // suggestedActions not supported — skip
-          }
-        }
 
         console.log("[BOT] Response sent successfully");
       },
@@ -691,7 +697,6 @@ export class ClaudeCodeBot extends ActivityHandler {
   ): {
     onProgress: (event: ProgressEvent) => void;
     finalize: (chunks: string[]) => Promise<void>;
-    getPromptSuggestion: () => string | undefined;
   } {
     const TOOL_THROTTLE_MS = 2000;
     const TEXT_THROTTLE_MS = 1000;
@@ -703,7 +708,6 @@ export class ClaudeCodeBot extends ActivityHandler {
     let streamingText: string | undefined;
     let todoDisplay: string | undefined;
     let pendingUpdate = false;
-    let promptSuggestion: string | undefined;
     let streamingActivityId: string | undefined;
     const buildDisplay = (): string => {
       const parts: string[] = [];
@@ -771,7 +775,6 @@ export class ClaudeCodeBot extends ActivityHandler {
     return {
       onProgress: (event: ProgressEvent) => {
         if (event.type === "done") {
-          promptSuggestion = event.promptSuggestion;
           return;
         }
 
@@ -902,7 +905,6 @@ export class ClaudeCodeBot extends ActivityHandler {
           await sendFn({ type: "message", text: chunks[i] });
         }
       },
-      getPromptSuggestion: () => promptSuggestion,
     };
   }
 

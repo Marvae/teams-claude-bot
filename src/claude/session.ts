@@ -63,7 +63,7 @@ export class ConversationSession {
   private sessionId: string | undefined;
   private eventConsumer: Promise<void> | null = null;
   private _lastActivity = Date.now();
-  private lastPromptSuggestion: string | undefined;
+
 
   // Per-turn tracking (reset on each result)
   private turnTools: ToolInfo[] = [];
@@ -233,7 +233,9 @@ export class ConversationSession {
 
   private async consumeEvents(): Promise<void> {
     for await (const message of this.activeQuery as AsyncIterable<SDKMessage>) {
-      await this.processMessage(message as Record<string, unknown>);
+      const msg = message as Record<string, unknown>;
+      console.log("[SESSION] Event:", msg.type, msg.subtype ?? "");
+      await this.processMessage(msg);
     }
     // SDK always sends a result event before the iterator ends.
     // Crashes are caught by the .catch() on eventConsumer.
@@ -241,6 +243,7 @@ export class ConversationSession {
   }
 
   private async processMessage(msg: Record<string, unknown>): Promise<void> {
+    console.log("[SESSION] msg type:", msg.type, msg.subtype ?? "");
     // ── Init message ──
     if (
       msg.type === "system" &&
@@ -423,18 +426,26 @@ export class ConversationSession {
       }
     }
 
-    // ── Prompt suggestion ──
-    if (msg.type === "prompt_suggestion" && typeof msg.prompt === "string") {
-      this.lastPromptSuggestion = msg.prompt;
+    // ── Prompt suggestion (arrives AFTER result per SDK docs) ──
+    if (
+      msg.type === "prompt_suggestion" &&
+      typeof msg.suggestion === "string"
+    ) {
+      console.log(
+        "[SESSION] Got prompt_suggestion:",
+        msg.suggestion.slice(0, 80),
+      );
+      this.emitProgress({
+        type: "prompt_suggestion",
+        suggestion: msg.suggestion,
+      });
     }
 
     // ── Result ──
     if (msg.type === "result") {
       this.emitProgress({
         type: "done",
-        promptSuggestion: this.lastPromptSuggestion,
       });
-      this.lastPromptSuggestion = undefined;
 
       const stopReason = (msg.stop_reason as string | null) ?? null;
 
