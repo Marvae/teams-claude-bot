@@ -248,11 +248,22 @@ async function macUninstallService(): Promise<void> {
 }
 
 async function macStartService(): Promise<void> {
-  await runCommand('launchctl', ['start', macLabel]);
+  const loaded = await runCommand('launchctl', ['list', macLabel], { stdio: 'pipe', allowFailure: true });
+  if (loaded.code === 0) {
+    console.log('Service is already running.');
+    return;
+  }
+
+  const portCheck = await runCommand('lsof', ['-ti', ':3978'], { stdio: 'pipe', allowFailure: true });
+  if (portCheck.stdout.trim()) {
+    throw new Error('Bot is already running. Try "teams-bot restart" or "teams-bot stop" first.');
+  }
+
+  await runCommand('launchctl', ['load', macPlistPath]);
 }
 
 async function macStopService(): Promise<void> {
-  await runCommand('launchctl', ['stop', macLabel], { allowFailure: true });
+  await runCommand('launchctl', ['unload', macPlistPath], { allowFailure: true, stdio: 'pipe' });
 }
 
 async function macStatus(): Promise<void> {
