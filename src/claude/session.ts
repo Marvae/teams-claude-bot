@@ -63,7 +63,6 @@ export class ConversationSession {
   private sessionId: string | undefined;
   private eventConsumer: Promise<void> | null = null;
   private _lastActivity = Date.now();
-  private closed = false;
   private lastPromptSuggestion: string | undefined;
 
   // Per-turn tracking (reset on each result)
@@ -82,7 +81,7 @@ export class ConversationSession {
     return this.sessionId;
   }
   get isClosed(): boolean {
-    return this.closed;
+    return this.activeQuery === null && this.inputQueue === null;
   }
 
   /** Get SDK slash commands (available only after query is started). */
@@ -126,11 +125,6 @@ export class ConversationSession {
    * Results are delivered via config.onResult callback.
    */
   send(prompt: string, images?: ImageInput[]): void {
-    if (this.closed) {
-      this.config.onResult?.({ error: "Session is closed", tools: [] });
-      return;
-    }
-
     this._lastActivity = Date.now();
 
     if (!this.activeQuery) {
@@ -155,7 +149,6 @@ export class ConversationSession {
 
   /** Close the query and clean up. */
   close(): void {
-    this.closed = true;
     if (this.inputQueue) {
       this.inputQueue.end();
       this.inputQueue = null;
@@ -215,7 +208,7 @@ export class ConversationSession {
 
     this.eventConsumer = this.consumeEvents().catch((err) => {
       console.error("[SESSION] Event consumer error:", err);
-      this.closed = true;
+      this.activeQuery = null;
       this.emitResult({
         error: err instanceof Error ? err.message : String(err),
         tools: [...this.turnTools],
@@ -242,14 +235,8 @@ export class ConversationSession {
     for await (const message of this.activeQuery as AsyncIterable<SDKMessage>) {
       await this.processMessage(message as Record<string, unknown>);
     }
-
-    // Query process exited (could be interrupt or crash)
-    await this.emitResult({
-      result: this.turnStreamingText || undefined,
-      interrupted: true,
-      tools: [...this.turnTools],
-      sessionId: this.sessionId,
-    });
+    // SDK always sends a result event before the iterator ends.
+    // Crashes are caught by the .catch() on eventConsumer.
     this.activeQuery = null;
   }
 
@@ -474,7 +461,6 @@ export class ConversationSession {
           (msg.subtype as string).startsWith("error_"));
 
       if (isError) {
-        this.closed = true;
         const errors = msg.errors as string[] | undefined;
         const errorMsg =
           errors && errors.length > 0

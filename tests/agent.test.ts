@@ -156,6 +156,74 @@ describe("ConversationSession", () => {
       session.send("test");
       expect((await nextResult()).error).toBe("Something went wrong");
     });
+
+    it("session stays alive after error result — can process next message", async () => {
+      const pending: Array<(msg: IteratorResult<unknown>) => void> = [];
+      mockQuery.mockImplementation(() => ({
+        [Symbol.asyncIterator]() { return this; },
+        async next() {
+          return new Promise<IteratorResult<unknown>>((resolve) => {
+            pending.push(resolve);
+          });
+        },
+        async return() { return { value: undefined, done: true as const }; },
+        async throw(e: unknown) { throw e; },
+      }));
+
+      const yieldMsg = async (msg: unknown) => {
+        await vi.waitFor(() => expect(pending.length).toBeGreaterThan(0));
+        pending.shift()!({ value: msg, done: false });
+        await new Promise((r) => setTimeout(r, 10));
+      };
+      const finish = async () => {
+        await vi.waitFor(() => expect(pending.length).toBeGreaterThan(0));
+        pending.shift()!({ value: undefined, done: true });
+        await new Promise((r) => setTimeout(r, 10));
+      };
+
+      const { session, results } = makeSession();
+
+      session.send("do something risky");
+      await yieldMsg({ type: "system", subtype: "init", session_id: "s1" });
+
+      // SDK returns error_during_execution — this is per-turn, query is still alive
+      await yieldMsg({ type: "result", is_error: true, subtype: "error_during_execution", errors: ["User rejected tool use"] });
+
+      expect(results).toHaveLength(1);
+      expect(results[0].error).toBe("User rejected tool use");
+      expect(session.hasQuery).toBe(true);
+
+      // User can send follow-up — query still accepts messages
+      session.send("what branch am I on?");
+      await yieldMsg({ type: "result", result: "You are on main branch." });
+
+      expect(results).toHaveLength(2);
+      expect(results[1].result).toBe("You are on main branch.");
+      expect(results[1].error).toBeUndefined();
+
+      await finish();
+    });
+
+    it("auto-starts new query after previous query exits", async () => {
+      let callCount = 0;
+      mockQuery.mockImplementation(async function* () {
+        callCount++;
+        yield { type: "system", subtype: "init", session_id: `s${callCount}` };
+        yield { type: "result", result: `response ${callCount}` };
+      });
+
+      const { session, results, nextResult } = makeSession();
+
+      session.send("first");
+      await nextResult();
+      await new Promise((r) => setTimeout(r, 10)); // let consumeEvents finish
+
+      // Query exited — next send should auto-start a new one
+      session.send("second");
+      await vi.waitFor(() => expect(results).toHaveLength(2));
+      expect(results[1].result).toBe("response 2");
+      expect(callCount).toBe(2);
+    });
   });
 
   describe("permission mode", () => {
