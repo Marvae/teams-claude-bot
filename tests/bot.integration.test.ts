@@ -278,7 +278,7 @@ describe("ClaudeCodeBot e2e (TestAdapter)", () => {
       value: {
         action: "resume_session",
         sessionId: "sess-abc",
-        cwd: "/work/other-project",
+        sessionCwds: { "sess-abc": "/work/other-project" },
       },
     });
 

@@ -180,7 +180,16 @@ export class ClaudeCodeBot extends ActivityHandler {
       if (value.action === "resume_session") {
         const sessionId = value.sessionId as string;
         if (sessionId) {
-          const cwd = value.cwd as string | undefined;
+          const currentId = state.getSession()?.session.currentSessionId;
+          if (sessionId === currentId) {
+            await ctx.sendActivity("That session is already active.");
+            return;
+          }
+          // cwd comes from the sessionCwds lookup embedded in the card data
+          const sessionCwds = value.sessionCwds as
+            | Record<string, string | undefined>
+            | undefined;
+          const cwd = sessionCwds?.[sessionId] ?? (value.cwd as string | undefined);
           if (cwd) {
             const r = state.setWorkDir(cwd);
             if (!r.ok) {

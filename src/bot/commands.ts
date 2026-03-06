@@ -244,60 +244,63 @@ export async function handleCommand(
         return true;
       }
 
-      const bodyItems: unknown[] = [
-        {
-          type: "TextBlock",
-          text: "Sessions",
-          weight: "bolder",
-          size: "medium",
-        },
-      ];
-      const actions: unknown[] = [];
-
-      let num = 0;
-      for (const s of sdkSessions) {
-        num++;
-        const isActive = s.sessionId === currentId;
-        const label = state.getBotTitle(s.sessionId) || s.customTitle || s.summary || "Untitled";
+      // Build a lookup of sessionId -> cwd for the submit handler
+      const sessionCwds: Record<string, string | undefined> = {};
+      const choices = sdkSessions.map((s) => {
+        sessionCwds[s.sessionId] = s.cwd;
+        const label =
+          state.getBotTitle(s.sessionId) ||
+          s.customTitle ||
+          s.summary ||
+          "Untitled";
         const age = formatAge(new Date(s.lastModified).toISOString());
         const dirName = s.cwd?.split("/").pop() ?? "";
         const meta = [dirName ? `${dirName}` : null, age, s.gitBranch ?? null]
           .filter(Boolean)
           .join(" · ");
 
-        const prefix = isActive ? "▶ " : `#${num} `;
-        bodyItems.push({
-          type: "TextBlock",
-          text: `${prefix}**${label}**`,
-          spacing: "small",
-          wrap: true,
-        });
-        bodyItems.push({
-          type: "TextBlock",
-          text: `    ${meta}`,
-          spacing: "none",
-          size: "small",
-          isSubtle: true,
-        });
+        return {
+          title: meta ? `${label} (${meta})` : label,
+          value: s.sessionId,
+        };
+      });
 
-        if (!isActive) {
-          actions.push({
-            type: "Action.Submit",
-            title: `#${num}`,
-            data: {
-              action: "resume_session",
-              sessionId: s.sessionId,
-              cwd: s.cwd,
-            },
-          });
-        }
-      }
+      const body: unknown[] = [
+        {
+          type: "TextBlock",
+          text: "Sessions",
+          weight: "bolder",
+          size: "medium",
+        },
+        {
+          type: "Input.ChoiceSet",
+          id: "sessionId",
+          style: "expanded",
+          value: currentId ?? sdkSessions[0].sessionId,
+          choices,
+        },
+      ];
 
       const card = CardFactory.adaptiveCard({
         type: "AdaptiveCard",
         version: "1.4",
-        body: bodyItems,
-        actions,
+        body,
+        actions: [
+          {
+            type: "Action.Submit",
+            title: "Submit",
+            style: "positive",
+            data: {
+              action: "resume_session",
+              sessionCwds,
+            },
+          },
+          {
+            type: "Action.Submit",
+            title: "Cancel",
+            data: { action: "noop" },
+          },
+        ],
       });
 
       await ctx.sendActivity({ attachments: [card] });

@@ -99,7 +99,7 @@ describe("/sessions command", () => {
     );
   });
 
-  it("renders Adaptive Card with sessions", async () => {
+  it("renders a single card with Input.ChoiceSet for sessions", async () => {
     listSessionsMock.mockResolvedValue([
       makeSession({
         sessionId: "s1",
@@ -119,18 +119,27 @@ describe("/sessions command", () => {
     const activity = sent[0] as {
       attachments: Array<{ content: Record<string, unknown> }>;
     };
+    expect(activity.attachments.length).toBe(1);
+
     const card = activity.attachments[0].content;
     expect(card.type).toBe("AdaptiveCard");
 
-    const body = card.body as Array<{ text: string }>;
+    const body = card.body as Array<Record<string, unknown>>;
     expect(body[0].text).toBe("Sessions");
-    expect(body.length).toBe(5);
-    expect(body[1].text).toContain("First session");
-    expect(body[3].text).toContain("Second session");
+
+    const choiceSet = body[1];
+    expect(choiceSet.type).toBe("Input.ChoiceSet");
+    expect(choiceSet.style).toBe("expanded");
+
+    const choices = choiceSet.choices as Array<{ title: string; value: string }>;
+    expect(choices.length).toBe(2);
+    expect(choices[0].title).toContain("First session");
+    expect(choices[0].value).toBe("s1");
+    expect(choices[1].title).toContain("Second session");
+    expect(choices[1].value).toBe("s2");
   });
 
-  it("highlights active session with ▶ and no button", async () => {
-    // Set a live session with currentSessionId
+  it("pre-selects active session in ChoiceSet", async () => {
     stateValues.managed = {
       session: { currentSessionId: "s1" },
       setCtx: vi.fn(),
@@ -155,24 +164,24 @@ describe("/sessions command", () => {
     const card = (
       sent[0] as { attachments: Array<{ content: Record<string, unknown> }> }
     ).attachments[0].content;
-    const body = card.body as Array<{ text: string }>;
+    const body = card.body as Array<Record<string, unknown>>;
+    const choiceSet = body[1];
+    expect(choiceSet.value).toBe("s1");
+
+    const choices = choiceSet.choices as Array<{ title: string; value: string }>;
+    expect(choices[0].title).toContain("Active one");
+    expect(choices[1].title).toContain("Other one");
+
     const actions = card.actions as Array<{
       title: string;
       data: Record<string, unknown>;
     }>;
-
-    expect(body[1].text).toContain("▶");
-    expect(body[1].text).toContain("Active one");
-
-    expect(body[3].text).toContain("#2");
-    expect(body[3].text).toContain("Other one");
-
-    expect(actions.length).toBe(1);
-    expect(actions[0].title).toBe("#2");
-    expect(actions[0].data.sessionId).toBe("s2");
+    expect(actions.length).toBe(2);
+    expect(actions[0].title).toBe("Submit");
+    expect(actions[1].title).toBe("Cancel");
   });
 
-  it("buttons carry sessionId and cwd", async () => {
+  it("Submit button carries sessionCwds lookup", async () => {
     listSessionsMock.mockResolvedValue([
       makeSession({ sessionId: "s1", cwd: "/work/my-project" }),
     ]);
@@ -187,9 +196,9 @@ describe("/sessions command", () => {
 
     expect(actions[0].data).toEqual({
       action: "resume_session",
-      sessionId: "s1",
-      cwd: "/work/my-project",
+      sessionCwds: { s1: "/work/my-project" },
     });
+    expect(actions[1].data).toEqual({ action: "noop" });
   });
 
   it("shows customTitle over summary", async () => {
@@ -203,9 +212,10 @@ describe("/sessions command", () => {
     const card = (
       sent[0] as { attachments: Array<{ content: Record<string, unknown> }> }
     ).attachments[0].content;
-    const body = card.body as Array<{ text: string }>;
-    expect(body[1].text).toContain("My Title");
-    expect(body[1].text).not.toContain("auto summary");
+    const body = card.body as Array<Record<string, unknown>>;
+    const choices = (body[1] as Record<string, unknown>).choices as Array<{ title: string }>;
+    expect(choices[0].title).toContain("My Title");
+    expect(choices[0].title).not.toContain("auto summary");
   });
 
   it("shows git branch and dir name in meta", async () => {
@@ -219,11 +229,12 @@ describe("/sessions command", () => {
     const card = (
       sent[0] as { attachments: Array<{ content: Record<string, unknown> }> }
     ).attachments[0].content;
-    const body = card.body as Array<{ text: string }>;
-    const meta = body[2].text;
-    expect(meta).toContain("my-app");
-    expect(meta).toContain("feat/login");
-    expect(meta).not.toContain("/home/user/my-app");
+    const body = card.body as Array<Record<string, unknown>>;
+    const choices = (body[1] as Record<string, unknown>).choices as Array<{ title: string }>;
+    const title = choices[0].title;
+    expect(title).toContain("my-app");
+    expect(title).toContain("feat/login");
+    expect(title).not.toContain("/home/user/my-app");
   });
 
   it("shows bot title over customTitle", async () => {
@@ -238,9 +249,10 @@ describe("/sessions command", () => {
     const card = (
       sent[0] as { attachments: Array<{ content: Record<string, unknown> }> }
     ).attachments[0].content;
-    const body = card.body as Array<{ text: string }>;
-    expect(body[1].text).toContain("Bot Title");
-    expect(body[1].text).not.toContain("SDK Title");
+    const body = card.body as Array<Record<string, unknown>>;
+    const choices = (body[1] as Record<string, unknown>).choices as Array<{ title: string }>;
+    expect(choices[0].title).toContain("Bot Title");
+    expect(choices[0].title).not.toContain("SDK Title");
   });
 
   it("sorts by lastModified descending", async () => {
@@ -263,9 +275,10 @@ describe("/sessions command", () => {
     const card = (
       sent[0] as { attachments: Array<{ content: Record<string, unknown> }> }
     ).attachments[0].content;
-    const body = card.body as Array<{ text: string }>;
-    expect(body[1].text).toContain("New");
-    expect(body[3].text).toContain("Old");
+    const body = card.body as Array<Record<string, unknown>>;
+    const choices = (body[1] as Record<string, unknown>).choices as Array<{ title: string; value: string }>;
+    expect(choices[0].title).toContain("New");
+    expect(choices[1].title).toContain("Old");
   });
 });
 
