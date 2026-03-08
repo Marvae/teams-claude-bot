@@ -571,6 +571,13 @@ export class ClaudeCodeBot extends ActivityHandler {
           }
         }, 1000);
       },
+      onResumeInvalid: async () => {
+        state.clearPersistedSessionId();
+        await sendActivity({
+          type: "message",
+          text: "Previous session could not be resumed. Retrying with a fresh session in the same project...",
+        });
+      },
       onProgress: (event: ProgressEvent) => {
         if (!currentProgress) {
           currentProgress = this.createProgressNotifier(

@@ -49,6 +49,7 @@ export interface SessionConfig {
   // App-level callbacks
   onPromptRequest?: (info: PromptRequestInfo) => Promise<string>;
   onSessionId?: (sessionId: string) => void;
+  onResumeInvalid?: () => void | Promise<void>;
 
   // Event callbacks — session pushes events, bot layer handles UI
   onProgress?: (event: ProgressEvent) => void;
@@ -68,6 +69,13 @@ export class ConversationSession {
   // Per-turn tracking (reset on each result)
   private turnTools: ToolInfo[] = [];
   private turnStreamingText = "";
+  private resumeRetryAttempted = false;
+  private pendingRetry:
+    | { prompt: string; images?: ImageInput[] }
+    | undefined = undefined;
+  private lastStartPayload:
+    | { prompt: string; images?: ImageInput[] }
+    | undefined = undefined;
 
   constructor(private config: SessionConfig) {}
 
@@ -185,6 +193,7 @@ export class ConversationSession {
     prompt: string,
     images?: ImageInput[],
   ): Promise<void> {
+    this.lastStartPayload = { prompt, images };
     console.log("[SESSION] Starting new query (first message)");
     const finalPrompt = await preparePrompt(prompt, images);
     const options = this.buildQueryOptions();
@@ -238,6 +247,16 @@ export class ConversationSession {
     // SDK always sends a result event before the iterator ends.
     // Crashes are caught by the .catch() on eventConsumer.
     this.activeQuery = null;
+    if (this.inputQueue) {
+      this.inputQueue.end();
+      this.inputQueue = null;
+    }
+
+    if (this.pendingRetry) {
+      const retry = this.pendingRetry;
+      this.pendingRetry = undefined;
+      await this.startQuery(retry.prompt, retry.images);
+    }
   }
 
   private async processMessage(msg: Record<string, unknown>): Promise<void> {
@@ -464,6 +483,25 @@ export class ConversationSession {
           errors && errors.length > 0
             ? errors.join("; ")
             : `Error: ${msg.subtype ?? "unknown"}`;
+
+        const shouldRetryWithoutResume =
+          !this.resumeRetryAttempted &&
+          !!this.config.resume &&
+          !!this.lastStartPayload &&
+          isResumeFailure(errorMsg);
+
+        if (shouldRetryWithoutResume) {
+          console.warn(
+            "[SESSION] Resume failed, retrying with a fresh session in the same workDir",
+          );
+          this.resumeRetryAttempted = true;
+          this.config.resume = undefined;
+          this.config.forkSession = undefined;
+          await this.config.onResumeInvalid?.();
+          this.pendingRetry = this.lastStartPayload;
+          return;
+        }
+
         await this.emitResult({
           error: errorMsg,
           sessionId: this.sessionId,
@@ -579,6 +617,15 @@ export class ConversationSession {
 }
 
 // ─── Helpers ───
+
+function isResumeFailure(error: string): boolean {
+  const msg = error.toLowerCase();
+  return (
+    msg.includes("no conversation found with session id") ||
+    msg.includes("session not found") ||
+    msg.includes("--resume")
+  );
+}
 
 async function preparePrompt(
   prompt: string,

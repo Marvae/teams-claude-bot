@@ -496,23 +496,23 @@ describe("session resume failure recovery", () => {
     stateValues.managed = null;
   });
 
-  it.skip("notifies user and retries with fresh session when resume fails", async () => {
+  it("notifies user and retries with fresh session when resume fails", async () => {
     let callCount = 0;
     mockQuery.mockImplementation(async function* () {
       callCount++;
       if (callCount === 1) {
-        // First call: simulate resume failure (session closed with error)
+        // First call: simulate resume failure
         yield {
           type: "result",
           is_error: true,
-          subtype: "error_session",
+          subtype: "error_during_execution",
           errors: ["No conversation found with session ID: stale-session"],
         };
         return;
       }
       // Second call: fresh session succeeds
       yield { type: "system", subtype: "init", session_id: "fresh-sess" };
-      yield { type: "result", result: "Hello fresh!" };
+      yield { type: "result", subtype: "success", result: "Hello fresh!" };
     });
 
     const adapter = createAdapter();
@@ -525,14 +525,13 @@ describe("session resume failure recovery", () => {
           "Previous session could not be resumed",
         );
       })
-      .assertReply((activity) => assertInformativeTyping(activity))
-      .assertReply((activity) => {
-        expect(activity.text).toBe("Hello fresh!");
-      })
       .startTest();
 
     expect(mockQuery).toHaveBeenCalledTimes(2);
     expect(vi.mocked(state.clearPersistedSessionId)).toHaveBeenCalled();
+    expect(vi.mocked(state.persistSessionId)).toHaveBeenCalledWith(
+      "fresh-sess",
+    );
   });
 });
 

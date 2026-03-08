@@ -102,7 +102,7 @@ app.post("/api/handoff", rateLimit(60_000, 10), async (req, res) => {
     buttonText,
     title,
   } = req.body ?? {};
-  const workDir = rawWorkDir ?? state.getWorkDir();
+  const workDir = rawWorkDir ?? getWorkDir();
 
   const ref = getConversationRef();
   if (!ref) {

@@ -253,20 +253,3 @@ export function setCachedCommands(
   cachedCommands = cmds;
 }
 
-// ─── Idle cleanup (single session) ───
-
-const IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
-const CHECK_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
-
-function cleanupIdle(): void {
-  if (!managed) return;
-  const now = Date.now();
-  if (now - managed.session.lastActivityTime > IDLE_TIMEOUT_MS) {
-    console.log("[STATE] Closing idle session");
-    managed.session.close();
-    managed = null;
-  }
-}
-
-const cleanupTimer = setInterval(cleanupIdle, CHECK_INTERVAL_MS);
-cleanupTimer.unref();
