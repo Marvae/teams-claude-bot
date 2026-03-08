@@ -9,6 +9,7 @@ import { ClaudeCodeBot } from "./bot/teams-bot.js";
 import { buildHandoffCard } from "./bot/cards.js";
 import { loadConversationRefs, getConversationRef } from "./handoff/store.js";
 import { getWorkDir, loadPersistedState } from "./session/state.js";
+import { getRuntimeHealthSnapshot, markTurnError } from "./health/runtime.js";
 
 // Simple in-memory rate limiter (no external dependencies)
 function rateLimit(windowMs: number, maxRequests: number) {
@@ -47,6 +48,7 @@ const adapter = new BotFrameworkAdapter({
 
 adapter.onTurnError = async (context, error) => {
   const msg = error instanceof Error ? error.message : String(error);
+  markTurnError(error);
   if (msg.includes("aborted") || msg.includes("interrupted")) {
     console.log("[BOT] Request aborted (user interrupt)");
     return;
@@ -75,10 +77,16 @@ app.use((_req, res, next) => {
 
 app.use(express.json());
 
+app.get("/healthz", (_req, res) => {
+  const health = getRuntimeHealthSnapshot({ includeWorkDir: false });
+  res.status(health.status === "ok" ? 200 : 503).json(health);
+});
+
 app.post("/api/messages", async (req, res) => {
   try {
     await adapter.process(req, res, (context) => bot.run(context));
   } catch (err) {
+    markTurnError(err);
     console.error(`[AUTH] ${err instanceof Error ? err.message : err}`);
     if (!res.headersSent) {
       res.status(401).end();
@@ -137,6 +145,7 @@ app.post("/api/handoff", rateLimit(60_000, 10), async (req, res) => {
     console.log("[HANDOFF] Handoff card sent to Teams");
     res.json({ success: true });
   } catch (err) {
+    markTurnError(err);
     console.error(`[HANDOFF] ${err}`);
     res.status(500).json({
       success: false,

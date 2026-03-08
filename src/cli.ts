@@ -1086,6 +1086,57 @@ async function statusCommand(): Promise<void> {
   await showStatus(platform);
 }
 
+async function healthCommand(): Promise<void> {
+  const platform = detectPlatform();
+  await showStatus(platform);
+
+  const url =
+    process.env.TEAMS_BOT_HEALTH_URL ?? "http://127.0.0.1:3978/healthz";
+  console.log(`Health endpoint: ${url}`);
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    // Abort long hangs so the command stays responsive.
+    controller.abort();
+  }, 2500);
+
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      signal: controller.signal,
+      headers: { Accept: "application/json" },
+    });
+    clearTimeout(timeout);
+
+    if (!response.ok) {
+      console.log(`Health check: FAIL (HTTP ${response.status})`);
+      return;
+    }
+
+    const data = (await response.json()) as {
+      status?: string;
+      uptimeSec?: number;
+      session?: { active?: boolean; hasQuery?: boolean; idleSec?: number | null };
+      errors?: { recentTurnError?: boolean };
+    };
+
+    console.log(
+      `Health check: ${data.status ?? "ok"} · uptime ${data.uptimeSec ?? "?"}s · session ${data.session?.active ? "active" : "none"}${data.session?.hasQuery ? " (busy)" : ""}`,
+    );
+    if (data.session?.idleSec !== undefined && data.session.idleSec !== null) {
+      console.log(`Session idle: ${data.session.idleSec}s`);
+    }
+    if (data.errors?.recentTurnError) {
+      console.log("Recent turn error detected (see logs for details).");
+    }
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.log(`Health check: FAIL (${msg})`);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function logsCommand(): Promise<void> {
   const platform = detectPlatform();
   await tailLogs(platform);
@@ -1153,6 +1204,13 @@ async function main(): Promise<void> {
     .description("Check service status")
     .action(async () => {
       await statusCommand();
+    });
+
+  program
+    .command("health")
+    .description("Check service status and /healthz endpoint")
+    .action(async () => {
+      await healthCommand();
     });
 
   program

@@ -50,6 +50,7 @@ teams-bot install           # Install as background service
 | `/sessions` | Browse and resume past sessions |
 | `/handoff` | Hand off to/from Terminal |
 | `/status` | Session info + usage stats |
+| `/health` | Runtime health snapshot |
 | `/help` | Show all commands |
 
 Any other `/command` is forwarded to Claude Code. Any other message is a prompt.
@@ -74,6 +75,7 @@ teams-bot install           # Install + auto-start
 teams-bot start / stop      # Start or stop service
 teams-bot restart           # Rebuild + restart
 teams-bot status            # Check if running
+teams-bot health            # Service status + /healthz probe
 teams-bot logs              # Tail logs
 teams-bot install-skill     # Install /handoff for Claude Code
 teams-bot uninstall-skill   # Remove /handoff

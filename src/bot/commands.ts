@@ -2,6 +2,7 @@ import { CardFactory, type TurnContext } from "botbuilder";
 import { listSessions } from "@anthropic-ai/claude-agent-sdk";
 import * as state from "../session/state.js";
 import { buildHelpCard, buildPermissionModeCard } from "./cards.js";
+import { getRuntimeHealthSnapshot } from "../health/runtime.js";
 
 function formatAge(iso: string): string {
   const ms = Date.now() - new Date(iso).getTime();
@@ -200,6 +201,39 @@ export async function handleCommand(
           `**Usage:** ${usage.turns} turns · ${tokens}k tokens · $${usage.costUsd.toFixed(4)}`,
         );
       }
+      await ctx.sendActivity(lines.join("\n\n"));
+      return true;
+    }
+
+    case "/health": {
+      const health = getRuntimeHealthSnapshot({ includeWorkDir: true });
+      const session = health.session;
+      const lines = [
+        `**Health:** ${health.status === "ok" ? "ok" : "degraded"}`,
+        `**Uptime:** ${health.uptimeSec}s`,
+        `**PID:** \`${health.pid}\``,
+        `**Port:** \`${health.port}\``,
+        `**Work dir:** \`${health.workDir ?? state.getWorkDir()}\``,
+        `**Session:** ${session.active ? "active" : "none"}`,
+        `**Session id:** ${session.sessionId ? `\`${session.sessionId}\`` : "none"}`,
+        `**Running query:** ${session.hasQuery ? "yes" : "no"}`,
+        `**Idle:** ${session.idleSec !== null ? `${session.idleSec}s` : "n/a"}`,
+        `**Model:** ${session.model ? `\`${session.model}\`` : "default"}`,
+        `**Permission:** \`${session.permissionMode}\``,
+      ];
+
+      if (health.recoveries.resumeCount > 0) {
+        lines.push(
+          `**Resume recovery:** ${health.recoveries.resumeCount} (last: ${health.recoveries.lastResumeAt ?? "n/a"})`,
+        );
+      }
+
+      if (health.errors.recentTurnError) {
+        lines.push(
+          `**Recent error:** ${health.errors.lastTurnError ?? "unknown"}`,
+        );
+      }
+
       await ctx.sendActivity(lines.join("\n\n"));
       return true;
     }

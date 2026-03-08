@@ -36,6 +36,7 @@ import {
 import { processAttachments } from "./attachments.js";
 import { config } from "../config.js";
 import { saveConversationRef } from "../handoff/store.js";
+import { markResumeRecovery, markTurnError } from "../health/runtime.js";
 
 function friendlyError(error: string, stopReason?: string | null): string {
   if (stopReason === "refusal") {
@@ -572,6 +573,7 @@ export class ClaudeCodeBot extends ActivityHandler {
         }, 1000);
       },
       onResumeInvalid: async () => {
+        markResumeRecovery();
         state.clearPersistedSessionId();
         await sendActivity({
           type: "message",
@@ -600,6 +602,7 @@ export class ClaudeCodeBot extends ActivityHandler {
         state.addUsage(result.costUsd, result.usage);
 
         if (result.error) {
+          markTurnError(result.error);
           console.error(`[BOT] Error from session: ${result.error}`);
           await progress.finalize([
             friendlyError(result.error, result.stopReason),
