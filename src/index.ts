@@ -8,7 +8,7 @@ import express, {
 import { ClaudeCodeBot } from "./bot/teams-bot.js";
 import { buildHandoffCard } from "./bot/cards.js";
 import { loadConversationRefs, getConversationRef } from "./handoff/store.js";
-import { getWorkDir, loadPersistedState } from "./session/state.js";
+import { getWorkDir, getSession, loadPersistedState } from "./session/state.js";
 
 // Simple in-memory rate limiter (no external dependencies)
 function rateLimit(windowMs: number, maxRequests: number) {
@@ -74,6 +74,20 @@ app.use((_req, res, next) => {
 });
 
 app.use(express.json());
+
+app.get("/healthz", (_req, res) => {
+  const session = getSession();
+  res.json({
+    status: "ok",
+    uptimeSec: Math.floor(process.uptime()),
+    pid: process.pid,
+    port: config.port,
+    session: {
+      active: Boolean(session),
+      hasQuery: session?.session.hasQuery ?? false,
+    },
+  });
+});
 
 app.post("/api/messages", async (req, res) => {
   try {

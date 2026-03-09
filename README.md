@@ -74,6 +74,7 @@ teams-bot install           # Install + auto-start
 teams-bot start / stop      # Start or stop service
 teams-bot restart           # Rebuild + restart
 teams-bot status            # Check if running
+teams-bot health            # Service status + /healthz probe
 teams-bot logs              # Tail logs
 teams-bot install-skill     # Install /handoff for Claude Code
 teams-bot uninstall-skill   # Remove /handoff
