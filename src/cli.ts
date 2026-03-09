@@ -560,18 +560,31 @@ async function startService(platform: Platform): Promise<void> {
   await linuxStartService();
 }
 
+async function killPort(port: number): Promise<void> {
+  const check = await runCommand("lsof", ["-ti", `:${port}`], {
+    stdio: "pipe",
+    allowFailure: true,
+  });
+  const pids = check.stdout.trim();
+  if (!pids) return;
+  for (const pid of pids.split(/\s+/)) {
+    await runCommand("kill", [pid], { allowFailure: true, stdio: "pipe" });
+  }
+}
+
 async function stopService(platform: Platform): Promise<void> {
   if (platform === "darwin") {
     await macStopService();
-    return;
-  }
-
-  if (platform === "win32") {
+  } else if (platform === "win32") {
     await windowsStopService();
-    return;
+  } else {
+    await linuxStopService();
   }
 
-  await linuxStopService();
+  // Fallback: kill anything still holding the port
+  if (platform !== "win32") {
+    await killPort(3978);
+  }
 }
 
 async function showStatus(platform: Platform): Promise<void> {
@@ -1066,8 +1079,8 @@ async function uninstallCommand(): Promise<void> {
 
 async function restartCommand(): Promise<void> {
   const platform = detectPlatform();
-  await preflightCheck();
   await stopService(platform);
+  await preflightCheck();
   await runBuild();
   await startService(platform);
   console.log("Restarted.");
@@ -1084,12 +1097,23 @@ async function preflightCheck(): Promise<void> {
   });
 
   if (result.code !== 0) {
-    const output = result.stderr || result.stdout;
-    console.error("Tunnel auth check failed.");
-    if (/unauthorized|login|sign.in/i.test(output)) {
-      console.error("\n  Fix: devtunnel user login\n");
+    console.log("Tunnel auth expired. Logging in...");
+    const login = await runCommand("devtunnel", ["user", "login"], {
+      stdio: "inherit",
+      allowFailure: true,
+    });
+    if (login.code !== 0) {
+      throw new Error("devtunnel user login failed. Cannot start without tunnel auth.");
     }
-    throw new Error("Tunnel auth is not valid. Fix auth before starting.");
+    // Verify token works after login
+    const retry = await runCommand("devtunnel", ["token", tunnelId, "--scope", "host"], {
+      stdio: "pipe",
+      allowFailure: true,
+    });
+    if (retry.code !== 0) {
+      throw new Error("Tunnel auth still invalid after login. Check tunnel ownership.");
+    }
+    console.log("Tunnel auth OK.");
   }
 }
 
