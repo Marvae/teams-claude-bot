@@ -341,22 +341,3 @@ describe("/session name command", () => {
   });
 });
 
-describe("/health command", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    stateValues.managed = null;
-  });
-
-  it("shows runtime snapshot", async () => {
-    const { ctx, sent } = makeMockCtx();
-    const handled = await handleCommand("/health", ctx);
-    expect(handled).toBe(true);
-
-    const text = sent[0] as string;
-    expect(text).toContain("**Health:**");
-    expect(text).toContain("**Uptime:**");
-    expect(text).toContain("**Port:**");
-    expect(text).toContain("**Session:**");
-    expect(text).toContain("**Permission:**");
-  });
-});

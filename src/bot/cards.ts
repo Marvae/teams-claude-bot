@@ -38,11 +38,6 @@ const COMMAND_GROUPS: CommandGroup[] = [
         description: "Show session info",
       },
       {
-        title: "/health",
-        command: "/health",
-        description: "Show runtime health",
-      },
-      {
         title: "/sessions",
         command: "/sessions",
         description: "List recent sessions",
