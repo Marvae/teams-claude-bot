@@ -59,8 +59,15 @@ export interface RuntimeHealthSnapshot {
   };
 }
 
+export function resetHealthState(): void {
+  lastTurnError = null;
+  resumeRecoveries = 0;
+  lastResumeRecoveryAt = null;
+}
+
 export function getRuntimeHealthSnapshot(options?: {
   includeWorkDir?: boolean;
+  includeErrors?: boolean;
 }): RuntimeHealthSnapshot {
   const now = Date.now();
   const session = state.getSession();
@@ -96,7 +103,9 @@ export function getRuntimeHealthSnapshot(options?: {
     errors: {
       recentTurnError,
       lastTurnErrorAt: lastTurnError ? new Date(lastTurnError.at).toISOString() : null,
-      lastTurnError: lastTurnError?.message ?? null,
+      lastTurnError: (options?.includeErrors ?? true)
+        ? (lastTurnError?.message ?? null)
+        : null,
     },
   };
 

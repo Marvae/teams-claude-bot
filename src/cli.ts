@@ -228,6 +228,8 @@ function makeMacPlist(): string {
     <dict>
         <key>PATH</key>
         <string>${process.env.PATH ?? ""}</string>
+        <key>HEALTH_ALERTS</key>
+        <string>1</string>
     </dict>
 </dict>
 </plist>
@@ -252,6 +254,7 @@ ExecStart=/bin/bash -lc '${escapedRunPath} >> ${escapedLogPath} 2>&1'
 Restart=always
 RestartSec=2
 Environment=PATH=${process.env.PATH ?? ""}
+Environment=HEALTH_ALERTS=1
 
 [Install]
 WantedBy=default.target
@@ -1063,14 +1066,36 @@ async function uninstallCommand(): Promise<void> {
 
 async function restartCommand(): Promise<void> {
   const platform = detectPlatform();
+  await preflightCheck();
   await stopService(platform);
   await runBuild();
   await startService(platform);
   console.log("Restarted.");
 }
 
+async function preflightCheck(): Promise<void> {
+  const cfg = loadExistingSetupConfig();
+  const tunnelId = cfg.DEVTUNNEL_ID;
+  if (!tunnelId) return;
+
+  const result = await runCommand("devtunnel", ["token", tunnelId, "--scope", "host"], {
+    stdio: "pipe",
+    allowFailure: true,
+  });
+
+  if (result.code !== 0) {
+    const output = result.stderr || result.stdout;
+    console.error("Tunnel auth check failed.");
+    if (/unauthorized|login|sign.in/i.test(output)) {
+      console.error("\n  Fix: devtunnel user login\n");
+    }
+    throw new Error("Tunnel auth is not valid. Fix auth before starting.");
+  }
+}
+
 async function startCommand(): Promise<void> {
   const platform = detectPlatform();
+  await preflightCheck();
   await startService(platform);
   console.log("Started.");
 }
@@ -1086,6 +1111,27 @@ async function statusCommand(): Promise<void> {
   await showStatus(platform);
 }
 
+async function fetchHealthz(
+  url: string,
+  timeoutMs: number,
+): Promise<{ ok: boolean; data?: Record<string, unknown>; error?: string }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: { Accept: "application/json" },
+    });
+    clearTimeout(timer);
+    if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+    return { ok: true, data: (await res.json()) as Record<string, unknown> };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function healthCommand(): Promise<void> {
   const platform = detectPlatform();
   await showStatus(platform);
@@ -1094,46 +1140,38 @@ async function healthCommand(): Promise<void> {
     process.env.TEAMS_BOT_HEALTH_URL ?? "http://127.0.0.1:3978/healthz";
   console.log(`Health endpoint: ${url}`);
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => {
-    // Abort long hangs so the command stays responsive.
-    controller.abort();
-  }, 2500);
+  const local = await fetchHealthz(url, 2500);
+  if (!local.ok) {
+    console.log(`Health check: FAIL (${local.error})`);
+    return;
+  }
 
-  try {
-    const response = await fetch(url, {
-      method: "GET",
-      signal: controller.signal,
-      headers: { Accept: "application/json" },
-    });
-    clearTimeout(timeout);
+  const data = local.data as {
+    status?: string;
+    uptimeSec?: number;
+    session?: { active?: boolean; hasQuery?: boolean; idleSec?: number | null };
+    errors?: { recentTurnError?: boolean };
+  };
+  console.log(
+    `Health check: ${data.status ?? "ok"} · uptime ${data.uptimeSec ?? "?"}s · session ${data.session?.active ? "active" : "none"}${data.session?.hasQuery ? " (busy)" : ""}`,
+  );
+  if (data.session?.idleSec !== undefined && data.session.idleSec !== null) {
+    console.log(`Session idle: ${data.session.idleSec}s`);
+  }
+  if (data.errors?.recentTurnError) {
+    console.log("Recent turn error detected (see logs for details).");
+  }
 
-    if (!response.ok) {
-      console.log(`Health check: FAIL (HTTP ${response.status})`);
-      return;
-    }
-
-    const data = (await response.json()) as {
-      status?: string;
-      uptimeSec?: number;
-      session?: { active?: boolean; hasQuery?: boolean; idleSec?: number | null };
-      errors?: { recentTurnError?: boolean };
-    };
-
+  // Probe tunnel if BOT_PUBLIC_URL is set
+  const tunnelBase = process.env.BOT_PUBLIC_URL;
+  if (tunnelBase) {
+    const tunnelUrl = `${tunnelBase.replace(/\/+$/, "")}/healthz`;
+    const tunnel = await fetchHealthz(tunnelUrl, 5000);
     console.log(
-      `Health check: ${data.status ?? "ok"} · uptime ${data.uptimeSec ?? "?"}s · session ${data.session?.active ? "active" : "none"}${data.session?.hasQuery ? " (busy)" : ""}`,
+      tunnel.ok
+        ? "Tunnel: ok"
+        : "Tunnel: STALE (localhost ok but tunnel unreachable)",
     );
-    if (data.session?.idleSec !== undefined && data.session.idleSec !== null) {
-      console.log(`Session idle: ${data.session.idleSec}s`);
-    }
-    if (data.errors?.recentTurnError) {
-      console.log("Recent turn error detected (see logs for details).");
-    }
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    console.log(`Health check: FAIL (${msg})`);
-  } finally {
-    clearTimeout(timeout);
   }
 }
 

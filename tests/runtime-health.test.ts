@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const stateValues = {
   managed: null as
@@ -32,9 +32,19 @@ import {
   getRuntimeHealthSnapshot,
   markResumeRecovery,
   markTurnError,
+  resetHealthState,
 } from "../src/health/runtime.js";
 
 describe("runtime health snapshot", () => {
+  beforeEach(() => {
+    resetHealthState();
+    stateValues.managed = null;
+    stateValues.workDir = "/work/test";
+    stateValues.model = "claude-opus-4-6";
+    stateValues.permissionMode = "default";
+    stateValues.persistedSessionId = undefined;
+  });
+
   it("reports healthy snapshot by default", () => {
     const health = getRuntimeHealthSnapshot({ includeWorkDir: true });
     expect(health.status).toBe("ok");

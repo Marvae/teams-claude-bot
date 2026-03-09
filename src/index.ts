@@ -78,8 +78,8 @@ app.use((_req, res, next) => {
 app.use(express.json());
 
 app.get("/healthz", (_req, res) => {
-  const health = getRuntimeHealthSnapshot({ includeWorkDir: false });
-  res.status(health.status === "ok" ? 200 : 503).json(health);
+  const health = getRuntimeHealthSnapshot({ includeWorkDir: false, includeErrors: false });
+  res.status(200).json(health);
 });
 
 app.post("/api/messages", async (req, res) => {
@@ -151,6 +151,37 @@ app.post("/api/handoff", rateLimit(60_000, 10), async (req, res) => {
       success: false,
       error: "Failed to send notification",
     });
+  }
+});
+
+// Alert endpoint — called by run.sh to send proactive notifications to Teams
+// (outgoing messages go through Azure Bot Service, not the tunnel)
+app.post("/api/health-alert", async (req, res) => {
+  const { message } = req.body ?? {};
+  if (!message || typeof message !== "string") {
+    return res.status(400).json({ success: false, error: "message required" });
+  }
+
+  // Only accept from localhost
+  const ip = req.ip ?? "";
+  if (!ip.includes("127.0.0.1") && !ip.includes("::1") && ip !== "::ffff:127.0.0.1") {
+    return res.status(403).json({ success: false, error: "localhost only" });
+  }
+
+  const ref = getConversationRef();
+  if (!ref) {
+    return res.status(404).json({ success: false, error: "No conversation ref" });
+  }
+
+  try {
+    await adapter.continueConversation(ref, async (ctx: TurnContext) => {
+      await ctx.sendActivity(message);
+    });
+    console.log(`[HEALTH-ALERT] Sent: ${message}`);
+    res.json({ success: true });
+  } catch (err) {
+    console.error(`[HEALTH-ALERT] ${err}`);
+    res.status(500).json({ success: false, error: "Failed to send" });
   }
 });
 
