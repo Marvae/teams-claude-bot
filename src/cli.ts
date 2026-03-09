@@ -1132,34 +1132,68 @@ async function statusCommand(): Promise<void> {
   await showStatus(platform);
 }
 
+async function probe(url: string, timeoutMs: number): Promise<boolean> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    return res.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function getTunnelUrl(tunnelId: string): Promise<string | undefined> {
+  const result = await runCommand("devtunnel", ["show", tunnelId], {
+    stdio: "pipe",
+    allowFailure: true,
+  });
+  if (result.code !== 0) return undefined;
+  const match = result.stdout.match(/(https:\/\/\S+devtunnels\.ms)\S*/);
+  return match?.[1];
+}
+
 async function healthCommand(): Promise<void> {
   const platform = detectPlatform();
   await showStatus(platform);
 
+  // Bot process check
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 2500);
+  let data: { uptimeSec?: number; session?: { active?: boolean; hasQuery?: boolean } };
   try {
-    const res = await fetch("http://127.0.0.1:3978/healthz", {
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
+    const res = await fetch("http://127.0.0.1:3978/healthz", { signal: controller.signal });
     if (!res.ok) {
-      console.log(`Health check: FAIL (HTTP ${res.status})`);
+      console.log(`Bot: FAIL (HTTP ${res.status})`);
       return;
     }
-    const data = (await res.json()) as {
-      uptimeSec?: number;
-      session?: { active?: boolean; hasQuery?: boolean };
-    };
-    const s = data.session;
-    console.log(
-      `Health check: OK · uptime ${data.uptimeSec ?? "?"}s · session ${s?.active ? "active" : "none"}${s?.hasQuery ? " (busy)" : ""}`,
-    );
+    data = await res.json();
   } catch {
-    console.log("Health check: FAIL (bot not reachable on localhost:3978)");
+    console.log("Bot: FAIL (not reachable on localhost:3978)");
+    return;
   } finally {
     clearTimeout(timer);
   }
+  const s = data.session;
+  console.log(
+    `Bot: OK · uptime ${data.uptimeSec ?? "?"}s · session ${s?.active ? "active" : "none"}${s?.hasQuery ? " (busy)" : ""}`,
+  );
+
+  // Tunnel check
+  const cfg = loadExistingSetupConfig();
+  if (!cfg.DEVTUNNEL_ID) {
+    console.log("Tunnel: skipped (no DEVTUNNEL_ID)");
+    return;
+  }
+  const tunnelUrl = await getTunnelUrl(cfg.DEVTUNNEL_ID);
+  if (!tunnelUrl) {
+    console.log("Tunnel: FAIL (could not resolve tunnel URL)");
+    return;
+  }
+  const tunnelOk = await probe(`${tunnelUrl}/healthz`, 5000);
+  console.log(tunnelOk ? "Tunnel: OK" : "Tunnel: FAIL (bot ok but tunnel unreachable)");
 }
 
 async function logsCommand(): Promise<void> {
