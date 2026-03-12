@@ -7,7 +7,7 @@ import path from "path";
 import readline from "readline";
 import { fileURLToPath } from "url";
 import { Command } from "commander";
-import { randomBytes } from "crypto";
+import { randomBytes, randomUUID } from "crypto";
 import {
   CANONICAL_ENV_PATH,
   HANDOFF_TOKEN_PATH,
@@ -72,6 +72,7 @@ function runCommand(
     stdio?: "inherit" | "pipe";
     allowFailure?: boolean;
     shell?: boolean;
+    timeoutMs?: number;
   } = {},
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
@@ -84,6 +85,14 @@ function runCommand(
 
     let stdout = "";
     let stderr = "";
+    let killed = false;
+
+    const timer = options.timeoutMs
+      ? setTimeout(() => {
+          killed = true;
+          child.kill();
+        }, options.timeoutMs)
+      : undefined;
 
     if (child.stdout) {
       child.stdout.on("data", (chunk) => {
@@ -98,10 +107,20 @@ function runCommand(
     }
 
     child.on("error", (error) => {
+      if (timer) clearTimeout(timer);
       reject(error);
     });
 
     child.on("close", (code) => {
+      if (timer) clearTimeout(timer);
+      if (killed) {
+        if (options.allowFailure) {
+          resolve({ code: 1, stdout, stderr: stderr + "\n(timed out)" });
+          return;
+        }
+        reject(new Error(`Command timed out: ${command} ${args.join(" ")}`));
+        return;
+      }
       const exitCode = code ?? 1;
       if (exitCode !== 0 && !options.allowFailure) {
         reject(new Error(`Command failed: ${command} ${args.join(" ")}`));
@@ -195,6 +214,11 @@ function pathExistsAndNonEmpty(filePath: string): boolean {
 }
 
 async function runBuild(): Promise<void> {
+  // Skip build when installed globally (dist/ already bundled, no package.json scripts)
+  const pkgPath = path.join(projectDir, "package.json");
+  if (!fs.existsSync(pkgPath)) {
+    return;
+  }
   console.log("Building project...");
   await runCommand(npm, ["run", "build"], { cwd: projectDir, shell: true });
 }
@@ -841,7 +865,7 @@ async function installSkill(): Promise<void> {
 async function uninstallSkill(): Promise<void> {
   const skillDirs = [
     path.join(homeDir, ".claude", "skills", "handoff"),
-    path.join(projectDir, ".claude", "skills", "handoff"),
+    path.join(process.cwd(), ".claude", "skills", "handoff"),
   ];
 
   for (const skillDir of skillDirs) {
@@ -853,7 +877,7 @@ async function uninstallSkill(): Promise<void> {
 
   const settingsFiles = [
     path.join(homeDir, ".claude", "settings.json"),
-    path.join(projectDir, ".claude", "settings.json"),
+    path.join(process.cwd(), ".claude", "settings.json"),
   ];
 
   for (const settingsFile of settingsFiles) {
@@ -886,6 +910,7 @@ interface SetupConfig {
   PORT: string;
   ALLOWED_USERS: string;
   DEVTUNNEL_ID: string;
+  TEAMS_APP_ID: string;
 }
 
 function loadExistingSetupConfig(): Partial<SetupConfig> {
@@ -924,6 +949,7 @@ function writeSetupEnv(config: SetupConfig): void {
   if (config.DEVTUNNEL_ID) {
     lines.push(`DEVTUNNEL_ID=${config.DEVTUNNEL_ID}`);
   }
+  lines.push(`TEAMS_APP_ID=${config.TEAMS_APP_ID}`);
 
   fs.mkdirSync(path.dirname(CANONICAL_ENV_PATH), { recursive: true });
   fs.writeFileSync(CANONICAL_ENV_PATH, lines.join("\n") + "\n", {
@@ -949,11 +975,15 @@ function generateHandoffToken(): void {
   console.log("✓ Handoff token generated");
 }
 
-async function packageManifest(appId?: string): Promise<void> {
+async function packageManifest(
+  appId?: string,
+  teamsAppId?: string,
+): Promise<void> {
   const script = path.join(projectDir, "scripts", "package-manifest.mjs");
   const args = [script];
   if (appId) args.push(appId);
-  await runCommand(process.execPath, args, { cwd: projectDir });
+  if (teamsAppId) args.push(teamsAppId);
+  await runCommand(process.execPath, args);
 }
 
 async function setupCommand(): Promise<void> {
@@ -968,11 +998,12 @@ async function setupCommand(): Promise<void> {
   }
 
   console.log("Azure Bot Configuration:");
+  console.log("  (Find these in Azure Portal → App Registrations → your app)\n");
   const appId =
     (await prompt(
       existing.MICROSOFT_APP_ID
-        ? `  App ID [${existing.MICROSOFT_APP_ID}]: `
-        : "  App ID: ",
+        ? `  Application (client) ID [${existing.MICROSOFT_APP_ID}]: `
+        : "  Application (client) ID: ",
     )) ||
     existing.MICROSOFT_APP_ID ||
     "";
@@ -980,8 +1011,8 @@ async function setupCommand(): Promise<void> {
   const appPassword =
     (await prompt(
       existing.MICROSOFT_APP_PASSWORD
-        ? `  App Password [${maskPassword(existing.MICROSOFT_APP_PASSWORD)}]: `
-        : "  App Password: ",
+        ? `  Client Secret Value [${maskPassword(existing.MICROSOFT_APP_PASSWORD)}]: `
+        : "  Client Secret Value: ",
     )) ||
     existing.MICROSOFT_APP_PASSWORD ||
     "";
@@ -989,14 +1020,26 @@ async function setupCommand(): Promise<void> {
   const tenantId =
     (await prompt(
       existing.MICROSOFT_APP_TENANT_ID
-        ? `  Tenant ID [${existing.MICROSOFT_APP_TENANT_ID}]: `
-        : "  Tenant ID: ",
+        ? `  Directory (tenant) ID [${existing.MICROSOFT_APP_TENANT_ID}]: `
+        : "  Directory (tenant) ID: ",
     )) ||
     existing.MICROSOFT_APP_TENANT_ID ||
     "";
 
   if (!appId || !appPassword || !tenantId) {
     console.error("\nApp ID, Password, and Tenant ID are required.");
+    process.exit(1);
+  }
+
+  const uuidRegex =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!uuidRegex.test(appId)) {
+    console.error(
+      "\nApp ID must be a UUID (e.g. 12345678-abcd-1234-abcd-1234567890ab).",
+    );
+    console.error(
+      "Find it in Azure Portal → App Registrations → Application (client) ID.",
+    );
     process.exit(1);
   }
 
@@ -1026,6 +1069,9 @@ async function setupCommand(): Promise<void> {
     existing.DEVTUNNEL_ID ||
     "";
 
+  // Reuse existing Teams App ID or generate a new one
+  const teamsAppId = existing.TEAMS_APP_ID || randomUUID();
+
   writeSetupEnv({
     MICROSOFT_APP_ID: appId,
     MICROSOFT_APP_PASSWORD: appPassword,
@@ -1034,11 +1080,12 @@ async function setupCommand(): Promise<void> {
     PORT: port,
     ALLOWED_USERS: allowedUsers,
     DEVTUNNEL_ID: tunnelId,
+    TEAMS_APP_ID: teamsAppId,
   });
   console.log(`\n✓ Config saved to ${CANONICAL_ENV_PATH}`);
 
   generateHandoffToken();
-  await packageManifest(appId);
+  await packageManifest(appId, teamsAppId);
 
   console.log("");
   await maybeInstallSkillPrompt();
@@ -1149,6 +1196,7 @@ async function getTunnelUrl(tunnelId: string): Promise<string | undefined> {
   const result = await runCommand("devtunnel", ["show", tunnelId], {
     stdio: "pipe",
     allowFailure: true,
+    timeoutMs: 10000,
   });
   if (result.code !== 0) return undefined;
   const match = result.stdout.match(/(https:\/\/\S+devtunnels\.ms)\S*/);
@@ -1207,7 +1255,7 @@ async function main(): Promise<void> {
   program
     .name("teams-bot")
     .description("Cross-platform service manager for teams-claude-bot")
-    .version("1.0.0");
+    .version("0.1.0");
 
   program
     .command("setup")

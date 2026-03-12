@@ -38,14 +38,31 @@ if (!appId || appId === "your-app-id") {
   process.exit(1);
 }
 
+const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+if (!uuidRegex.test(appId)) {
+  console.error(`Error: Invalid App ID "${appId}" — must be a UUID.`);
+  console.error("Find it in Azure Portal → App Registrations → Application (client) ID.");
+  console.error("Run 'teams-bot setup' to fix (press Enter to keep other values).");
+  process.exit(1);
+}
+
+// Teams App ID (separate from Bot App ID)
+const teamsAppId = process.argv[3] || env["TEAMS_APP_ID"];
+if (!teamsAppId || !uuidRegex.test(teamsAppId)) {
+  console.error("Error: TEAMS_APP_ID not found. Run 'teams-bot setup' first.");
+  process.exit(1);
+}
+
 // Patch manifest template
 const manifestDir = resolve(root, "manifest");
 const template = readFileSync(resolve(manifestDir, "manifest.json"), "utf-8");
-const patched = template.replace(/YOUR_BOT_APP_ID/g, appId);
+const patched = template
+  .replace(/YOUR_TEAMS_APP_ID/g, teamsAppId)
+  .replace(/YOUR_BOT_APP_ID/g, appId);
 
 // Build in temp dir to avoid modifying tracked files
 const tmpDir = mkdtempSync(join(tmpdir(), "manifest-"));
-const outPath = resolve(root, "teams-claude-bot.zip");
+const outPath = resolve(process.cwd(), "teams-claude-bot.zip");
 
 try {
   writeFileSync(join(tmpDir, "manifest.json"), patched);

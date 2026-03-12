@@ -98,6 +98,11 @@ Send any message to the bot in Teams to activate — this stores your conversati
 - Verify App ID, Password, and Tenant ID are correct
 - Re-run `teams-bot setup` to update credentials
 
+### "Upload failed due to an invalid BotId in your manifest"
+- The `botId` in manifest must be the **Application (client) ID** (a UUID) from [App Registrations](https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade) → your app → Overview
+- Re-run `teams-bot setup` with the correct ID, then `teams-bot package` to regenerate the zip
+- Or fix it directly in [Teams Developer Portal](https://dev.teams.microsoft.com/apps) → your app → App features → Bot → paste the correct ID
+
 ### Tunnel auth expired
 ```bash
 devtunnel user logout

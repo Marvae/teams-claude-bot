@@ -42,6 +42,11 @@ const COMMAND_GROUPS: CommandGroup[] = [
         command: "/sessions",
         description: "List recent sessions",
       },
+      {
+        title: "/handoff",
+        command: "/handoff",
+        description: "Hand off from Terminal",
+      },
     ],
   },
   {

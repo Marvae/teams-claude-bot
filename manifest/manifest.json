@@ -1,8 +1,8 @@
 {
-  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.19/MicrosoftTeams.schema.json",
-  "manifestVersion": "1.19",
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.25/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.25",
   "version": "0.1.0",
-  "id": "YOUR_BOT_APP_ID",
+  "id": "YOUR_TEAMS_APP_ID",
   "developer": {
     "name": "Claude Code Teams Bot",
     "websiteUrl": "https://github.com",
@@ -21,16 +21,16 @@
     "color": "color.png",
     "outline": "outline.png"
   },
-  "accentColor": "#D97706",
+  "accentColor": "#ffffff",
   "bots": [
     {
       "botId": "YOUR_BOT_APP_ID",
-      "scopes": ["personal", "groupChat"],
+      "scopes": ["personal"],
       "supportsFiles": true,
       "isNotificationOnly": false,
       "commandLists": [
         {
-          "scopes": ["personal", "groupChat"],
+          "scopes": ["personal"],
           "commands": [
             {
               "title": "/help",
@@ -49,10 +49,6 @@
               "description": "Set or show current model"
             },
             {
-              "title": "/models",
-              "description": "List available models"
-            },
-            {
               "title": "/status",
               "description": "Show session info"
             },
@@ -65,14 +61,6 @@
               "description": "Set permission mode"
             },
             {
-              "title": "/clear",
-              "description": "Clear session (alias for /new)"
-            },
-            {
-              "title": "/compact",
-              "description": "Clear session with fresh context"
-            },
-            {
               "title": "/stop",
               "description": "Stop current generation"
             },
@@ -81,8 +69,8 @@
               "description": "List and switch sessions"
             },
             {
-              "title": "/session",
-              "description": "Manage current session (e.g. /session name)"
+              "title": "/handoff",
+              "description": "Hand off session from Terminal to Teams"
             }
           ]
         }
