@@ -31,11 +31,20 @@ Teams (any device)
 > **Prerequisites:** Node.js 22+, Claude Code CLI, [Azure Bot registration](docs/azure-bot-setup.md)
 
 ```bash
+npm install -g claude-code-teams-bot
+teams-bot setup            # Interactive config (generates manifest zip)
+# Upload teams-claude-bot.zip to Teams (see docs/azure-bot-setup.md)
+teams-bot install           # Install as background service
+```
+
+**Or install from source:**
+
+```bash
 git clone https://github.com/Marvae/teams-claude-bot.git
 cd teams-claude-bot
 npm install && npm run build
-teams-bot setup            # Interactive config (generates manifest zip)
-teams-bot install           # Install as background service
+teams-bot setup
+teams-bot install
 ```
 
 ## Commands
@@ -72,7 +81,7 @@ In Teams, send `/handoff back` to clear handoff mode.
 teams-bot setup            # Interactive config
 teams-bot install           # Install + auto-start
 teams-bot start / stop      # Start or stop service
-teams-bot restart           # Rebuild + restart
+teams-bot restart           # Restart service
 teams-bot status            # Check if running
 teams-bot health            # Service status + /healthz probe
 teams-bot logs              # Tail logs

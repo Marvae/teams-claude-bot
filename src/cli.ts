@@ -14,6 +14,8 @@ import {
   TEAMS_BOT_DATA_DIR,
 } from "./paths.js";
 
+declare const PKG_VERSION: string;
+
 type Platform = "darwin" | "win32" | "linux";
 
 const cliDir = path.dirname(fileURLToPath(import.meta.url));
@@ -1255,7 +1257,7 @@ async function main(): Promise<void> {
   program
     .name("teams-bot")
     .description("Cross-platform service manager for teams-claude-bot")
-    .version("0.1.0");
+    .version(PKG_VERSION);
 
   program
     .command("setup")
