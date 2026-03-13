@@ -73,6 +73,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Create GitHub Release
-        run: gh release create "${GITHUB_REF#refs/tags/}"
+        run: gh release create "${GITHUB_REF#refs/tags/}" --title "${GITHUB_REF#refs/tags/}"
         env:
           GH_TOKEN: ${{ github.token }}
