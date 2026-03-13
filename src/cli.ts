@@ -1063,13 +1063,117 @@ async function setupCommand(): Promise<void> {
     existing.ALLOWED_USERS ||
     "";
 
-  console.log("\nTunnel (optional):");
-  const tunnelId =
+  console.log("\nTunnel:");
+  let tunnelId =
     (await prompt(
       `  Dev Tunnel ID${existing.DEVTUNNEL_ID ? ` [${existing.DEVTUNNEL_ID}]` : ""}: `,
     )) ||
     existing.DEVTUNNEL_ID ||
     "";
+
+  if (!tunnelId) {
+    // Check if devtunnel CLI is available, install if not
+    let hasCli = await runCommand("devtunnel", ["--version"], {
+      stdio: "pipe",
+      allowFailure: true,
+    });
+    if (hasCli.code !== 0) {
+      console.log("  devtunnel CLI not found. Installing...");
+      const platform = os.platform();
+      let installResult: { code: number };
+      if (platform === "darwin") {
+        installResult = await runCommand("brew", ["install", "devtunnel"], {
+          stdio: "inherit",
+          allowFailure: true,
+        });
+      } else if (platform === "win32") {
+        installResult = await runCommand(
+          "winget",
+          ["install", "Microsoft.devtunnel", "--accept-source-agreements"],
+          { stdio: "inherit", allowFailure: true },
+        );
+      } else {
+        installResult = await runCommand(
+          "bash",
+          ["-c", "curl -sL https://aka.ms/DevTunnelCliInstall | bash"],
+          { stdio: "inherit", allowFailure: true },
+        );
+      }
+      if (installResult.code === 0) {
+        hasCli = await runCommand("devtunnel", ["--version"], {
+          stdio: "pipe",
+          allowFailure: true,
+        });
+      }
+      if (hasCli.code !== 0) {
+        console.log(
+          "  Auto-install failed. Install manually: https://aka.ms/devtunnels",
+        );
+      }
+    }
+    if (hasCli.code === 0) {
+      const create = await prompt("  No tunnel configured. Create one? (Y/n): ");
+      if (create === "" || create.toLowerCase() === "y") {
+        const name =
+          (await prompt("  Tunnel name [teams-bot]: ")) || "teams-bot";
+
+        // Ensure logged in
+        const tokenCheck = await runCommand(
+          "devtunnel",
+          ["user", "show"],
+          { stdio: "pipe", allowFailure: true },
+        );
+        if (tokenCheck.code !== 0) {
+          console.log("  Logging in to devtunnel...");
+          const login = await runCommand("devtunnel", ["user", "login"], {
+            stdio: "inherit",
+            allowFailure: true,
+          });
+          if (login.code !== 0) {
+            console.error("  devtunnel login failed. Skipping tunnel setup.");
+          }
+        }
+
+        // Create tunnel + port
+        const createResult = await runCommand(
+          "devtunnel",
+          ["create", "--id", name, "--allow-anonymous"],
+          { stdio: "pipe", allowFailure: true },
+        );
+        if (createResult.code === 0) {
+          const portResult = await runCommand(
+            "devtunnel",
+            ["port", "create", name, "-p", port],
+            { stdio: "pipe", allowFailure: true },
+          );
+          if (portResult.code === 0) {
+            tunnelId = name;
+            console.log(`  ✓ Created tunnel "${name}" on port ${port}`);
+            console.log(
+              `\n  ⚠ Set the messaging endpoint in Azure Portal:`,
+            );
+            console.log(
+              `    https://${name}-${port}.devtunnels.ms/api/messages`,
+            );
+            console.log(
+              `\n    Open: https://portal.azure.com/#view/HubsExtension/BrowseResource/resourceType/Microsoft.BotService%2FbotServices`,
+            );
+            console.log(
+              `    → Your Bot → Settings → Configuration → Messaging endpoint`,
+            );
+          } else {
+            console.error(
+              `  Failed to create port: ${portResult.stderr.trim()}`,
+            );
+          }
+        } else {
+          console.error(
+            `  Failed to create tunnel: ${createResult.stderr.trim()}`,
+          );
+        }
+      }
+    }
+  }
 
   // Reuse existing Teams App ID or generate a new one
   const teamsAppId = existing.TEAMS_APP_ID || randomUUID();
@@ -1093,9 +1197,11 @@ async function setupCommand(): Promise<void> {
   await maybeInstallSkillPrompt();
 
   console.log("\nNext steps:");
-  console.log("  1. Upload teams-claude-bot.zip to Teams Admin Center");
-  console.log("     (or import manifest/manifest.json in Teams Developer Portal)");
-  console.log("  2. teams-bot install        Install as background service");
+  console.log("  1. Set messaging endpoint in Azure Portal (see setup guide)");
+  console.log("  2. Sideload teams-claude-bot.zip to Teams");
+  console.log("     (Teams → Apps → Manage your apps → Upload a custom app)");
+  console.log("  3. teams-bot install        Register as background service + start");
+  console.log("  4. teams-bot health         Verify everything is working");
 }
 
 async function installCommand(): Promise<void> {
