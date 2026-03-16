@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { spawn } from "child_process";
+import { execFileSync, spawn } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -56,6 +56,36 @@ const linuxUnitPath = path.join(
   "user",
   linuxServiceName,
 );
+
+/** Resolve devtunnel executable – on Windows it may live outside Git Bash PATH */
+let _devtunnelPath: string | undefined;
+function resolveDevtunnel(): string {
+  if (_devtunnelPath) return _devtunnelPath;
+  // Try plain "devtunnel" first (works if already in PATH)
+  const name = process.platform === "win32" ? "devtunnel.exe" : "devtunnel";
+  try {
+    execFileSync(name, ["--version"], { stdio: "ignore" });
+    _devtunnelPath = name;
+    return name;
+  } catch {
+    // Not in PATH – check common Windows install locations
+    if (process.platform === "win32") {
+      const candidates = [
+        path.join(homeDir, "AppData", "Local", "Microsoft", "WinGet", "Links", "devtunnel.exe"),
+        path.join(homeDir, "AppData", "Local", "Programs", "devtunnel", "devtunnel.exe"),
+      ];
+      for (const p of candidates) {
+        if (fs.existsSync(p)) {
+          _devtunnelPath = p;
+          return p;
+        }
+      }
+    }
+  }
+  // Fall back to bare name (will fail gracefully in callers)
+  _devtunnelPath = name;
+  return name;
+}
 
 function detectPlatform(): Platform {
   const current = os.platform();
@@ -481,7 +511,13 @@ if (Get-ScheduledTask -TaskName '${winTaskName}' -ErrorAction SilentlyContinue) 
   if (running && running !== "no") {
     console.log(`Running (port 3978, PID: ${running})`);
   } else {
-    console.log("Not running");
+    // Fallback: probe localhost in case PowerShell port check failed
+    const reachable = await probe("http://127.0.0.1:3978/healthz", 2000);
+    if (reachable) {
+      console.log("Running (port 3978, PID unknown)");
+    } else {
+      console.log("Not running");
+    }
   }
 
   if (taskMatch?.[1] === "yes") {
@@ -946,7 +982,7 @@ function loadExistingSetupConfig(): Partial<SetupConfig> {
   for (const envPath of paths) {
     try {
       const content = fs.readFileSync(envPath, "utf8");
-      for (const line of content.split("\n")) {
+      for (const line of content.split(/\r?\n/)) {
         const match = line.match(/^([A-Z_]+)=(.*)$/);
         if (match) {
           const key = match[1] as keyof SetupConfig;
@@ -959,6 +995,24 @@ function loadExistingSetupConfig(): Partial<SetupConfig> {
       /* ignore */
     }
   }
+
+  // Fall back to process.env for any missing keys
+  const envKeys: Array<keyof SetupConfig> = [
+    "MICROSOFT_APP_ID",
+    "MICROSOFT_APP_PASSWORD",
+    "MICROSOFT_APP_TENANT_ID",
+    "CLAUDE_WORK_DIR",
+    "PORT",
+    "ALLOWED_USERS",
+    "DEVTUNNEL_ID",
+    "TEAMS_APP_ID",
+  ];
+  for (const key of envKeys) {
+    if (!(key in result) && process.env[key]) {
+      (result as Record<string, string>)[key] = process.env[key]!;
+    }
+  }
+
   return result;
 }
 
@@ -1098,7 +1152,7 @@ async function setupCommand(): Promise<void> {
 
   if (!tunnelId) {
     // Check if devtunnel CLI is available, install if not
-    let hasCli = await runCommand("devtunnel", ["--version"], {
+    let hasCli = await runCommand(resolveDevtunnel(), ["--version"], {
       stdio: "pipe",
       allowFailure: true,
     });
@@ -1125,7 +1179,7 @@ async function setupCommand(): Promise<void> {
         );
       }
       if (installResult.code === 0) {
-        hasCli = await runCommand("devtunnel", ["--version"], {
+        hasCli = await runCommand(resolveDevtunnel(), ["--version"], {
           stdio: "pipe",
           allowFailure: true,
         });
@@ -1144,13 +1198,13 @@ async function setupCommand(): Promise<void> {
 
         // Ensure logged in
         const tokenCheck = await runCommand(
-          "devtunnel",
+          resolveDevtunnel(),
           ["user", "show"],
           { stdio: "pipe", allowFailure: true },
         );
         if (tokenCheck.code !== 0) {
           console.log("  Logging in to devtunnel...");
-          const login = await runCommand("devtunnel", ["user", "login"], {
+          const login = await runCommand(resolveDevtunnel(), ["user", "login"], {
             stdio: "inherit",
             allowFailure: true,
           });
@@ -1161,13 +1215,13 @@ async function setupCommand(): Promise<void> {
 
         // Create tunnel + port
         const createResult = await runCommand(
-          "devtunnel",
+          resolveDevtunnel(),
           ["create", "--id", name, "--allow-anonymous"],
           { stdio: "pipe", allowFailure: true },
         );
         if (createResult.code === 0) {
           const portResult = await runCommand(
-            "devtunnel",
+            resolveDevtunnel(),
             ["port", "create", name, "-p", port],
             { stdio: "pipe", allowFailure: true },
           );
@@ -1268,14 +1322,14 @@ async function preflightCheck(): Promise<void> {
   const tunnelId = cfg.DEVTUNNEL_ID;
   if (!tunnelId) return;
 
-  const result = await runCommand("devtunnel", ["token", tunnelId, "--scope", "host"], {
+  const result = await runCommand(resolveDevtunnel(), ["token", tunnelId, "--scope", "host"], {
     stdio: "pipe",
     allowFailure: true,
   });
 
   if (result.code !== 0) {
     console.log("Tunnel auth expired. Logging in...");
-    const login = await runCommand("devtunnel", ["user", "login"], {
+    const login = await runCommand(resolveDevtunnel(), ["user", "login"], {
       stdio: "inherit",
       allowFailure: true,
     });
@@ -1283,7 +1337,7 @@ async function preflightCheck(): Promise<void> {
       throw new Error("devtunnel user login failed. Cannot start without tunnel auth.");
     }
     // Verify token works after login
-    const retry = await runCommand("devtunnel", ["token", tunnelId, "--scope", "host"], {
+    const retry = await runCommand(resolveDevtunnel(), ["token", tunnelId, "--scope", "host"], {
       stdio: "pipe",
       allowFailure: true,
     });
@@ -1317,6 +1371,7 @@ async function probe(url: string, timeoutMs: number): Promise<boolean> {
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(url, { signal: controller.signal });
+    await res.arrayBuffer(); // drain body to avoid dangling handles
     return res.ok;
   } catch {
     return false;
@@ -1326,7 +1381,7 @@ async function probe(url: string, timeoutMs: number): Promise<boolean> {
 }
 
 async function getTunnelUrl(tunnelId: string): Promise<string | undefined> {
-  const result = await runCommand("devtunnel", ["show", tunnelId], {
+  const result = await runCommand(resolveDevtunnel(), ["show", tunnelId], {
     stdio: "pipe",
     allowFailure: true,
     timeoutMs: 10000,
@@ -1347,6 +1402,7 @@ async function healthCommand(): Promise<void> {
   try {
     const res = await fetch("http://127.0.0.1:3978/healthz", { signal: controller.signal });
     if (!res.ok) {
+      await res.arrayBuffer(); // drain body to avoid dangling handles
       console.log(`Bot: FAIL (HTTP ${res.status})`);
       return;
     }
@@ -1478,8 +1534,10 @@ async function main(): Promise<void> {
 }
 
 main()
-  .then(() => process.exit(0))
+  .then(() => {
+    process.exitCode = 0;
+  })
   .catch((error) => {
     console.error(error instanceof Error ? error.message : String(error));
-    process.exit(1);
+    process.exitCode = 1;
   });
