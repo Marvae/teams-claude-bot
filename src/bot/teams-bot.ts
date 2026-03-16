@@ -68,6 +68,9 @@ function friendlyError(error: string, stopReason?: string | null): string {
   if (error.includes("timeout") || error.includes("ETIMEDOUT")) {
     return "Request timed out. Please try again.";
   }
+  if (error.includes("max_turns")) {
+    return "This task used too many steps. Try breaking it into smaller requests, or use `/new` to start fresh.";
+  }
   return `Something went wrong: ${error.slice(0, 200)}`;
 }
 

@@ -577,7 +577,7 @@ export class ConversationSession {
       permissionMode: this.config.permissionMode ?? "default",
       allowDangerouslySkipPermissions:
         this.config.permissionMode === "bypassPermissions",
-      maxTurns: this.config.maxTurns ?? 50,
+      maxTurns: this.config.maxTurns ?? 200,
       systemPrompt: {
         type: "preset",
         preset: "claude_code",
