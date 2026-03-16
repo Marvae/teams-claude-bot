@@ -25,7 +25,7 @@ RESTART_COUNT=0
 
 # Ensure devtunnel is findable (WinGet installs to a path not always in bash PATH)
 if ! command -v devtunnel &>/dev/null; then
-  export PATH="$PATH:/c/Users/$USER/AppData/Local/Microsoft/WinGet/Links"
+  export PATH="$PATH:$HOME/AppData/Local/Microsoft/WinGet/Links"
 fi
 
 cleanup() {

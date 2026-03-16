@@ -354,13 +354,32 @@ async function macStatus(): Promise<void> {
 }
 
 async function getWindowsBashPath(): Promise<string> {
-  const value = await capture("where", ["bash"]);
-  const firstLine = value.split(/\r?\n/).find((line) => line.trim().length > 0);
-  if (!firstLine) {
-    throw new Error("Unable to find bash.exe. Install Git Bash first.");
+  // Must use Git\bin\bash.exe (not Git\usr\bin\bash.exe or WSL bash) —
+  // only the bin/ wrapper sets up the MSYS environment correctly.
+  const candidates = [
+    path.join("C:", "Program Files", "Git", "bin", "bash.exe"),
+    path.join("C:", "Program Files (x86)", "Git", "bin", "bash.exe"),
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
   }
 
-  return firstLine.trim();
+  // Fallback: search PATH for Git bash specifically
+  try {
+    const value = await capture("where", ["bash"]);
+    const lines = value.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    const gitBinBash = lines.find((l) => /Git[/\\]bin[/\\]bash/i.test(l));
+    if (gitBinBash) {
+      return gitBinBash;
+    }
+  } catch {
+    // where command failed
+  }
+
+  throw new Error("Unable to find Git Bash. Install Git for Windows first.");
 }
 
 async function runPowerShell(
@@ -385,15 +404,18 @@ Get-Process devtunnel -ErrorAction SilentlyContinue | Stop-Process -Force -Error
 
 async function windowsStartBackground(): Promise<void> {
   const bashPath = await getWindowsBashPath();
-  const runScript = path.join(projectDir, "scripts", "run.sh");
+  const runScript = path
+    .join(projectDir, "scripts", "run.sh")
+    .replace(/\\/g, "/");
+  const logPath = winLogPath.replace(/\\/g, "/");
+  const errPath = winErrLogPath.replace(/\\/g, "/");
+  const esc = (s: string) => s.replace(/'/g, "''");
 
   const script =
     `
-Start-Process -FilePath '${bashPath.replace(/'/g, "''")}' ` +
-    `-ArgumentList '"${runScript.replace(/'/g, "''")}"' ` +
-    `-WindowStyle Hidden ` +
-    `-RedirectStandardOutput '${winLogPath.replace(/'/g, "''")}' ` +
-    `-RedirectStandardError '${winErrLogPath.replace(/'/g, "''")}'
+Start-Process -FilePath '${esc(bashPath)}' ` +
+    `-ArgumentList '--login','-c','${esc(runScript)} > ${esc(logPath)} 2> ${esc(errPath)}' ` +
+    `-WindowStyle Hidden
 `;
 
   await runPowerShell(script);
@@ -403,11 +425,14 @@ async function windowsInstallService(): Promise<void> {
   await windowsStopService();
   await windowsStartBackground();
 
+  const esc = (s: string) => s.replace(/'/g, "''");
   const bashPath = await getWindowsBashPath();
-  const runScript = path.join(projectDir, "scripts", "run.sh");
+  const runScript = path
+    .join(projectDir, "scripts", "run.sh")
+    .replace(/\\/g, "/");
 
   const script = `
-$action = New-ScheduledTaskAction -Execute '${bashPath.replace(/'/g, "''")}' -Argument '"${runScript.replace(/'/g, "''")}"' -WorkingDirectory '${projectDir.replace(/'/g, "''")}'
+$action = New-ScheduledTaskAction -Execute '${esc(bashPath)}' -Argument '--login -c "${esc(runScript)} > ${esc(winLogPath.replace(/\\/g, '/'))} 2> ${esc(winErrLogPath.replace(/\\/g, '/'))}"' -WorkingDirectory '${esc(projectDir)}'
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit 0 -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
 Register-ScheduledTask -TaskName '${winTaskName}' -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
@@ -1452,7 +1477,9 @@ async function main(): Promise<void> {
   await program.parseAsync(process.argv);
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
-});
+main()
+  .then(() => process.exit(0))
+  .catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  });
