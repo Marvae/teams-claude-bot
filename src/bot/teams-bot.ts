@@ -250,6 +250,31 @@ export class ClaudeCodeBot extends ActivityHandler {
         return;
       }
 
+      if (value.action === "permission_decision") {
+        const toolUseID = value.toolUseID as string;
+        const choice = (value.permissionChoice as string) ?? "deny";
+
+        if (choice.startsWith("suggestion_")) {
+          const idx = parseInt(choice.replace("suggestion_", ""), 10);
+          resolvePermissionWithSuggestion(toolUseID, idx);
+        } else {
+          resolvePermission(toolUseID, choice === "allow");
+        }
+
+        const cardInfo = this.permissionCards.get(toolUseID);
+        this.permissionCards.delete(toolUseID);
+
+        if (cardInfo) {
+          try {
+            await ctx.deleteActivity(cardInfo.activityId);
+          } catch {
+            // Card may already be deleted by timeout handler
+          }
+        }
+        return;
+      }
+
+      // Legacy: support old permission_allow/deny actions for in-flight cards
       if (
         value.action === "permission_allow" ||
         value.action === "permission_deny" ||

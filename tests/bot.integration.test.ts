@@ -436,6 +436,43 @@ describe("permission card interactions", () => {
       },
     });
   });
+
+  it("handles permission_decision action with allow choice", async () => {
+    const adapter = createAdapter();
+    // Unknown toolUseID — just verifies the action path doesn't crash
+    await adapter.send({
+      type: ActivityTypes.Message,
+      value: {
+        action: "permission_decision",
+        toolUseID: "nonexistent-decision-1",
+        permissionChoice: "allow",
+      },
+    });
+  });
+
+  it("handles permission_decision action with deny choice", async () => {
+    const adapter = createAdapter();
+    await adapter.send({
+      type: ActivityTypes.Message,
+      value: {
+        action: "permission_decision",
+        toolUseID: "nonexistent-decision-2",
+        permissionChoice: "deny",
+      },
+    });
+  });
+
+  it("handles permission_decision action with suggestion choice", async () => {
+    const adapter = createAdapter();
+    await adapter.send({
+      type: ActivityTypes.Message,
+      value: {
+        action: "permission_decision",
+        toolUseID: "nonexistent-decision-3",
+        permissionChoice: "suggestion_0",
+      },
+    });
+  });
 });
 
 describe("user input (PromptRequest) flow", () => {

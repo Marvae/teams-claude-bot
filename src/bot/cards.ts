@@ -296,36 +296,38 @@ export function buildToolCard(
     };
   }
 
-  const actions: Record<string, unknown>[] = [
-    {
-      type: "Action.Submit",
-      title: "✅ Allow",
-      style: "positive",
-      data: { action: "permission_allow", toolUseID },
-    },
+  // Single ChoiceSet + Submit (avoids accidental double-click on separate buttons)
+  const choices: { title: string; value: string }[] = [
+    { title: "✅ Allow", value: "allow" },
   ];
 
   if (suggestions) {
     for (let i = 0; i < suggestions.length; i++) {
-      actions.push({
-        type: "Action.Submit",
+      choices.push({
         title: `✅ ${suggestionLabel(suggestions[i])}`,
-        style: "positive",
-        data: {
-          action: "permission_allow_session",
-          toolUseID,
-          suggestionIndex: i,
-        },
+        value: `suggestion_${i}`,
       });
     }
   }
 
-  actions.push({
-    type: "Action.Submit",
-    title: "❌ Deny",
-    style: "destructive",
-    data: { action: "permission_deny", toolUseID },
+  choices.push({ title: "❌ Deny", value: "deny" });
+
+  body.push({
+    type: "Input.ChoiceSet",
+    id: "permissionChoice",
+    style: "expanded",
+    value: "allow",
+    choices,
   });
+
+  const actions: Record<string, unknown>[] = [
+    {
+      type: "Action.Submit",
+      title: "Submit",
+      style: "positive",
+      data: { action: "permission_decision", toolUseID },
+    },
+  ];
 
   // Only show Details if the summary was truncated
   if (oneLiner.length > 120) {
