@@ -75,7 +75,10 @@ export function clearPersistedSessionId(): void {
 /** Load persisted state into memory (call on startup). */
 export function loadPersistedState(): void {
   const data = loadPersisted();
-  if (data.permissionMode) {
+  // .env PERMISSION_MODE takes priority on restart; otherwise use persisted value
+  if (process.env.PERMISSION_MODE) {
+    permissionMode = config.defaultPermissionMode;
+  } else if (data.permissionMode) {
     permissionMode = data.permissionMode;
   }
   // Restore cwd if valid; if invalid, leave sessionId so resume
@@ -108,6 +111,8 @@ export function destroySession(): void {
     managed = null;
     resetUsageStats();
   }
+  // Reset permission mode to .env default for next session
+  permissionMode = config.defaultPermissionMode;
 }
 
 // ─── In-memory preferences (reset on restart) ───
@@ -115,7 +120,7 @@ export function destroySession(): void {
 let workDir: string = config.claudeWorkDir;
 let model: string | undefined = "claude-opus-4-6";
 let thinkingTokens: number | null | undefined;
-let permissionMode: string = "default";
+let permissionMode: string = config.defaultPermissionMode;
 let handoffMode: "pickup" | undefined;
 
 export function getWorkDir(): string {

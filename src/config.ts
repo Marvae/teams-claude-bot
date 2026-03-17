@@ -82,4 +82,5 @@ export const config = {
     return generated;
   })(),
   sessionInitPrompt: process.env.SESSION_INIT_PROMPT,
+  defaultPermissionMode: process.env.PERMISSION_MODE ?? "default",
 } as const;
