@@ -180,11 +180,20 @@ export class ClaudeCodeBot extends ActivityHandler {
     // Handle Adaptive Card button clicks
     const value = ctx.activity.value as Record<string, unknown> | undefined;
     if (value?.action) {
+      // Helper: delete the card that triggered this submit action
+      const deleteSubmittedCard = async () => {
+        try {
+          const cardId = ctx.activity.replyToId;
+          if (cardId) await ctx.deleteActivity(cardId);
+        } catch { /* card may already be gone */ }
+      };
+
       if (value.action === "resume_session") {
         const sessionId = value.sessionId as string;
         if (sessionId) {
           const currentId = state.getSession()?.session.currentSessionId;
           if (sessionId === currentId) {
+            await deleteSubmittedCard();
             await ctx.sendActivity("That session is already active.");
             return;
           }
@@ -203,6 +212,7 @@ export class ClaudeCodeBot extends ActivityHandler {
               return;
             }
           }
+          await deleteSubmittedCard();
           state.destroySession();
           state.persistSessionId(sessionId);
           const dirLabel = cwd ? `\n\n📂 ${cwd}` : "";
@@ -324,6 +334,7 @@ export class ClaudeCodeBot extends ActivityHandler {
       if (value.action === "elicitation_form_submit") {
         const elicitationId = value.elicitationId as string;
         const resolved = resolveElicitation(elicitationId, value);
+        await deleteSubmittedCard();
         if (resolved) {
           await ctx.sendActivity("✅ Submitted");
         } else {
@@ -335,6 +346,7 @@ export class ClaudeCodeBot extends ActivityHandler {
       if (value.action === "elicitation_url_complete") {
         const elicitationId = value.elicitationId as string;
         const resolved = resolveElicitationUrlComplete(elicitationId);
+        await deleteSubmittedCard();
         if (resolved) {
           await ctx.sendActivity("✅ Authorization confirmed");
         } else {
@@ -346,6 +358,7 @@ export class ClaudeCodeBot extends ActivityHandler {
       if (value.action === "elicitation_form_cancel") {
         const elicitationId = value.elicitationId as string;
         const resolved = cancelElicitation(elicitationId);
+        await deleteSubmittedCard();
         if (resolved) {
           await ctx.sendActivity("❌ Canceled");
         } else {
@@ -358,6 +371,7 @@ export class ClaudeCodeBot extends ActivityHandler {
         const mode = value.mode as string;
         state.setPermissionMode(mode);
         await state.getSession()?.session.setPermissionMode(mode);
+        await deleteSubmittedCard();
         await ctx.sendActivity(`Permission mode set to \`${mode}\``);
         return;
       }
@@ -366,6 +380,7 @@ export class ClaudeCodeBot extends ActivityHandler {
         const requestId = value.requestId as string;
         const key = value.key as string;
         const resolved = resolvePromptRequest(requestId, key);
+        await deleteSubmittedCard();
         if (resolved) {
           await ctx.sendActivity(`Selected: ${key}`);
         } else {
