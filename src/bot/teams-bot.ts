@@ -244,8 +244,31 @@ export class ClaudeCodeBot extends ActivityHandler {
       }
 
       if (value.action === "handoff_accept") {
-        // Replace card with confirmation text
-        await deleteSubmittedCard();
+        // Replace card buttons with "✅ Handed off" text
+        const cardActivityId = ctx.activity.replyToId;
+        if (cardActivityId) {
+          try {
+            const updatedCard = buildHandoffCard(
+              value.workDir as string,
+              value.sessionId as string | undefined,
+              undefined,
+              undefined,
+              undefined,
+              undefined,
+              "✅ Handed off",
+            );
+            await ctx.updateActivity({
+              id: cardActivityId,
+              type: "message",
+              attachments: [
+                {
+                  contentType: "application/vnd.microsoft.card.adaptive",
+                  content: updatedCard,
+                },
+              ],
+            });
+          } catch { /* card may be gone */ }
+        }
 
         // User confirmed — do the actual handoff in background
         const ref = TurnContext.getConversationReference(ctx.activity);

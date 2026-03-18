@@ -374,6 +374,7 @@ export function buildHandoffCard(
   todos?: { content: string; done: boolean }[],
   buttonText?: string,
   title?: string,
+  result?: string,
 ): Record<string, unknown> {
   const dirName = workDir?.split("/").pop() ?? workDir ?? "unknown";
 
@@ -424,6 +425,22 @@ export function buildHandoffCard(
         isSubtle: t.done,
       });
     }
+  }
+
+  if (result) {
+    body.push({
+      type: "TextBlock",
+      text: result,
+      weight: "bolder",
+      color: "good",
+      spacing: "medium",
+    });
+    return {
+      type: "AdaptiveCard",
+      version: "1.4",
+      $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+      body,
+    };
   }
 
   return {
