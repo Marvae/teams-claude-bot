@@ -4,8 +4,6 @@ import path from "path";
 import {
   type Platform,
   projectDir,
-  homeDir,
-  npm,
   macLabel,
   winTaskName,
   linuxServiceName,

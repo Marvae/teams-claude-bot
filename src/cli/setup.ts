@@ -6,9 +6,7 @@ import { CANONICAL_ENV_PATH, HANDOFF_TOKEN_PATH } from "../paths.js";
 import { projectDir, resolveDevtunnel } from "./constants.js";
 import {
   prompt,
-  normalizeYesNo,
   runCommand,
-  runBuild,
 } from "./utils.js";
 import { maybeInstallSkillPrompt } from "./skill.js";
 
