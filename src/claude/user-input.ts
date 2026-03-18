@@ -64,7 +64,7 @@ export function createPromptCard(
 
 export function registerPromptRequest(
   requestId: string,
-  opts?: { timeoutMs?: number },
+  opts?: { timeoutMs?: number; onTimeout?: (requestId: string) => void },
 ): Promise<string> {
   if (pendingPrompts.has(requestId)) {
     return Promise.reject(
@@ -77,6 +77,7 @@ export function registerPromptRequest(
   return new Promise<string>((resolve, reject) => {
     const timeout = setTimeout(() => {
       pendingPrompts.delete(requestId);
+      opts?.onTimeout?.(requestId);
       reject(new Error("Prompt request timed out"));
     }, timeoutMs);
 

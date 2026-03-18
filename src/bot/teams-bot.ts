@@ -75,7 +75,7 @@ function friendlyError(error: string, stopReason?: string | null): string {
 }
 
 export class ClaudeCodeBot extends ActivityHandler {
-  private permissionCards = new Map<
+  private interactiveCards = new Map<
     string,
     {
       toolName: string;
@@ -226,6 +226,7 @@ export class ClaudeCodeBot extends ActivityHandler {
       }
 
       if (value.action === "handoff_fork") {
+        await deleteSubmittedCard();
         // Show confirmation card — don't switch yet
         const card = buildHandoffCard(
           value.workDir as string,
@@ -243,6 +244,9 @@ export class ClaudeCodeBot extends ActivityHandler {
       }
 
       if (value.action === "handoff_accept") {
+        // Replace card with confirmation text
+        await deleteSubmittedCard();
+
         // User confirmed — do the actual handoff in background
         const ref = TurnContext.getConversationReference(ctx.activity);
         const adapter = ctx.adapter as BotFrameworkAdapter;
@@ -271,8 +275,8 @@ export class ClaudeCodeBot extends ActivityHandler {
           resolvePermission(toolUseID, choice === "allow");
         }
 
-        const cardInfo = this.permissionCards.get(toolUseID);
-        this.permissionCards.delete(toolUseID);
+        const cardInfo = this.interactiveCards.get(toolUseID);
+        this.interactiveCards.delete(toolUseID);
 
         if (cardInfo) {
           try {
@@ -300,8 +304,8 @@ export class ClaudeCodeBot extends ActivityHandler {
         } else {
           resolvePermission(toolUseID, allow);
         }
-        const cardInfo = this.permissionCards.get(toolUseID);
-        this.permissionCards.delete(toolUseID);
+        const cardInfo = this.interactiveCards.get(toolUseID);
+        this.interactiveCards.delete(toolUseID);
 
         if (cardInfo) {
           try {
@@ -316,8 +320,8 @@ export class ClaudeCodeBot extends ActivityHandler {
       if (value.action === "ask_user_question_submit") {
         const toolUseID = value.toolUseID as string;
         const resolved = resolveAskUserQuestion(toolUseID, value);
-        const cardInfo = this.permissionCards.get(toolUseID);
-        this.permissionCards.delete(toolUseID);
+        const cardInfo = this.interactiveCards.get(toolUseID);
+        this.interactiveCards.delete(toolUseID);
         if (cardInfo) {
           try {
             await ctx.deleteActivity(cardInfo.activityId);
@@ -334,6 +338,7 @@ export class ClaudeCodeBot extends ActivityHandler {
       if (value.action === "elicitation_form_submit") {
         const elicitationId = value.elicitationId as string;
         const resolved = resolveElicitation(elicitationId, value);
+        this.interactiveCards.delete(elicitationId);
         await deleteSubmittedCard();
         if (resolved) {
           await ctx.sendActivity("✅ Submitted");
@@ -346,6 +351,7 @@ export class ClaudeCodeBot extends ActivityHandler {
       if (value.action === "elicitation_url_complete") {
         const elicitationId = value.elicitationId as string;
         const resolved = resolveElicitationUrlComplete(elicitationId);
+        this.interactiveCards.delete(elicitationId);
         await deleteSubmittedCard();
         if (resolved) {
           await ctx.sendActivity("✅ Authorization confirmed");
@@ -358,6 +364,7 @@ export class ClaudeCodeBot extends ActivityHandler {
       if (value.action === "elicitation_form_cancel") {
         const elicitationId = value.elicitationId as string;
         const resolved = cancelElicitation(elicitationId);
+        this.interactiveCards.delete(elicitationId);
         await deleteSubmittedCard();
         if (resolved) {
           await ctx.sendActivity("❌ Canceled");
@@ -380,6 +387,7 @@ export class ClaudeCodeBot extends ActivityHandler {
         const requestId = value.requestId as string;
         const key = value.key as string;
         const resolved = resolvePromptRequest(requestId, key);
+        this.interactiveCards.delete(requestId);
         await deleteSubmittedCard();
         if (resolved) {
           await ctx.sendActivity(`Selected: ${key}`);
@@ -497,8 +505,8 @@ export class ClaudeCodeBot extends ActivityHandler {
       });
     };
 
-    const sendCard = async (card: Record<string, unknown>) => {
-      await sendActivity({
+    const sendCard = async (card: Record<string, unknown>): Promise<string | undefined> => {
+      const resp = await sendActivity({
         attachments: [
           {
             contentType: "application/vnd.microsoft.card.adaptive",
@@ -506,6 +514,7 @@ export class ClaudeCodeBot extends ActivityHandler {
           },
         ],
       });
+      return resp?.id;
     };
 
     const sendToolCard = async (req: {
@@ -531,7 +540,7 @@ export class ClaudeCodeBot extends ActivityHandler {
         ],
       });
       if (resp?.id) {
-        this.permissionCards.set(req.toolUseID, {
+        this.interactiveCards.set(req.toolUseID, {
           toolName: req.toolName,
           input: req.input,
           decisionReason: req.decisionReason,
@@ -544,13 +553,34 @@ export class ClaudeCodeBot extends ActivityHandler {
     const onElicitation = async (
       request: Parameters<typeof handleElicitation>[0],
     ) => {
-      return handleElicitation(request, async (elicitationId, req) => {
-        const card =
-          req.mode === "url"
-            ? buildElicitationUrlCard(elicitationId, req)
-            : buildElicitationFormCard(elicitationId, req);
-        await sendCard(card);
-      });
+      return handleElicitation(
+        request,
+        async (elicitationId, req) => {
+          const card =
+            req.mode === "url"
+              ? buildElicitationUrlCard(elicitationId, req)
+              : buildElicitationFormCard(elicitationId, req);
+          const activityId = await sendCard(card);
+          if (activityId) {
+            this.interactiveCards.set(elicitationId, {
+              toolName: "Elicitation",
+              input: {},
+              activityId,
+            });
+          }
+        },
+        {
+          timeoutMs: 120_000,
+          onTimeout: async (elicitationId: string) => {
+            const cardInfo = this.interactiveCards.get(elicitationId);
+            this.interactiveCards.delete(elicitationId);
+            if (cardInfo) {
+              try { await deleteActivity(cardInfo.activityId); } catch {}
+            }
+            await sendActivity({ type: "message", text: "⏰ Elicitation timed out." });
+          },
+        },
+      );
     };
 
     const onPromptRequest = async (info: {
@@ -558,14 +588,30 @@ export class ClaudeCodeBot extends ActivityHandler {
       message: string;
       options: unknown[];
     }) => {
-      const response = registerPromptRequest(info.requestId);
-      await sendCard(
+      const response = registerPromptRequest(info.requestId, {
+        onTimeout: async (requestId: string) => {
+          const cardInfo = this.interactiveCards.get(requestId);
+          this.interactiveCards.delete(requestId);
+          if (cardInfo) {
+            try { await deleteActivity(cardInfo.activityId); } catch {}
+          }
+          await sendActivity({ type: "message", text: "⏰ Prompt request timed out." });
+        },
+      });
+      const activityId = await sendCard(
         createPromptCard(
           info.requestId,
           info.message,
           info.options as Parameters<typeof createPromptCard>[2],
         ),
       );
+      if (activityId) {
+        this.interactiveCards.set(info.requestId, {
+          toolName: "PromptRequest",
+          input: {},
+          activityId,
+        });
+      }
       return response;
     };
 
@@ -586,8 +632,8 @@ export class ClaudeCodeBot extends ActivityHandler {
       forkSession: overrides?.forkSession,
       canUseTool: createToolInterceptor(sendToolCard, {
         onTimeout: async (toolUseID) => {
-          const cardInfo = this.permissionCards.get(toolUseID);
-          this.permissionCards.delete(toolUseID);
+          const cardInfo = this.interactiveCards.get(toolUseID);
+          this.interactiveCards.delete(toolUseID);
           if (cardInfo) {
             try {
               await deleteActivity(cardInfo.activityId);

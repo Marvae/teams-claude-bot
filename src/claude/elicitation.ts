@@ -216,7 +216,7 @@ export function buildElicitationUrlCard(
 
 export function registerElicitation(
   elicitationId: string,
-  opts?: { timeoutMs?: number },
+  opts?: { timeoutMs?: number; onTimeout?: (elicitationId: string) => void },
 ): Promise<ElicitationResult> {
   if (pendingElicitations.has(elicitationId)) {
     return Promise.reject(
@@ -229,6 +229,7 @@ export function registerElicitation(
   return new Promise<ElicitationResult>((resolve) => {
     const timeout = setTimeout(() => {
       pendingElicitations.delete(elicitationId);
+      opts?.onTimeout?.(elicitationId);
       resolve({ action: "decline" });
     }, timeoutMs);
 
@@ -280,7 +281,7 @@ export async function handleElicitation(
     elicitationId: string,
     request: ElicitationRequest,
   ) => Promise<void>,
-  opts?: { timeoutMs?: number },
+  opts?: { timeoutMs?: number; onTimeout?: (elicitationId: string) => void },
 ): Promise<ElicitationResult> {
   const baseId = request.elicitationId?.trim();
   const fallbackId = `${request.serverName}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;

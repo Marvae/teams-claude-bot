@@ -1,7 +1,19 @@
 import { CardFactory, type TurnContext } from "botbuilder";
 import { listSessions } from "@anthropic-ai/claude-agent-sdk";
 import * as state from "../session/state.js";
-import { buildHelpCard, buildPermissionModeCard } from "./cards.js";
+import {
+  buildHelpCard,
+  buildPermissionModeCard,
+  buildToolCard,
+  buildHandoffCard,
+  buildElicitationFormCard,
+  buildElicitationUrlCard,
+} from "./cards.js";
+import { createPromptCard } from "../claude/user-input.js";
+import {
+  buildAskUserQuestionCardData,
+  type AskUserQuestionInput,
+} from "../claude/user-questions.js";
 
 function formatAge(iso: string): string {
   const ms = Date.now() - new Date(iso).getTime();
@@ -339,6 +351,187 @@ export async function handleCommand(
         sdkCommands = state.getCachedCommands();
       }
       const card = buildHelpCard(sdkCommands);
+      await ctx.sendActivity({
+        attachments: [CardFactory.adaptiveCard(card)],
+      });
+      return true;
+    }
+
+    case "/test-permission": {
+      const card = buildToolCard(
+        "Bash",
+        { command: "rm -rf /tmp/test-data" },
+        `test-perm-${Date.now()}`,
+        "potentially dangerous command",
+      );
+      await ctx.sendActivity({
+        attachments: [CardFactory.adaptiveCard(card)],
+      });
+      return true;
+    }
+
+    case "/test-permission-suggestion": {
+      const card = buildToolCard(
+        "Bash",
+        { command: "ls /home/user/projects" },
+        `test-perm-sug-${Date.now()}`,
+        "directory access",
+        [
+          {
+            type: "addRules",
+            destination: "session",
+            rules: [{ toolName: "Bash", ruleContent: "/home/user/projects" }],
+          } as import("@anthropic-ai/claude-agent-sdk").PermissionUpdate,
+        ],
+      );
+      await ctx.sendActivity({
+        attachments: [CardFactory.adaptiveCard(card)],
+      });
+      return true;
+    }
+
+    case "/test-elicitation": {
+      const card = buildElicitationFormCard(
+        `test-elic-${Date.now()}`,
+        {
+          serverName: "test-mcp-server",
+          message: "Please provide your configuration",
+          mode: "form",
+          elicitationId: `test-elic-${Date.now()}`,
+          requestedSchema: {
+            type: "object",
+            properties: {
+              project: { type: "string", title: "Project Name" },
+              branch: { type: "string", title: "Branch" },
+            },
+            required: ["project"],
+          },
+        },
+      );
+      await ctx.sendActivity({
+        attachments: [CardFactory.adaptiveCard(card)],
+      });
+      return true;
+    }
+
+    case "/test-elicitation-url": {
+      const card = buildElicitationUrlCard(
+        `test-elic-url-${Date.now()}`,
+        {
+          serverName: "github-mcp",
+          message: "Please authorize access to your GitHub account",
+          mode: "url",
+          elicitationId: `test-elic-url-${Date.now()}`,
+          url: "https://github.com/login/oauth/authorize?client_id=test",
+        },
+      );
+      await ctx.sendActivity({
+        attachments: [CardFactory.adaptiveCard(card)],
+      });
+      return true;
+    }
+
+    case "/test-prompt": {
+      const card = createPromptCard(
+        `test-prompt-${Date.now()}`,
+        "How would you like to proceed?",
+        [
+          { key: "retry", label: "Retry" },
+          { key: "skip", label: "Skip" },
+          { key: "abort", label: "Abort" },
+        ],
+      );
+      await ctx.sendActivity({
+        attachments: [CardFactory.adaptiveCard(card)],
+      });
+      return true;
+    }
+
+    case "/test-handoff": {
+      const card = buildHandoffCard(
+        "/Users/test/projects/my-app",
+        "test-session-abc123",
+        "Working on feature branch: add-auth\n\nLast action: Updated login component",
+        [
+          { content: "Add OAuth provider", done: true },
+          { content: "Implement token refresh", done: false },
+          { content: "Write tests", done: false },
+        ],
+      );
+      await ctx.sendActivity({
+        attachments: [
+          {
+            contentType: "application/vnd.microsoft.card.adaptive",
+            content: card,
+          },
+        ],
+      });
+      return true;
+    }
+
+    case "/test-question": {
+      const input: AskUserQuestionInput = {
+        questions: [
+          {
+            question: "Which testing framework do you prefer?",
+            header: "Testing Setup",
+            options: [
+              { label: "Vitest", description: "Fast, Vite-native" },
+              { label: "Jest", description: "Widely adopted" },
+              { label: "Mocha", description: "Flexible, minimal" },
+            ],
+            multiSelect: false,
+            allowFreeText: true,
+          },
+        ],
+      };
+      const cardData = buildAskUserQuestionCardData(
+        input,
+        `test-question-${Date.now()}`,
+      );
+      await ctx.sendActivity({
+        attachments: [
+          CardFactory.adaptiveCard({
+            type: "AdaptiveCard",
+            version: "1.4",
+            $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+            body: cardData.body,
+            actions: cardData.actions,
+          }),
+        ],
+      });
+      return true;
+    }
+
+    case "/test-session": {
+      const card = CardFactory.adaptiveCard({
+        type: "AdaptiveCard",
+        version: "1.4",
+        body: [
+          { type: "TextBlock", text: "Sessions (Test)", weight: "bolder", size: "medium" },
+          {
+            type: "Input.ChoiceSet",
+            id: "sessionId",
+            style: "expanded",
+            value: "sess-abc",
+            choices: [
+              { title: "Feature Auth (my-app · 2h ago · main)", value: "sess-abc" },
+              { title: "Bug Fix #123 (api · 5h ago · fix/123)", value: "sess-def" },
+              { title: "Code Review (frontend · 1d ago)", value: "sess-ghi" },
+            ],
+          },
+        ],
+        actions: [
+          { type: "Action.Submit", title: "Submit", style: "positive", data: { action: "resume_session", sessionCwds: {} } },
+          { type: "Action.Submit", title: "Cancel", data: { action: "noop" } },
+        ],
+      });
+      await ctx.sendActivity({ attachments: [card] });
+      return true;
+    }
+
+    case "/test-permission-mode": {
+      const card = buildPermissionModeCard(state.getPermissionMode());
       await ctx.sendActivity({
         attachments: [CardFactory.adaptiveCard(card)],
       });
