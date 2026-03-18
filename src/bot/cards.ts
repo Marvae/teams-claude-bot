@@ -132,13 +132,10 @@ export function buildHelpCard(
     body.push({ type: "ColumnSet", columns });
   }
 
-  // SDK slash commands — show first row inline, rest in expandable card
+  // SDK slash commands — all displayed inline, 3 per row
   const actions: Record<string, unknown>[] = [];
   if (sdkCommands && sdkCommands.length > 0) {
-    const COLS_PER_ROW = 4;
-    const pinned = ["compact", "cost", "review", "init"];
-    const pinnedCmds = sdkCommands.filter((c) => pinned.includes(c.name));
-    const restCmds = sdkCommands.filter((c) => !pinned.includes(c.name));
+    const COLS_PER_ROW = 3;
 
     body.push({
       type: "TextBlock",
@@ -148,11 +145,10 @@ export function buildHelpCard(
       spacing: "large",
     });
 
-    // Pinned row — always visible
-    if (pinnedCmds.length > 0) {
-      const row = pinnedCmds.map((cmd) => ({
+    for (let i = 0; i < sdkCommands.length; i += COLS_PER_ROW) {
+      const row = sdkCommands.slice(i, i + COLS_PER_ROW).map((cmd) => ({
         type: "Column",
-        width: "auto",
+        width: "stretch",
         items: [
           {
             type: "ActionSet",
@@ -169,38 +165,6 @@ export function buildHelpCard(
         ],
       }));
       body.push({ type: "ColumnSet", columns: row });
-    }
-
-    // Rest — expandable
-    if (restCmds.length > 0) {
-      const restBody: Record<string, unknown>[] = [];
-      for (let i = 0; i < restCmds.length; i += COLS_PER_ROW) {
-        const row = restCmds.slice(i, i + COLS_PER_ROW).map((cmd) => ({
-          type: "Column",
-          width: "auto",
-          items: [
-            {
-              type: "ActionSet",
-              actions: [
-                {
-                  type: "Action.Submit",
-                  title: `/${cmd.name}`,
-                  data: {
-                    msteams: { type: "imBack", value: `/${cmd.name}` },
-                  },
-                },
-              ],
-            },
-          ],
-        }));
-        restBody.push({ type: "ColumnSet", columns: row });
-      }
-
-      actions.push({
-        type: "Action.ShowCard",
-        title: `More (${restCmds.length})`,
-        card: { type: "AdaptiveCard", body: restBody },
-      });
     }
   }
 
