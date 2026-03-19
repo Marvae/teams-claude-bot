@@ -110,6 +110,8 @@ export class ClaudeCodeBot extends ActivityHandler {
       }
 
       saveConversationRef(ctx);
+      // Reset streaming progress so new user messages get fresh reply boxes
+      state.getSession()?.resetProgress?.();
       await this.handleMessage(ctx);
       await next();
     });
@@ -761,6 +763,12 @@ export class ClaudeCodeBot extends ActivityHandler {
         const tc = ctx as TurnContext;
         conversationRef = TurnContext.getConversationReference(tc.activity);
         adapter = tc.adapter as BotFrameworkAdapter;
+      },
+      resetProgress: () => {
+        // Force next onProgress to create a fresh notifier (new message)
+        if (currentProgress) {
+          currentProgress = null;
+        }
       },
     };
   }
