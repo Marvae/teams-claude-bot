@@ -587,7 +587,7 @@ export class ConversationSession {
       },
       executable: process.argv[0],
       pathToClaudeCodeExecutable: CLAUDE_CLI_PATH,
-      settingSources: ["project"],
+      settingSources: ["user", "project", "local"],
       includePartialMessages: true,
       promptSuggestions: true,
       env: { ...process.env, CLAUDECODE: undefined },
