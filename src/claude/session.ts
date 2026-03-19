@@ -573,7 +573,6 @@ export class ConversationSession {
         "Glob",
         "Grep",
         "AskUserQuestion",
-        "Skill",
       ],
       permissionMode: this.config.permissionMode ?? "default",
       allowDangerouslySkipPermissions:

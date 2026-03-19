@@ -25,7 +25,6 @@ import { TEAMS_BOT_DATA_DIR } from "../paths.js";
 export interface ManagedSession {
   session: ConversationSession;
   setRef: (ctx: unknown) => void;
-  resetProgress?: () => void;
 }
 
 // ─── Persistence ───
