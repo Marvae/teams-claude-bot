@@ -2,8 +2,8 @@
 
 ## Prerequisites
 
-- Azure account (free tier works)
-- Microsoft Teams — personal Microsoft account recommended (enterprise accounts may require Service Tree IDs, admin consent, and other org-specific policies)
+- Azure account — personal Microsoft account recommended. Enterprise accounts may require Service Tree IDs and additional approvals. Bots created with a personal account can still be sideloaded to enterprise Teams. Avoid creating the bot under a different tenant (e.g., a test tenant) as it may prevent sideloading.
+- Microsoft Teams
 - Node.js 22+
 - Claude Code CLI installed
 
@@ -16,6 +16,7 @@
    - **Microsoft App ID**: Create new
    - **App type**: Single Tenant
 3. Click Create
+4. Once created, go to **Channels** → click **Microsoft Teams** → Accept Terms of Service → **Apply**
 
 ### Switch to Multi Tenant (personal accounts only)
 
@@ -121,6 +122,17 @@ teams-bot install
 - The `botId` in manifest must be the **Application (client) ID** (a UUID) from [App Registrations](https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade) → your app → Overview
 - Re-run `teams-bot setup` with the correct ID, then `teams-bot package` to regenerate the zip
 - Or fix it directly in [Teams Developer Portal](https://dev.teams.microsoft.com/apps) → your app → App features → Bot → paste the correct ID
+
+### Teams doesn't recognize the bot ID (upload succeeds but bot doesn't work)
+
+The most likely cause is that the **Microsoft Teams channel** is not enabled on your Azure Bot resource.
+
+To fix:
+
+1. Open your Azure Bot resource in [Azure Portal](https://portal.azure.com)
+2. Go to **Channels** → click **Microsoft Teams**
+3. Accept Terms of Service → **Apply**
+4. Re-upload `teams-claude-bot.zip` to Teams
 
 ### Tunnel auth expired
 
