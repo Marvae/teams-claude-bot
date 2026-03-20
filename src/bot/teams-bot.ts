@@ -9,7 +9,6 @@ import { handleCommand } from "./commands.js";
 import * as state from "../session/state.js";
 import {
   type ClaudeResult,
-  type ImageInput,
   type ProgressEvent,
 } from "../claude/agent.js";
 import { ConversationSession, type SessionConfig } from "../claude/session.js";
@@ -33,7 +32,7 @@ import {
   resolveElicitation,
   resolveElicitationUrlComplete,
 } from "../claude/elicitation.js";
-import { processAttachments } from "./attachments.js";
+import { saveAttachments } from "./attachments.js";
 import { config } from "../config.js";
 import { saveConversationRef } from "../handoff/store.js";
 
@@ -425,34 +424,35 @@ export class ClaudeCodeBot extends ActivityHandler {
 
     let text = (ctx.activity.text ?? "").trim();
 
-    // Process attachments (images, text files)
-    let images: ImageInput[] | undefined;
+    // Process attachments — save all files to tmp and let Claude read them
     const attachments = ctx.activity.attachments?.filter(
       (a) => a.contentType !== "text/html",
     );
     if (attachments && attachments.length > 0) {
-      const processed = await processAttachments(ctx, attachments);
-      if (processed.images.length > 0) {
-        images = processed.images;
+      const { saved, failed } = await saveAttachments(ctx, attachments);
+      if (saved.length > 0) {
+        const fileRefs = saved
+          .map((p) => `[Uploaded file: ${p}]`)
+          .join("\n");
+        text =
+          `The user sent the following file(s). Use the Read tool to view them:\n${fileRefs}\n\n` +
+          text;
       }
-      if (processed.textSnippets.length > 0) {
-        text = processed.textSnippets.join("\n\n") + "\n\n" + text;
-      }
-      if (processed.unsupported.length > 0) {
+      if (failed.length > 0) {
         await ctx.sendActivity(
-          `Skipped unsupported files: ${processed.unsupported.join(", ")}`,
+          `Failed to download: ${failed.join(", ")}`,
         );
       }
     }
 
-    if (!text && !images) return;
+    if (!text) return;
 
     // Strip @mention in group chats
     text = stripMention(text);
-    if (!text && !images) return;
+    if (!text) return;
 
     // Handle slash commands
-    if (!images && (await handleCommand(text, ctx))) return;
+    if (await handleCommand(text, ctx)) return;
 
     // Get or create the managed session
     let managed = state.getSession();
@@ -478,7 +478,7 @@ export class ClaudeCodeBot extends ActivityHandler {
 
     // Fire and forget — replies sent via continueConversation in onResult
     console.log("[BOT] Sending message to session...");
-    managed.session.send(text || "What is in this image?", images);
+    managed.session.send(text);
   }
 
   /** Create a ManagedSession with all callbacks wired up. */
@@ -598,7 +598,7 @@ export class ClaudeCodeBot extends ActivityHandler {
             const cardInfo = this.interactiveCards.get(elicitationId);
             this.interactiveCards.delete(elicitationId);
             if (cardInfo) {
-              try { await deleteActivity(cardInfo.activityId); } catch {}
+              try { await deleteActivity(cardInfo.activityId); } catch { /* ignore */ }
             }
             await sendActivity({ type: "message", text: "⏰ Elicitation timed out." });
           },
@@ -616,7 +616,7 @@ export class ClaudeCodeBot extends ActivityHandler {
           const cardInfo = this.interactiveCards.get(requestId);
           this.interactiveCards.delete(requestId);
           if (cardInfo) {
-            try { await deleteActivity(cardInfo.activityId); } catch {}
+            try { await deleteActivity(cardInfo.activityId); } catch { /* ignore */ }
           }
           await sendActivity({ type: "message", text: "⏰ Prompt request timed out." });
         },
