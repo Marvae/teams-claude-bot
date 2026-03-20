@@ -2,7 +2,6 @@ import {
   type CanUseTool as SDKCanUseTool,
   type PromptRequestOption,
 } from "@anthropic-ai/claude-agent-sdk";
-import { tmpdir } from "os";
 
 export interface ToolInfo {
   name: string;
@@ -21,11 +20,6 @@ export interface ClaudeResult {
   costUsd?: number;
   usage?: { inputTokens: number; outputTokens: number };
   durationMs?: number;
-}
-
-export interface ImageInput {
-  mediaType: string;
-  data: string;
 }
 
 export interface TodoItem {
@@ -95,26 +89,3 @@ export function extractToolInfo(
   return info;
 }
 
-const EXT_MAP: Record<string, string> = {
-  "image/png": ".png",
-  "image/jpeg": ".jpg",
-  "image/gif": ".gif",
-  "image/webp": ".webp",
-};
-
-export async function saveImagesToTmp(images: ImageInput[]): Promise<string[]> {
-  const { writeFile, mkdir } = await import("fs/promises");
-  const { join } = await import("path");
-  const { randomUUID } = await import("crypto");
-  const dir = join(tmpdir(), "teams-claude-bot");
-  await mkdir(dir, { recursive: true });
-
-  const paths: string[] = [];
-  for (const img of images) {
-    const ext = EXT_MAP[img.mediaType] ?? ".png";
-    const p = join(dir, `${randomUUID()}${ext}`);
-    await writeFile(p, Buffer.from(img.data, "base64"));
-    paths.push(p);
-  }
-  return paths;
-}

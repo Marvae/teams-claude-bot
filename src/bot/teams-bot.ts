@@ -32,7 +32,7 @@ import {
   resolveElicitation,
   resolveElicitationUrlComplete,
 } from "../claude/elicitation.js";
-import { saveAttachments } from "./attachments.js";
+import { processAttachments, filterPlatformAttachments, type ContentBlock } from "./attachments.js";
 import { config } from "../config.js";
 import { saveConversationRef } from "../handoff/store.js";
 
@@ -69,6 +69,16 @@ function friendlyError(error: string, stopReason?: string | null): string {
   }
   if (error.includes("max_turns")) {
     return "This task used too many steps. Try breaking it into smaller requests, or use `/new` to start fresh.";
+  }
+  if (
+    error.includes("request_too_large") ||
+    error.includes("Could not process image") ||
+    error.includes("image exceeds")
+  ) {
+    return "The file you sent is too large for the API. Try a smaller file, or send it as text.";
+  }
+  if (error.includes("invalid_request") && error.includes("image")) {
+    return "The image format is not supported. Supported formats: JPEG, PNG, GIF, WebP.";
   }
   return `Something went wrong: ${error.slice(0, 200)}`;
 }
@@ -424,14 +434,19 @@ export class ClaudeCodeBot extends ActivityHandler {
 
     let text = (ctx.activity.text ?? "").trim();
 
-    // Process attachments — save all files to tmp and let Claude read them
-    const attachments = ctx.activity.attachments?.filter(
-      (a) => a.contentType !== "text/html",
-    );
-    if (attachments && attachments.length > 0) {
-      const { saved, failed } = await saveAttachments(ctx, attachments);
-      if (saved.length > 0) {
-        const fileRefs = saved
+    // Process attachments — images/PDFs as inline content blocks, others saved to tmp
+    const rawAttachments = ctx.activity.attachments
+      ? filterPlatformAttachments(ctx.activity.attachments)
+      : undefined;
+    let inlineBlocks: ContentBlock[] = [];
+    if (rawAttachments && rawAttachments.length > 0) {
+      const { contentBlocks, savedFiles, failed } = await processAttachments(
+        ctx,
+        rawAttachments,
+      );
+      inlineBlocks = contentBlocks;
+      if (savedFiles.length > 0) {
+        const fileRefs = savedFiles
           .map((p) => `[Uploaded file: ${p}]`)
           .join("\n");
         text =
@@ -445,11 +460,11 @@ export class ClaudeCodeBot extends ActivityHandler {
       }
     }
 
-    if (!text) return;
+    if (!text && inlineBlocks.length === 0) return;
 
     // Strip @mention in group chats
     text = stripMention(text);
-    if (!text) return;
+    if (!text && inlineBlocks.length === 0) return;
 
     // Handle slash commands
     if (await handleCommand(text, ctx)) return;
@@ -478,7 +493,16 @@ export class ClaudeCodeBot extends ActivityHandler {
 
     // Fire and forget — replies sent via continueConversation in onResult
     console.log("[BOT] Sending message to session...");
-    managed.session.send(text);
+    if (inlineBlocks.length > 0) {
+      // Build content block array: inline images/PDFs + text
+      const content: ContentBlock[] = [
+        ...inlineBlocks,
+        ...(text ? [{ type: "text" as const, text }] : []),
+      ];
+      managed.session.send(content);
+    } else {
+      managed.session.send(text);
+    }
   }
 
   /** Create a ManagedSession with all callbacks wired up. */

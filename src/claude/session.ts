@@ -10,13 +10,15 @@ import { join, dirname, resolve } from "path";
 import { AsyncQueue } from "../session/async-queue.js";
 import type {
   ClaudeResult,
-  ImageInput,
   ProgressEvent,
   PromptRequestInfo,
   ToolInfo,
   OnElicitation,
 } from "./agent.js";
-import { extractToolInfo, saveImagesToTmp } from "./agent.js";
+import { extractToolInfo } from "./agent.js";
+
+/** MessageParam content — string or array of content blocks. */
+export type MessageContent = string | Record<string, unknown>[];
 
 // Resolve cli.js path explicitly. process.argv[1] is the entry file (dist/index.js or
 // src/index.ts), always one directory below the project root, so dirname x2 = root.
@@ -70,12 +72,8 @@ export class ConversationSession {
   private turnTools: ToolInfo[] = [];
   private turnStreamingText = "";
   private resumeRetryAttempted = false;
-  private pendingRetry:
-    | { prompt: string; images?: ImageInput[] }
-    | undefined = undefined;
-  private lastStartPayload:
-    | { prompt: string; images?: ImageInput[] }
-    | undefined = undefined;
+  private pendingRetry: { content: MessageContent } | undefined = undefined;
+  private lastStartPayload: { content: MessageContent } | undefined = undefined;
 
   constructor(private config: SessionConfig) {}
 
@@ -132,11 +130,11 @@ export class ConversationSession {
    * First call starts the query; subsequent calls push to the SDK's internal queue.
    * Results are delivered via config.onResult callback.
    */
-  send(prompt: string, images?: ImageInput[]): void {
+  send(content: MessageContent): void {
     this._lastActivity = Date.now();
 
     if (!this.activeQuery) {
-      this.startQuery(prompt, images).catch((err) => {
+      this.startQuery(content).catch((err) => {
         this.emitResult({
           error: err instanceof Error ? err.message : String(err),
           tools: [],
@@ -144,7 +142,7 @@ export class ConversationSession {
       });
     } else {
       // Don't reset turn state — SDK is still processing the current turn
-      this.streamMessage(prompt, images);
+      this.streamMessage(content);
     }
   }
 
@@ -189,20 +187,18 @@ export class ConversationSession {
     await this.config.onResult?.(result);
   }
 
-  private async startQuery(
-    prompt: string,
-    images?: ImageInput[],
-  ): Promise<void> {
-    this.lastStartPayload = { prompt, images };
+  private async startQuery(content: MessageContent): Promise<void> {
+    this.lastStartPayload = { content };
     console.log("[SESSION] Starting new query (first message)");
-    const finalPrompt = await preparePrompt(prompt, images);
     const options = this.buildQueryOptions();
 
     // Create queue and push first message
     this.inputQueue = new AsyncQueue<SDKUserMessage>();
     this.inputQueue.push({
       type: "user",
-      message: { role: "user", content: finalPrompt },
+      // Cast needed: SDK types MessageParam.content as string, but the CLI
+      // accepts content block arrays (image/document/text) per the Messages API.
+      message: { role: "user", content } as never,
       parent_tool_use_id: null,
       session_id: "",
     });
@@ -225,16 +221,14 @@ export class ConversationSession {
     });
   }
 
-  private async streamMessage(
-    prompt: string,
-    images?: ImageInput[],
-  ): Promise<void> {
+  private streamMessage(content: MessageContent): void {
     console.log("[SESSION] Pushing message to input queue");
-    const finalPrompt = await preparePrompt(prompt, images);
 
     this.inputQueue!.push({
       type: "user",
-      message: { role: "user", content: finalPrompt },
+      // Cast needed: SDK types MessageParam.content as string, but the CLI
+      // accepts content block arrays (image/document/text) per the Messages API.
+      message: { role: "user", content } as never,
       parent_tool_use_id: null,
       session_id: this.sessionId ?? "",
     });
@@ -255,7 +249,7 @@ export class ConversationSession {
     if (this.pendingRetry) {
       const retry = this.pendingRetry;
       this.pendingRetry = undefined;
-      await this.startQuery(retry.prompt, retry.images);
+      await this.startQuery(retry.content);
     }
   }
 
@@ -628,13 +622,3 @@ function isResumeFailure(error: string): boolean {
   );
 }
 
-async function preparePrompt(
-  prompt: string,
-  images?: ImageInput[],
-): Promise<string> {
-  if (!images || images.length === 0) return prompt;
-
-  const paths = await saveImagesToTmp(images);
-  const imageRefs = paths.map((p) => `[Uploaded image: ${p}]`).join("\n");
-  return `The user sent the following image(s). Use the Read tool to view them:\n${imageRefs}\n\n${prompt}`;
-}

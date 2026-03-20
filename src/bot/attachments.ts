@@ -1,4 +1,8 @@
 import { TurnContext, Attachment } from "botbuilder";
+import { writeFile, mkdir } from "fs/promises";
+import { join, basename } from "path";
+import { tmpdir } from "os";
+import { randomUUID } from "crypto";
 
 export interface DownloadedAttachment {
   data: Buffer;
@@ -6,10 +10,17 @@ export interface DownloadedAttachment {
   name: string;
 }
 
-export interface ImageBlock {
-  mediaType: string;
-  data: string;
-}
+/** Content block types supported by the Anthropic Messages API. */
+export type ContentBlock =
+  | { type: "text"; text: string }
+  | {
+      type: "image";
+      source: { type: "base64"; media_type: string; data: string };
+    }
+  | {
+      type: "document";
+      source: { type: "base64"; media_type: string; data: string };
+    };
 
 const IMAGE_TYPES = new Set([
   "image/jpeg",
@@ -18,71 +29,11 @@ const IMAGE_TYPES = new Set([
   "image/webp",
 ]);
 
-const TEXT_EXTENSIONS = new Set([
-  ".txt",
-  ".md",
-  ".json",
-  ".js",
-  ".ts",
-  ".jsx",
-  ".tsx",
-  ".py",
-  ".rb",
-  ".go",
-  ".rs",
-  ".java",
-  ".c",
-  ".cpp",
-  ".h",
-  ".hpp",
-  ".cs",
-  ".swift",
-  ".kt",
-  ".sh",
-  ".bash",
-  ".zsh",
-  ".yaml",
-  ".yml",
-  ".toml",
-  ".xml",
-  ".html",
-  ".css",
-  ".scss",
-  ".sql",
-  ".graphql",
-  ".env",
-  ".ini",
-  ".cfg",
-  ".conf",
-  ".log",
-  ".csv",
-]);
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5 MB — Anthropic API limit
+const MAX_INLINE_TEXT_BYTES = 1024 * 1024; // 1 MB — larger text files go to tmp
 
-export function isImage(contentType: string): boolean {
-  return IMAGE_TYPES.has(contentType.toLowerCase().split(";")[0].trim());
-}
-
-function isTextFile(name: string): boolean {
-  const dot = name.lastIndexOf(".");
-  if (dot === -1) return false;
-  return TEXT_EXTENSIONS.has(name.slice(dot).toLowerCase());
-}
-
-function getBotToken(ctx: TurnContext): string | undefined {
-  // The connector client stores the token used for auth
-  const connectorClient = ctx.turnState.get(
-    ctx.adapter.ConnectorClientKey ?? "ConnectorClient",
-  );
-  if (connectorClient?.credentials?.token) {
-    return connectorClient.credentials.token as string;
-  }
-  // Fallback: try getting from the adapter's credentials
-  const creds = (ctx.adapter as unknown as Record<string, unknown>)
-    .credentials as { token?: string } | undefined;
-  return creds?.token;
-}
-
-function inferContentType(name: string, fallback: string): string {
+/** Normalize content type — Teams file downloads often have a generic type. */
+function inferMediaType(name: string, responseType: string): string {
   const ext = name.slice(name.lastIndexOf(".")).toLowerCase();
   const map: Record<string, string> = {
     ".png": "image/png",
@@ -90,15 +41,52 @@ function inferContentType(name: string, fallback: string): string {
     ".jpeg": "image/jpeg",
     ".gif": "image/gif",
     ".webp": "image/webp",
+    ".pdf": "application/pdf",
   };
-  return map[ext] ?? fallback;
+  return map[ext] ?? responseType;
+}
+
+/**
+ * Try to decode a buffer as UTF-8 text.
+ * Returns the string if it looks like valid text, or null if it appears binary.
+ */
+function tryReadAsText(data: Buffer): string | null {
+  const text = data.toString("utf-8");
+  // If there are null bytes, it's almost certainly binary
+  if (text.includes("\0")) return null;
+  return text;
+}
+
+/**
+ * Filter out Teams platform-injected HTML attachments (adaptive card renders, etc.)
+ * while keeping user-uploaded .html files (which have a downloadUrl or contentUrl).
+ */
+export function filterPlatformAttachments(attachments: Attachment[]): Attachment[] {
+  return attachments.filter((a) => {
+    if (a.contentType === "text/html") {
+      const content = a.content as Record<string, unknown> | undefined;
+      return !!(content?.downloadUrl ?? a.contentUrl);
+    }
+    return true;
+  });
+}
+
+function getBotToken(ctx: TurnContext): string | undefined {
+  const connectorClient = ctx.turnState.get(
+    ctx.adapter.ConnectorClientKey ?? "ConnectorClient",
+  );
+  if (connectorClient?.credentials?.token) {
+    return connectorClient.credentials.token as string;
+  }
+  const creds = (ctx.adapter as unknown as Record<string, unknown>)
+    .credentials as { token?: string } | undefined;
+  return creds?.token;
 }
 
 export async function downloadAttachment(
   ctx: TurnContext,
   attachment: Attachment,
 ): Promise<DownloadedAttachment | null> {
-  // Teams file attachments store the download URL in content.downloadUrl
   const content = attachment.content as Record<string, unknown> | undefined;
   const url = (content?.downloadUrl as string) ?? attachment.contentUrl;
   if (!url) return null;
@@ -114,58 +102,96 @@ export async function downloadAttachment(
 
   const buffer = Buffer.from(await resp.arrayBuffer());
   const name = attachment.name ?? "attachment";
-  const respType =
+  const responseType =
     resp.headers.get("content-type") ?? "application/octet-stream";
-  // Teams file attachments have a generic contentType, so infer from file extension
-  const contentType =
+  // Teams file uploads have a generic contentType — infer from extension.
+  // Otherwise trust the HTTP response content-type.
+  const isGenericType =
     attachment.contentType ===
-    "application/vnd.microsoft.teams.file.download.info"
-      ? inferContentType(name, respType)
-      : (attachment.contentType ?? respType);
+      "application/vnd.microsoft.teams.file.download.info" ||
+    responseType === "application/octet-stream";
+  const contentType = isGenericType
+    ? inferMediaType(name, responseType)
+    : responseType;
 
   return { data: buffer, contentType, name };
 }
 
 export interface ProcessedAttachments {
-  images: ImageBlock[];
-  textSnippets: string[];
-  unsupported: string[];
+  /** Content blocks to send inline (images, PDFs). */
+  contentBlocks: ContentBlock[];
+  /** File paths saved to tmp (all other file types). */
+  savedFiles: string[];
+  /** Names of files that failed to download. */
+  failed: string[];
 }
 
+/**
+ * Process all attachments:
+ * - Images and PDFs → inline content blocks (sent directly to Claude API)
+ * - Other files → saved to tmp (Claude reads via Read tool)
+ */
 export async function processAttachments(
   ctx: TurnContext,
   attachments: Attachment[],
 ): Promise<ProcessedAttachments> {
-  const result: ProcessedAttachments = {
-    images: [],
-    textSnippets: [],
-    unsupported: [],
-  };
+  const contentBlocks: ContentBlock[] = [];
+  const savedFiles: string[] = [];
+  const failed: string[] = [];
+  let dir: string | null = null;
 
   for (const att of attachments) {
-    // Skip inline HTML images Teams adds for adaptive cards, etc.
-    if (att.contentType === "text/html") continue;
-
     const downloaded = await downloadAttachment(ctx, att);
     if (!downloaded) {
-      result.unsupported.push(att.name ?? "unknown file");
+      failed.push(att.name ?? "unknown file");
       continue;
     }
 
-    if (isImage(downloaded.contentType)) {
-      result.images.push({
-        mediaType: downloaded.contentType.split(";")[0].trim(),
-        data: downloaded.data.toString("base64"),
+    const mediaType = downloaded.contentType.split(";")[0].trim();
+    if (IMAGE_TYPES.has(mediaType)) {
+      if (downloaded.data.length > MAX_IMAGE_BYTES) {
+        failed.push(`${downloaded.name} (image exceeds 5 MB limit)`);
+        continue;
+      }
+      contentBlocks.push({
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: mediaType,
+          data: downloaded.data.toString("base64"),
+        },
       });
-    } else if (isTextFile(downloaded.name)) {
-      const text = downloaded.data.toString("utf-8");
-      result.textSnippets.push(
-        `--- ${downloaded.name} ---\n\`\`\`\n${text}\n\`\`\``,
-      );
+    } else if (mediaType === "application/pdf") {
+      contentBlocks.push({
+        type: "document",
+        source: {
+          type: "base64",
+          media_type: mediaType,
+          data: downloaded.data.toString("base64"),
+        },
+      });
     } else {
-      result.unsupported.push(downloaded.name);
+      // Try to read as text and send inline; fall back to tmp for large or binary files
+      const text =
+        downloaded.data.length <= MAX_INLINE_TEXT_BYTES
+          ? tryReadAsText(downloaded.data)
+          : null;
+      if (text !== null) {
+        contentBlocks.push({
+          type: "text",
+          text: `[File: ${downloaded.name}]\n${text}`,
+        });
+      } else {
+        if (!dir) {
+          dir = join(tmpdir(), "teams-claude-bot", randomUUID());
+          await mkdir(dir, { recursive: true });
+        }
+        const filePath = join(dir, basename(downloaded.name) || "attachment");
+        await writeFile(filePath, downloaded.data);
+        savedFiles.push(filePath);
+      }
     }
   }
 
-  return result;
+  return { contentBlocks, savedFiles, failed };
 }
