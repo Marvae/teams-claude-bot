@@ -36,6 +36,37 @@ import { processAttachments, filterPlatformAttachments, type ContentBlock } from
 import { config } from "../config.js";
 import { saveConversationRef } from "../handoff/store.js";
 
+// Maps file extensions to Teams CodeBlock language names (only where they differ).
+// Extensions that already match (e.g. go, java, json, xml, css, sql, php, perl,
+// swift, rust, ruby, dart, scala, kotlin, scss, jsx, r, graphql) need no entry.
+const EXT_LANG_OVERRIDE: Record<string, string> = {
+  ts: "typescript", tsx: "typescript",
+  js: "javascript", mjs: "javascript",
+  py: "python",
+  sh: "bash", zsh: "bash",
+  cs: "csharp",
+  cc: "cpp", cxx: "cpp", hpp: "cpp",
+  htm: "html",
+  ps1: "powershell",
+  kt: "kotlin",
+  tex: "latex",
+  yml: "yaml",
+  m: "objective-c",
+  mm: "objective-c",
+  vb: "vb.net",
+  vbs: "vbscript",
+  v: "verilog",
+  vhd: "vhdl",
+  md: "markdown",
+};
+
+function codeBlockLanguage(filePath: string): string {
+  const dot = filePath.lastIndexOf(".");
+  if (dot === -1) return "plaintext";
+  const ext = filePath.slice(dot + 1).toLowerCase();
+  return EXT_LANG_OVERRIDE[ext] ?? ext;
+}
+
 function friendlyError(error: string, stopReason?: string | null): string {
   if (stopReason === "refusal") {
     return "Claude declined this request.";
@@ -858,6 +889,7 @@ export class ClaudeCodeBot extends ActivityHandler {
     let pendingUpdate = false;
     let promptSuggestion: string | undefined;
     let streamingActivityId: string | undefined;
+    let useHtml = false;
     const buildDisplay = (): string => {
       const parts: string[] = [];
       if (todoDisplay) {
@@ -866,10 +898,24 @@ export class ClaudeCodeBot extends ActivityHandler {
       const fullText = completedText + (streamingText ?? "");
       if (fullText) {
         if (parts.length > 0) parts.push("---");
-        const display =
+        let display =
           fullText.length > MAX_STREAMING_LEN
             ? "…" + fullText.slice(-MAX_STREAMING_LEN)
             : fullText;
+        // Fix unpaired tags after truncation
+        if (useHtml) {
+          // If truncation cut off an opening <pre>/<code>, close the orphan
+          const openPre = (display.match(/<pre[\s>]/g) || []).length;
+          const closePre = (display.match(/<\/pre>/g) || []).length;
+          if (closePre > openPre) {
+            display = "<pre><code>" + display;
+          }
+        } else {
+          const fenceCount = (display.match(/^```/gm) || []).length;
+          if (fenceCount % 2 !== 0) {
+            display = "```\n" + display;
+          }
+        }
         parts.push(display);
       }
       return parts.join("\n\n");
@@ -881,14 +927,16 @@ export class ClaudeCodeBot extends ActivityHandler {
       }
       const text = buildDisplay();
       if (!text) return;
+      const activity: Record<string, unknown> = { type: "message", text };
+      if (useHtml) activity.textFormat = "xml";
       try {
         if (!streamingActivityId) {
           // First update — send a new message and remember its id
-          const resp = await sendFn({ type: "message", text });
+          const resp = await sendFn(activity);
           streamingActivityId = resp?.id;
         } else {
           // Subsequent updates — update the same message in place
-          await updateFn(streamingActivityId, { type: "message", text });
+          await updateFn(streamingActivityId, activity);
         }
       } catch {
         // Ignore transient update failures.
@@ -929,10 +977,27 @@ export class ClaudeCodeBot extends ActivityHandler {
         }
 
         if (event.type === "file_diff") {
-          const label = event.filePath ? `\`${event.filePath}\`` : "file";
-          const diffDisplay = event.patch
-            ? `📝 ${label}\n\n\`\`\`diff\n${event.patch}\n\`\`\``
-            : `📝 Edited ${label}`;
+          const cwd = state.getWorkDir();
+          const shortPath = event.filePath?.startsWith(cwd + "/")
+            ? event.filePath.slice(cwd.length + 1)
+            : event.filePath;
+          const label = shortPath ?? "file";
+          let diffDisplay: string;
+          if (event.patch) {
+            const escaped = event.patch
+              .replace(/&/g, "&amp;")
+              .replace(/</g, "&lt;")
+              .replace(/>/g, "&gt;")
+              .replace(/\n/g, "<br>");
+            const blockId = `codeBlock-${Date.now()}`;
+            const lang = event.filePath
+              ? codeBlockLanguage(event.filePath)
+              : "plaintext";
+            diffDisplay = `📝 ${label}<p itemtype="http://schema.skype.com/CodeBlockEditor" id="x_${blockId}">\u00a0</p><pre class="language-${lang}" itemid="${blockId}"><code>${escaped}</code></pre>`;
+          } else {
+            diffDisplay = `📝 Edited ${label}`;
+          }
+          useHtml = true;
           completedText += (streamingText ?? "") + "\n\n" + diffDisplay;
           streamingText = undefined;
           scheduleUpdate(TEXT_THROTTLE_MS);
@@ -1022,7 +1087,7 @@ export class ClaudeCodeBot extends ActivityHandler {
           inflightUpdate = undefined;
         }
 
-        // Prepend todo and accumulated text to the first chunk
+        // Build the progress prefix (todo + accumulated text)
         const prefix: string[] = [];
         if (todoDisplay) {
           prefix.push(todoDisplay);
@@ -1030,29 +1095,55 @@ export class ClaudeCodeBot extends ActivityHandler {
         if (completedText.trim()) {
           prefix.push(completedText.trim());
         }
-        if (prefix.length > 0) {
-          const pre = prefix.join("\n\n---\n\n");
-          if (chunks.length > 0) {
-            chunks[0] = pre + "\n\n---\n\n" + chunks[0];
-          } else {
-            chunks = [pre];
-          }
-        }
 
-        if (chunks.length === 0) return;
-
-        if (streamingActivityId) {
-          await updateFn(streamingActivityId, {
+        if (useHtml && prefix.length > 0 && chunks.length > 0) {
+          // HTML progress (diffs) and markdown response must be separate messages
+          // because they use different textFormat
+          const htmlText = prefix.join("\n\n---\n\n");
+          const htmlMsg: Record<string, unknown> = {
             type: "message",
-            text: chunks[0],
-          });
-          streamingActivityId = undefined;
+            text: htmlText,
+            textFormat: "xml",
+          };
+          if (streamingActivityId) {
+            await updateFn(streamingActivityId, htmlMsg);
+            streamingActivityId = undefined;
+          } else {
+            await sendFn(htmlMsg);
+          }
+          // Send response chunks as separate markdown messages
+          for (const chunk of chunks) {
+            await sendFn({ type: "message", text: chunk });
+          }
         } else {
-          await sendFn({ type: "message", text: chunks[0] });
-        }
+          // No format conflict — combine as before
+          if (prefix.length > 0) {
+            const pre = prefix.join("\n\n---\n\n");
+            if (chunks.length > 0) {
+              chunks[0] = pre + "\n\n---\n\n" + chunks[0];
+            } else {
+              chunks = [pre];
+            }
+          }
 
-        for (let i = 1; i < chunks.length; i++) {
-          await sendFn({ type: "message", text: chunks[i] });
+          if (chunks.length === 0) return;
+
+          const mkMsg = (t: string): Record<string, unknown> => {
+            const msg: Record<string, unknown> = { type: "message", text: t };
+            if (useHtml) msg.textFormat = "xml";
+            return msg;
+          };
+
+          if (streamingActivityId) {
+            await updateFn(streamingActivityId, mkMsg(chunks[0]));
+            streamingActivityId = undefined;
+          } else {
+            await sendFn(mkMsg(chunks[0]));
+          }
+
+          for (let i = 1; i < chunks.length; i++) {
+            await sendFn(mkMsg(chunks[i]));
+          }
         }
       },
       getPromptSuggestion: () => promptSuggestion,

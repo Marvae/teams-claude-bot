@@ -736,6 +736,52 @@ describe("progress notifier streaming via updateActivity", () => {
     expect(text).toContain("Editing file.");
   });
 
+  it("truncated display fixes unpaired code fences", async () => {
+    const bot = new ClaudeCodeBot();
+    const sent: Array<{ action: string; activity: Record<string, unknown> }> =
+      [];
+
+    const sendFn = vi.fn(async (activity: Record<string, unknown>) => {
+      sent.push({ action: "send", activity });
+      return { id: "msg-fence" };
+    });
+    const updateFn = vi.fn(
+      async (_id: string, activity: Record<string, unknown>) => {
+        sent.push({ action: "update", activity });
+      },
+    );
+
+    const notifier = bot.createProgressNotifier(sendFn, updateFn);
+
+    // Send a large diff that will exceed MAX_STREAMING_LEN (4000)
+    const longPatch = Array.from(
+      { length: 200 },
+      (_, i) => `+const line${i} = ${i};`,
+    ).join("\n");
+    notifier.onProgress({
+      type: "file_diff",
+      filePath: "src/big.ts",
+      patch: longPatch,
+    });
+
+    // Then send streaming text that would appear after the diff
+    notifier.onProgress({ type: "text", text: "Done editing." });
+    await new Promise((r) => setTimeout(r, 1100));
+
+    const lastUpdate = sent.filter((s) => s.action === "update").pop();
+    const text = lastUpdate?.activity.text as string;
+
+    // The display should have been truncated (starts with …)
+    expect(text).toContain("…");
+
+    // Code fences must be paired — count occurrences of ``` at line start
+    const fences = text.match(/^```/gm) || [];
+    expect(fences.length % 2).toBe(0);
+
+    // The trailing text should NOT be inside a code block
+    expect(text).toContain("Done editing.");
+  });
+
   it("progress lines are preserved in finalize", async () => {
     const bot = new ClaudeCodeBot();
     const sent: Array<{ action: string; activity: Record<string, unknown> }> =
