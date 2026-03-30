@@ -1,6 +1,6 @@
 {
   "name": "claude-code-teams-bot",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Microsoft Teams bot that bridges to Claude Code",
   "license": "MIT",
   "repository": {
