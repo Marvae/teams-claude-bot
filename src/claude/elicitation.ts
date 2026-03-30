@@ -52,10 +52,12 @@ function fieldId(name: string): string {
   return `field_${name}`;
 }
 
+type ElicitationContent = { [x: string]: string | number | boolean | string[] };
+
 function collectFormContent(
   data: Record<string, unknown>,
-): Record<string, unknown> {
-  const content: Record<string, unknown> = {};
+): ElicitationContent {
+  const content: ElicitationContent = {};
 
   for (const [key, value] of Object.entries(data)) {
     if (!key.startsWith("field_")) continue;
