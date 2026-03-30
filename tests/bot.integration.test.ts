@@ -343,11 +343,17 @@ describe("permission card interactions", () => {
       expect(card.type).toBe("AdaptiveCard");
       const actions = card.actions as Array<Record<string, unknown>>;
       // Current mode (bypassPermissions) is excluded from actions
-      expect(actions.length).toBe(4);
+      expect(actions.length).toBe(5);
       const modeIds = actions.map((a) => (a.data as { mode: string }).mode);
       expect(modeIds).not.toContain("bypassPermissions");
       expect(modeIds).toEqual(
-        expect.arrayContaining(["default", "acceptEdits", "plan", "dontAsk"]),
+        expect.arrayContaining([
+          "default",
+          "auto",
+          "acceptEdits",
+          "plan",
+          "dontAsk",
+        ]),
       );
     });
   });

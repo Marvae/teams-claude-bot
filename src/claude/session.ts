@@ -570,8 +570,7 @@ export class ConversationSession {
         "Skill",
       ],
       permissionMode: this.config.permissionMode ?? "default",
-      allowDangerouslySkipPermissions:
-        this.config.permissionMode === "bypassPermissions",
+      allowDangerouslySkipPermissions: true,
       maxTurns: this.config.maxTurns ?? 200,
       systemPrompt: {
         type: "preset",

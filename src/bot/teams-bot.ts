@@ -439,10 +439,15 @@ export class ClaudeCodeBot extends ActivityHandler {
 
       if (value.action === "set_permission_mode") {
         const mode = value.mode as string;
-        state.setPermissionMode(mode);
-        await state.getSession()?.session.setPermissionMode(mode);
-        await deleteSubmittedCard();
-        await ctx.sendActivity(`Permission mode set to \`${mode}\``);
+        try {
+          await state.getSession()?.session.setPermissionMode(mode);
+          state.setPermissionMode(mode);
+          await deleteSubmittedCard();
+          await ctx.sendActivity(`Permission mode set to \`${mode}\``);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          await ctx.sendActivity(`Failed to set \`${mode}\`: ${msg}`);
+        }
         return;
       }
 

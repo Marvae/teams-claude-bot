@@ -39,6 +39,7 @@ const AVAILABLE_MODELS = [
 
 const VALID_PERMISSION_MODES = [
   "default",
+  "auto",
   "acceptEdits",
   "plan",
   "dontAsk",

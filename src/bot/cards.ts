@@ -469,6 +469,11 @@ export function buildPermissionModeCard(
   const modes = [
     { id: "default", label: "🛡️ Default", desc: "Ask before risky operations" },
     {
+      id: "auto",
+      label: "🤖 Auto",
+      desc: "AI decides safe actions, asks for risky ones",
+    },
+    {
       id: "acceptEdits",
       label: "📝 Accept Edits",
       desc: "Auto-allow file edits, ask for others",
