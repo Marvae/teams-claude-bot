@@ -23,7 +23,7 @@
 If you're using a personal Microsoft account:
 
 1. Go to [App Registrations](https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade) → find your app
-2. Manifest → set `signInAudience` to `AzureADandPersonalMicrosoftAccount`
+2. Manifest → set `signInAudience` to `AzureADMultipleOrgs`
 3. Save
 
 > Without this, only users in the same Azure AD tenant can use the bot. Enterprise accounts can skip this step.
