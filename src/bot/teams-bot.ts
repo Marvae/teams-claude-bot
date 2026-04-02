@@ -291,10 +291,10 @@ export class ClaudeCodeBot extends ActivityHandler {
             const updatedCard = buildHandoffCard(
               value.workDir as string,
               value.sessionId as string | undefined,
+              value.summary as string | undefined,
+              value.todos as { content: string; done: boolean }[] | undefined,
               undefined,
-              undefined,
-              undefined,
-              undefined,
+              value.title as string | undefined,
               "✅ Handed off",
             );
             await ctx.updateActivity({
