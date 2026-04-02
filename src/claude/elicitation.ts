@@ -54,9 +54,7 @@ function fieldId(name: string): string {
 
 type ElicitationContent = { [x: string]: string | number | boolean | string[] };
 
-function collectFormContent(
-  data: Record<string, unknown>,
-): ElicitationContent {
+function collectFormContent(data: Record<string, unknown>): ElicitationContent {
   const content: ElicitationContent = {};
 
   for (const [key, value] of Object.entries(data)) {

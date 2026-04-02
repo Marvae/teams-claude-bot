@@ -60,8 +60,23 @@ export function resolveDevtunnel(): string {
     // Not in PATH – check common Windows install locations
     if (process.platform === "win32") {
       const candidates = [
-        path.join(homeDir, "AppData", "Local", "Microsoft", "WinGet", "Links", "devtunnel.exe"),
-        path.join(homeDir, "AppData", "Local", "Programs", "devtunnel", "devtunnel.exe"),
+        path.join(
+          homeDir,
+          "AppData",
+          "Local",
+          "Microsoft",
+          "WinGet",
+          "Links",
+          "devtunnel.exe",
+        ),
+        path.join(
+          homeDir,
+          "AppData",
+          "Local",
+          "Programs",
+          "devtunnel",
+          "devtunnel.exe",
+        ),
       ];
       for (const p of candidates) {
         if (fs.existsSync(p)) {

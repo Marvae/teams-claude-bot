@@ -1,5 +1,12 @@
 #!/bin/bash
+# This script must be executed, not sourced.
 cd "$(dirname "$0")/.."
+
+# Re-exec as login shell to inherit user's full PATH (launchd/systemd provide minimal PATH)
+if [ -z "$_RUN_SH_LOGIN" ]; then
+  export _RUN_SH_LOGIN=1
+  exec "${SHELL:-bash}" -l "$0" "$@"
+fi
 
 # Load env vars: canonical location first, then project .env (project overrides)
 set -a
@@ -10,12 +17,9 @@ source .env 2>/dev/null
 set +a
 
 if [ -z "$DEVTUNNEL_ID" ]; then
-  echo "[run.sh] ERROR: DEVTUNNEL_ID is not set in .env"
+  echo "[run.sh] ERROR: DEVTUNNEL_ID is not set."
   echo ""
-  echo "  Create a persistent tunnel:"
-  echo "  1. devtunnel create --id <your-tunnel-name> --allow-anonymous"
-  echo "  2. devtunnel port create <your-tunnel-name> -p 3978"
-  echo "  3. Set DEVTUNNEL_ID in .env to the tunnel ID"
+  echo "  Fix: teams-bot setup tunnel"
   exit 1
 fi
 
@@ -64,6 +68,11 @@ if ! start_tunnel; then
   if grep -qi "Unauthorized" "$TUNNEL_LOG"; then
     echo "[run.sh] Tunnel auth expired."
     echo "  Fix: devtunnel user login && teams-bot restart"
+  elif grep -qi "not found\|does not exist" "$TUNNEL_LOG"; then
+    echo "[run.sh] Tunnel does not exist."
+    echo "  Fix: teams-bot setup tunnel && teams-bot restart"
+  else
+    echo "  Fix: teams-bot setup tunnel && teams-bot restart"
   fi
   cleanup
 fi

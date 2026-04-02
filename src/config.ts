@@ -17,8 +17,11 @@ function required(name: string): string {
   return value;
 }
 
-function expandHome(p: string): string {
-  return p.startsWith("~/") ? resolve(homedir(), p.slice(2)) : resolve(p);
+export function expandHome(p: string): string {
+  if (p === "~") return homedir();
+  if (p.startsWith("~/") || p.startsWith("~\\"))
+    return resolve(homedir(), p.slice(2));
+  return resolve(p);
 }
 
 function parseAllowedUsers(raw?: string): Set<string> {

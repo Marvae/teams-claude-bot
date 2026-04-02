@@ -32,10 +32,16 @@ function makeAttachment(
   } as Attachment;
 }
 
-function mockFetchResponse(data: Buffer, contentType = "application/octet-stream") {
+function mockFetchResponse(
+  data: Buffer,
+  contentType = "application/octet-stream",
+) {
   mockFetch.mockResolvedValueOnce({
     ok: true,
-    arrayBuffer: () => Promise.resolve(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)),
+    arrayBuffer: () =>
+      Promise.resolve(
+        data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength),
+      ),
     headers: new Headers({ "content-type": contentType }),
   });
 }
@@ -53,7 +59,11 @@ describe("downloadAttachment", () => {
     const data = Buffer.from("hello");
     mockFetchResponse(data, "text/plain");
 
-    const att = makeAttachment("test.txt", "application/vnd.microsoft.teams.file.download.info", "https://example.com/file");
+    const att = makeAttachment(
+      "test.txt",
+      "application/vnd.microsoft.teams.file.download.info",
+      "https://example.com/file",
+    );
     const result = await downloadAttachment(makeMockCtx(), att);
 
     expect(result).not.toBeNull();
@@ -73,7 +83,10 @@ describe("downloadAttachment", () => {
     const result = await downloadAttachment(makeMockCtx(), att);
 
     expect(result).not.toBeNull();
-    expect(mockFetch).toHaveBeenCalledWith("https://example.com/file", expect.anything());
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://example.com/file",
+      expect.anything(),
+    );
   });
 
   it("returns null when no URL available", async () => {
@@ -84,7 +97,11 @@ describe("downloadAttachment", () => {
 
   it("returns null on fetch failure", async () => {
     mockFetchFailure();
-    const att = makeAttachment("fail.txt", "text/plain", "https://example.com/fail");
+    const att = makeAttachment(
+      "fail.txt",
+      "text/plain",
+      "https://example.com/fail",
+    );
     const result = await downloadAttachment(makeMockCtx(), att);
     expect(result).toBeNull();
   });
@@ -93,7 +110,11 @@ describe("downloadAttachment", () => {
     const data = Buffer.from("fake-png");
     mockFetchResponse(data, "application/octet-stream");
 
-    const att = makeAttachment("screenshot.png", "application/vnd.microsoft.teams.file.download.info", "https://example.com/file");
+    const att = makeAttachment(
+      "screenshot.png",
+      "application/vnd.microsoft.teams.file.download.info",
+      "https://example.com/file",
+    );
     const result = await downloadAttachment(makeMockCtx(), att);
 
     expect(result!.contentType).toBe("image/png");
@@ -103,7 +124,11 @@ describe("downloadAttachment", () => {
     const data = Buffer.from("fake-pdf");
     mockFetchResponse(data, "application/octet-stream");
 
-    const att = makeAttachment("doc.pdf", "application/vnd.microsoft.teams.file.download.info", "https://example.com/file");
+    const att = makeAttachment(
+      "doc.pdf",
+      "application/vnd.microsoft.teams.file.download.info",
+      "https://example.com/file",
+    );
     const result = await downloadAttachment(makeMockCtx(), att);
 
     expect(result!.contentType).toBe("application/pdf");
@@ -119,7 +144,9 @@ describe("processAttachments", () => {
     const pngData = Buffer.from("fake-png-data");
     mockFetchResponse(pngData, "image/png");
 
-    const attachments = [makeAttachment("photo.png", "image/png", "https://example.com/photo.png")];
+    const attachments = [
+      makeAttachment("photo.png", "image/png", "https://example.com/photo.png"),
+    ];
     const result = await processAttachments(makeMockCtx(), attachments);
 
     expect(result.contentBlocks).toHaveLength(1);
@@ -139,7 +166,13 @@ describe("processAttachments", () => {
     const pdfData = Buffer.from("%PDF-1.0 fake");
     mockFetchResponse(pdfData, "application/pdf");
 
-    const attachments = [makeAttachment("report.pdf", "application/pdf", "https://example.com/report.pdf")];
+    const attachments = [
+      makeAttachment(
+        "report.pdf",
+        "application/pdf",
+        "https://example.com/report.pdf",
+      ),
+    ];
     const result = await processAttachments(makeMockCtx(), attachments);
 
     expect(result.contentBlocks).toHaveLength(1);
@@ -157,11 +190,20 @@ describe("processAttachments", () => {
     const tsContent = 'export const foo = "bar";';
     mockFetchResponse(Buffer.from(tsContent), "application/octet-stream");
 
-    const attachments = [makeAttachment("index.ts", "application/octet-stream", "https://example.com/index.ts")];
+    const attachments = [
+      makeAttachment(
+        "index.ts",
+        "application/octet-stream",
+        "https://example.com/index.ts",
+      ),
+    ];
     const result = await processAttachments(makeMockCtx(), attachments);
 
     expect(result.contentBlocks).toHaveLength(1);
-    const block = result.contentBlocks[0] as Extract<ContentBlock, { type: "text" }>;
+    const block = result.contentBlocks[0] as Extract<
+      ContentBlock,
+      { type: "text" }
+    >;
     expect(block.type).toBe("text");
     expect(block.text).toContain("index.ts");
     expect(block.text).toContain(tsContent);
@@ -173,7 +215,13 @@ describe("processAttachments", () => {
     const binaryData = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00]);
     mockFetchResponse(binaryData, "application/zip");
 
-    const attachments = [makeAttachment("archive.zip", "application/zip", "https://example.com/archive.zip")];
+    const attachments = [
+      makeAttachment(
+        "archive.zip",
+        "application/zip",
+        "https://example.com/archive.zip",
+      ),
+    ];
     const result = await processAttachments(makeMockCtx(), attachments);
 
     expect(result.contentBlocks).toHaveLength(0);
@@ -184,7 +232,9 @@ describe("processAttachments", () => {
   it("reports failed downloads", async () => {
     mockFetchFailure();
 
-    const attachments = [makeAttachment("broken.png", "image/png", "https://example.com/broken")];
+    const attachments = [
+      makeAttachment("broken.png", "image/png", "https://example.com/broken"),
+    ];
     const result = await processAttachments(makeMockCtx(), attachments);
 
     expect(result.contentBlocks).toHaveLength(0);
@@ -203,7 +253,10 @@ describe("processAttachments", () => {
 
     // HTML is text, so it should become an inline text content block
     expect(result.contentBlocks).toHaveLength(1);
-    const block = result.contentBlocks[0] as Extract<ContentBlock, { type: "text" }>;
+    const block = result.contentBlocks[0] as Extract<
+      ContentBlock,
+      { type: "text" }
+    >;
     expect(block.type).toBe("text");
     expect(block.text).toContain("page.html");
     expect(block.text).toContain(htmlContent);
@@ -225,7 +278,11 @@ describe("processAttachments", () => {
       makeAttachment("photo.jpg", "image/jpeg", "https://example.com/1"),
       makeAttachment("doc.pdf", "application/pdf", "https://example.com/2"),
       makeAttachment("notes.txt", "text/plain", "https://example.com/3"),
-      makeAttachment("data.bin", "application/octet-stream", "https://example.com/4"),
+      makeAttachment(
+        "data.bin",
+        "application/octet-stream",
+        "https://example.com/4",
+      ),
       makeAttachment("broken.png", "image/png", "https://example.com/5"),
     ];
     const result = await processAttachments(makeMockCtx(), attachments);
@@ -248,7 +305,9 @@ describe("processAttachments", () => {
     const bigImage = Buffer.alloc(5 * 1024 * 1024 + 1, 0x42); // just over 5 MB
     mockFetchResponse(bigImage, "image/png");
 
-    const attachments = [makeAttachment("huge.png", "image/png", "https://example.com/huge")];
+    const attachments = [
+      makeAttachment("huge.png", "image/png", "https://example.com/huge"),
+    ];
     const result = await processAttachments(makeMockCtx(), attachments);
 
     expect(result.contentBlocks).toHaveLength(0);
@@ -261,7 +320,9 @@ describe("processAttachments", () => {
     const exactImage = Buffer.alloc(5 * 1024 * 1024, 0x42);
     mockFetchResponse(exactImage, "image/jpeg");
 
-    const attachments = [makeAttachment("big.jpg", "image/jpeg", "https://example.com/big")];
+    const attachments = [
+      makeAttachment("big.jpg", "image/jpeg", "https://example.com/big"),
+    ];
     const result = await processAttachments(makeMockCtx(), attachments);
 
     expect(result.contentBlocks).toHaveLength(1);
@@ -281,7 +342,9 @@ describe("processAttachments", () => {
       mockFetchResponse(Buffer.from(`data-${t.name}`), t.mime);
     }
 
-    const attachments = types.map((t) => makeAttachment(t.name, t.mime, `https://example.com/${t.name}`));
+    const attachments = types.map((t) =>
+      makeAttachment(t.name, t.mime, `https://example.com/${t.name}`),
+    );
     const result = await processAttachments(makeMockCtx(), attachments);
 
     expect(result.contentBlocks).toHaveLength(4);
@@ -298,7 +361,11 @@ describe("filterPlatformAttachments", () => {
   it("removes Teams platform HTML (no URL)", () => {
     const attachments = [
       // Platform-injected HTML — no downloadUrl or contentUrl
-      { name: "card", contentType: "text/html", content: "<div>adaptive card</div>" } as Attachment,
+      {
+        name: "card",
+        contentType: "text/html",
+        content: "<div>adaptive card</div>",
+      } as Attachment,
       // Normal file
       makeAttachment("file.txt", "text/plain", "https://example.com/file.txt"),
     ];
@@ -309,7 +376,11 @@ describe("filterPlatformAttachments", () => {
 
   it("keeps user-uploaded HTML files (with contentUrl)", () => {
     const attachments = [
-      { name: "page.html", contentType: "text/html", contentUrl: "https://example.com/page.html" } as Attachment,
+      {
+        name: "page.html",
+        contentType: "text/html",
+        contentUrl: "https://example.com/page.html",
+      } as Attachment,
     ];
     const result = filterPlatformAttachments(attachments);
     expect(result).toHaveLength(1);
@@ -333,7 +404,10 @@ describe("filterPlatformAttachments", () => {
     const attachments = [
       makeAttachment("photo.png", "image/png", "https://example.com/photo"),
       makeAttachment("doc.pdf", "application/pdf", "https://example.com/doc"),
-      { name: "nourl.bin", contentType: "application/octet-stream" } as Attachment,
+      {
+        name: "nourl.bin",
+        contentType: "application/octet-stream",
+      } as Attachment,
     ];
     const result = filterPlatformAttachments(attachments);
     expect(result).toHaveLength(3);

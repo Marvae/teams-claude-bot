@@ -7,10 +7,7 @@ import { ActivityHandler, BotFrameworkAdapter, TurnContext } from "botbuilder";
 import { stripMention } from "./mention.js";
 import { handleCommand } from "./commands.js";
 import * as state from "../session/state.js";
-import {
-  type ClaudeResult,
-  type ProgressEvent,
-} from "../claude/agent.js";
+import { type ClaudeResult, type ProgressEvent } from "../claude/agent.js";
 import { ConversationSession, type SessionConfig } from "../claude/session.js";
 import { formatResponse, splitMessage } from "../claude/formatter.js";
 import {
@@ -32,7 +29,11 @@ import {
   resolveElicitation,
   resolveElicitationUrlComplete,
 } from "../claude/elicitation.js";
-import { processAttachments, filterPlatformAttachments, type ContentBlock } from "./attachments.js";
+import {
+  processAttachments,
+  filterPlatformAttachments,
+  type ContentBlock,
+} from "./attachments.js";
 import { config } from "../config.js";
 import { saveConversationRef } from "../handoff/store.js";
 
@@ -40,12 +41,17 @@ import { saveConversationRef } from "../handoff/store.js";
 // Extensions that already match (e.g. go, java, json, xml, css, sql, php, perl,
 // swift, rust, ruby, dart, scala, kotlin, scss, jsx, r, graphql) need no entry.
 const EXT_LANG_OVERRIDE: Record<string, string> = {
-  ts: "typescript", tsx: "typescript",
-  js: "javascript", mjs: "javascript",
+  ts: "typescript",
+  tsx: "typescript",
+  js: "javascript",
+  mjs: "javascript",
   py: "python",
-  sh: "bash", zsh: "bash",
+  sh: "bash",
+  zsh: "bash",
   cs: "csharp",
-  cc: "cpp", cxx: "cpp", hpp: "cpp",
+  cc: "cpp",
+  cxx: "cpp",
+  hpp: "cpp",
   htm: "html",
   ps1: "powershell",
   kt: "kotlin",
@@ -225,7 +231,9 @@ export class ClaudeCodeBot extends ActivityHandler {
         try {
           const cardId = ctx.activity.replyToId;
           if (cardId) await ctx.deleteActivity(cardId);
-        } catch { /* card may already be gone */ }
+        } catch {
+          /* card may already be gone */
+        }
       };
 
       if (value.action === "resume_session") {
@@ -307,7 +315,9 @@ export class ClaudeCodeBot extends ActivityHandler {
                 },
               ],
             });
-          } catch { /* card may be gone */ }
+          } catch {
+            /* card may be gone */
+          }
         }
 
         // User confirmed — do the actual handoff in background
@@ -490,9 +500,7 @@ export class ClaudeCodeBot extends ActivityHandler {
           text;
       }
       if (failed.length > 0) {
-        await ctx.sendActivity(
-          `Failed to download: ${failed.join(", ")}`,
-        );
+        await ctx.sendActivity(`Failed to download: ${failed.join(", ")}`);
       }
     }
 
@@ -588,7 +596,9 @@ export class ClaudeCodeBot extends ActivityHandler {
       });
     };
 
-    const sendCard = async (card: Record<string, unknown>): Promise<string | undefined> => {
+    const sendCard = async (
+      card: Record<string, unknown>,
+    ): Promise<string | undefined> => {
       const resp = await sendActivity({
         attachments: [
           {
@@ -658,9 +668,16 @@ export class ClaudeCodeBot extends ActivityHandler {
             const cardInfo = this.interactiveCards.get(elicitationId);
             this.interactiveCards.delete(elicitationId);
             if (cardInfo) {
-              try { await deleteActivity(cardInfo.activityId); } catch { /* ignore */ }
+              try {
+                await deleteActivity(cardInfo.activityId);
+              } catch {
+                /* ignore */
+              }
             }
-            await sendActivity({ type: "message", text: "⏰ Elicitation timed out." });
+            await sendActivity({
+              type: "message",
+              text: "⏰ Elicitation timed out.",
+            });
           },
         },
       );
@@ -676,9 +693,16 @@ export class ClaudeCodeBot extends ActivityHandler {
           const cardInfo = this.interactiveCards.get(requestId);
           this.interactiveCards.delete(requestId);
           if (cardInfo) {
-            try { await deleteActivity(cardInfo.activityId); } catch { /* ignore */ }
+            try {
+              await deleteActivity(cardInfo.activityId);
+            } catch {
+              /* ignore */
+            }
           }
-          await sendActivity({ type: "message", text: "⏰ Prompt request timed out." });
+          await sendActivity({
+            type: "message",
+            text: "⏰ Prompt request timed out.",
+          });
         },
       });
       const activityId = await sendCard(

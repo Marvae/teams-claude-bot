@@ -16,14 +16,18 @@ describe("buildToolCard — ChoiceSet permission card", () => {
     expect(choiceSet!.id).toBe("permissionChoice");
     expect(choiceSet!.style).toBe("expanded");
 
-    const choices = choiceSet!.choices as Array<{ title: string; value: string }>;
+    const choices = choiceSet!.choices as Array<{
+      title: string;
+      value: string;
+    }>;
     expect(choices.length).toBe(2);
     expect(choices[0].value).toBe("allow");
     expect(choices[1].value).toBe("deny");
 
     const actions = card.actions as Array<Record<string, unknown>>;
     const submitAction = actions.find(
-      (a) => (a.data as Record<string, unknown>)?.action === "permission_decision",
+      (a) =>
+        (a.data as Record<string, unknown>)?.action === "permission_decision",
     );
     expect(submitAction).toBeDefined();
     expect(submitAction!.title).toBe("Submit");
@@ -48,7 +52,10 @@ describe("buildToolCard — ChoiceSet permission card", () => {
 
     const body = card.body as Array<Record<string, unknown>>;
     const choiceSet = body.find((b) => b.type === "Input.ChoiceSet");
-    const choices = choiceSet!.choices as Array<{ title: string; value: string }>;
+    const choices = choiceSet!.choices as Array<{
+      title: string;
+      value: string;
+    }>;
 
     expect(choices.length).toBe(3);
     expect(choices[0].value).toBe("allow");

@@ -620,4 +620,3 @@ function isResumeFailure(error: string): boolean {
     msg.includes("--resume")
   );
 }
-

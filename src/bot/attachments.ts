@@ -61,7 +61,9 @@ function tryReadAsText(data: Buffer): string | null {
  * Filter out Teams platform-injected HTML attachments (adaptive card renders, etc.)
  * while keeping user-uploaded .html files (which have a downloadUrl or contentUrl).
  */
-export function filterPlatformAttachments(attachments: Attachment[]): Attachment[] {
+export function filterPlatformAttachments(
+  attachments: Attachment[],
+): Attachment[] {
   return attachments.filter((a) => {
     if (a.contentType === "text/html") {
       const content = a.content as Record<string, unknown> | undefined;

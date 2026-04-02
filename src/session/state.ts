@@ -257,4 +257,3 @@ export function setCachedCommands(
 ): void {
   cachedCommands = cmds;
 }
-

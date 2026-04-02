@@ -340,4 +340,3 @@ describe("/session name command", () => {
     expect(handled).toBe(false);
   });
 });
-

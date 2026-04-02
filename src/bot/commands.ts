@@ -392,23 +392,20 @@ export async function handleCommand(
     }
 
     case "/test-elicitation": {
-      const card = buildElicitationFormCard(
-        `test-elic-${Date.now()}`,
-        {
-          serverName: "test-mcp-server",
-          message: "Please provide your configuration",
-          mode: "form",
-          elicitationId: `test-elic-${Date.now()}`,
-          requestedSchema: {
-            type: "object",
-            properties: {
-              project: { type: "string", title: "Project Name" },
-              branch: { type: "string", title: "Branch" },
-            },
-            required: ["project"],
+      const card = buildElicitationFormCard(`test-elic-${Date.now()}`, {
+        serverName: "test-mcp-server",
+        message: "Please provide your configuration",
+        mode: "form",
+        elicitationId: `test-elic-${Date.now()}`,
+        requestedSchema: {
+          type: "object",
+          properties: {
+            project: { type: "string", title: "Project Name" },
+            branch: { type: "string", title: "Branch" },
           },
+          required: ["project"],
         },
-      );
+      });
       await ctx.sendActivity({
         attachments: [CardFactory.adaptiveCard(card)],
       });
@@ -416,16 +413,13 @@ export async function handleCommand(
     }
 
     case "/test-elicitation-url": {
-      const card = buildElicitationUrlCard(
-        `test-elic-url-${Date.now()}`,
-        {
-          serverName: "github-mcp",
-          message: "Please authorize access to your GitHub account",
-          mode: "url",
-          elicitationId: `test-elic-url-${Date.now()}`,
-          url: "https://github.com/login/oauth/authorize?client_id=test",
-        },
-      );
+      const card = buildElicitationUrlCard(`test-elic-url-${Date.now()}`, {
+        serverName: "github-mcp",
+        message: "Please authorize access to your GitHub account",
+        mode: "url",
+        elicitationId: `test-elic-url-${Date.now()}`,
+        url: "https://github.com/login/oauth/authorize?client_id=test",
+      });
       await ctx.sendActivity({
         attachments: [CardFactory.adaptiveCard(card)],
       });
@@ -509,21 +503,37 @@ export async function handleCommand(
         type: "AdaptiveCard",
         version: "1.4",
         body: [
-          { type: "TextBlock", text: "Sessions (Test)", weight: "bolder", size: "medium" },
+          {
+            type: "TextBlock",
+            text: "Sessions (Test)",
+            weight: "bolder",
+            size: "medium",
+          },
           {
             type: "Input.ChoiceSet",
             id: "sessionId",
             style: "expanded",
             value: "sess-abc",
             choices: [
-              { title: "Feature Auth (my-app · 2h ago · main)", value: "sess-abc" },
-              { title: "Bug Fix #123 (api · 5h ago · fix/123)", value: "sess-def" },
+              {
+                title: "Feature Auth (my-app · 2h ago · main)",
+                value: "sess-abc",
+              },
+              {
+                title: "Bug Fix #123 (api · 5h ago · fix/123)",
+                value: "sess-def",
+              },
               { title: "Code Review (frontend · 1d ago)", value: "sess-ghi" },
             ],
           },
         ],
         actions: [
-          { type: "Action.Submit", title: "Submit", style: "positive", data: { action: "resume_session", sessionCwds: {} } },
+          {
+            type: "Action.Submit",
+            title: "Submit",
+            style: "positive",
+            data: { action: "resume_session", sessionCwds: {} },
+          },
           { type: "Action.Submit", title: "Cancel", data: { action: "noop" } },
         ],
       });

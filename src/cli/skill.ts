@@ -15,18 +15,54 @@ export function getConversationRefsPath(): string {
 }
 
 export async function maybeInstallSkillPrompt(): Promise<void> {
-  const answer = await prompt(
-    "Install /handoff skill for Claude Code? [Y/n]: ",
+  // Check where it's currently installed
+  const globalPath = path.join(
+    homeDir,
+    ".claude",
+    "skills",
+    "handoff",
+    "SKILL.md",
   );
-  if (!normalizeYesNo(answer, true)) {
-    console.log("Tip: Run 'teams-bot install-skill' later to enable /handoff.");
-    return;
+  const localPath = path.join(
+    process.cwd(),
+    ".claude",
+    "skills",
+    "handoff",
+    "SKILL.md",
+  );
+  const isGlobal = fs.existsSync(globalPath);
+  const isLocal = fs.existsSync(localPath);
+
+  if (isGlobal || isLocal) {
+    const scope = isGlobal ? "global (~/.claude/)" : "project (.claude/)";
+    console.log(`  ✓ /handoff skill already installed (${scope})\n`);
+    console.log("    1) Keep as-is");
+    console.log("    2) Reinstall / change scope");
+    console.log("    3) Uninstall\n");
+    const choice = (await prompt("  Choose [1]: ")) || "1";
+    if (choice === "3") {
+      await uninstallSkill();
+      return;
+    }
+    if (choice !== "2") return;
+  } else {
+    const answer = await prompt(
+      "  Install /handoff skill for Claude Code? [Y/n]: ",
+    );
+    if (!normalizeYesNo(answer, true)) {
+      console.log(
+        "  Tip: Run 'teams-bot install-skill' later to enable /handoff.",
+      );
+      return;
+    }
   }
 
   await installSkill();
 }
 
-export function removeSessionStartHook(settings: Record<string, unknown>): boolean {
+export function removeSessionStartHook(
+  settings: Record<string, unknown>,
+): boolean {
   const hooks = settings.hooks;
   if (!hooks || typeof hooks !== "object") {
     return false;
@@ -154,14 +190,16 @@ export async function installSkill(): Promise<void> {
     throw new Error(`Skill file not found at ${skillSrc}`);
   }
 
-  console.log("\nTeams Bot - Install /handoff\n");
-  console.log("Where to install?");
-  console.log("  1) Global (all projects)   ~/.claude/");
-  console.log("  2) This project only       .claude/\n");
+  // Bot runs locally — always use localhost
+  const { loadExistingSetupConfig } = await import("./setup.js");
+  const envConfig = loadExistingSetupConfig();
+  const botUrl = `http://localhost:${envConfig.PORT || "3978"}`;
 
-  const scopeChoice = (await prompt("Choose [1]: ")) || "1";
-  const botUrlInput = await prompt("URL [http://localhost:3978]: ");
-  const botUrl = botUrlInput || "http://localhost:3978";
+  console.log("\n  Where to install?");
+  console.log("    1) Global (all projects)   ~/.claude/");
+  console.log("    2) This project only       .claude/\n");
+
+  const scopeChoice = (await prompt("  Choose [1]: ")) || "1";
 
   let settingsFile = path.join(projectDir, ".claude", "settings.json");
   let skillDestDir = path.join(projectDir, ".claude", "skills", "handoff");
@@ -169,18 +207,6 @@ export async function installSkill(): Promise<void> {
   if (scopeChoice === "1") {
     settingsFile = path.join(homeDir, ".claude", "settings.json");
     skillDestDir = path.join(homeDir, ".claude", "skills", "handoff");
-  }
-
-  console.log("\nSummary:");
-  console.log(
-    `  Install to: ${scopeChoice === "1" ? "~/.claude/ (global)" : ".claude/ (project)"}`,
-  );
-  console.log(`  Bot URL:    ${botUrl}\n`);
-
-  const confirm = await prompt("Proceed? [Y/n]: ");
-  if (!normalizeYesNo(confirm, true)) {
-    console.log("Cancelled.");
-    return;
   }
 
   installSkillFiles(skillDestDir, skillSrcDir);

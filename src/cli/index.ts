@@ -26,9 +26,25 @@ async function main(): Promise<void> {
 
   program
     .command("setup")
-    .description("Interactive config setup")
-    .action(async () => {
-      await setupCommand();
+    .description("Interactive config setup (run all steps, or pick one)")
+    .addHelpText(
+      "after",
+      `
+Steps:
+  azure     Azure Bot app registration (App ID, Client Secret, Tenant ID)
+  bot       Bot settings (Work Directory, Allowed Users)
+  tunnel    Dev Tunnel configuration (creates or reuses a devtunnel)
+  skill     Install /handoff skill for Claude Code
+
+Examples:
+  teams-bot setup           Run all steps interactively
+  teams-bot setup azure     Only configure Azure Bot credentials
+  teams-bot setup tunnel    Only configure Dev Tunnel
+`,
+    )
+    .argument("[step]", "run a single step: azure | bot | tunnel | skill")
+    .action(async (step?: string) => {
+      await setupCommand(step);
     });
 
   program

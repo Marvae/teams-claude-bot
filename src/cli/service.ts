@@ -97,11 +97,9 @@ async function macStartService(): Promise<void> {
   // kickstart is the reliable way to force-start a KeepAlive agent.
   // On macOS 13+ the "system" UID domain is gui/<uid>.
   const uid = process.getuid?.() ?? 501;
-  await runCommand(
-    "launchctl",
-    ["kickstart", "-k", `gui/${uid}/${macLabel}`],
-    { allowFailure: true },
-  );
+  await runCommand("launchctl", ["kickstart", "-k", `gui/${uid}/${macLabel}`], {
+    allowFailure: true,
+  });
   console.log("Started.");
 }
 
@@ -123,7 +121,9 @@ async function macStatus(): Promise<void> {
   const pidLine = lines.find((l) => l.includes(macLabel));
   const pid = pidLine?.split(/\s+/)[0];
   console.log(
-    pid && pid !== "-" ? `Service: RUNNING (pid ${pid})` : "Service: LOADED (not running)",
+    pid && pid !== "-"
+      ? `Service: RUNNING (pid ${pid})`
+      : "Service: LOADED (not running)",
   );
 }
 
@@ -203,19 +203,43 @@ async function windowsInstallService(): Promise<void> {
   const xml = `
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <Triggers><LogonTrigger><Enabled>true</Enabled></LogonTrigger></Triggers>
-  <Settings><RestartOnFailure><Interval>PT30S</Interval><Count>999</Count></RestartOnFailure><ExecutionTimeLimit>PT0S</ExecutionTimeLimit><AllowStartOnDemand>true</AllowStartOnDemand></Settings>
+  <!-- PT1M is the minimum interval Windows Task Scheduler allows -->
+  <Settings><RestartOnFailure><Interval>PT1M</Interval><Count>999</Count></RestartOnFailure><ExecutionTimeLimit>PT0S</ExecutionTimeLimit><AllowStartOnDemand>true</AllowStartOnDemand></Settings>
   <Actions><Exec><Command>${bashPath}</Command><Arguments>${scriptPath}</Arguments><WorkingDirectory>${projectDir}</WorkingDirectory></Exec></Actions>
 </Task>`.trim();
   const tmpXml = path.join(os.tmpdir(), `${winTaskName}.xml`);
   fs.writeFileSync(tmpXml, xml, "utf8");
-  await runPowerShell(
+  const result = await runPowerShell(
     `Register-ScheduledTask -TaskName '${winTaskName}' -Xml (Get-Content '${tmpXml}' -Raw) -Force`,
+    { allowFailure: true },
   );
-  fs.unlinkSync(tmpXml);
-  await runPowerShell(`Start-ScheduledTask -TaskName '${winTaskName}'`);
-  console.log(
-    `Registered scheduled task "${winTaskName}". The bot will start now and on login.`,
-  );
+  try {
+    fs.unlinkSync(tmpXml);
+  } catch {
+    /* ignore */
+  }
+
+  if (result.code === 0) {
+    await runPowerShell(`Start-ScheduledTask -TaskName '${winTaskName}'`);
+    console.log(
+      `Registered scheduled task "${winTaskName}". The bot will start now and on login.`,
+    );
+    return;
+  }
+
+  // Scheduled task registration failed — extract first meaningful line from stderr
+  const firstLine = result.stderr
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .find(
+      (l) => l.length > 0 && !l.startsWith("At line:") && !l.startsWith("+"),
+    );
+  console.error("Failed to register scheduled task.");
+  if (firstLine) console.error(`  ${firstLine}`);
+  console.log("\nTry one of:");
+  console.log("  1. Run as Administrator: teams-bot install");
+  console.log("  2. Start without auto-login: teams-bot start");
+  console.log("     (runs in background, but won't auto-start after reboot)");
 }
 
 async function windowsUninstallService(): Promise<void> {
@@ -281,7 +305,12 @@ async function linuxInstallService(): Promise<void> {
   fs.mkdirSync(logDir, { recursive: true });
 
   await runCommand("systemctl", ["--user", "daemon-reload"]);
-  await runCommand("systemctl", ["--user", "enable", "--now", linuxServiceName]);
+  await runCommand("systemctl", [
+    "--user",
+    "enable",
+    "--now",
+    linuxServiceName,
+  ]);
   console.log("Enabled and started systemd user service.");
 }
 
@@ -411,7 +440,7 @@ export async function showStatus(platform: Platform): Promise<void> {
   }
 }
 
-function getLogPaths(platform: Platform): string[] {
+export function getLogPaths(platform: Platform): string[] {
   switch (platform) {
     case "darwin":
       return [macLogPath];

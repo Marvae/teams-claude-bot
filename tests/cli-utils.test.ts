@@ -162,9 +162,7 @@ describe("removeSessionStartHook", () => {
   it("returns false when no session-start.sh hook found", () => {
     const settings: Record<string, unknown> = {
       hooks: {
-        SessionStart: [
-          { hooks: [{ type: "command", command: "echo hello" }] },
-        ],
+        SessionStart: [{ hooks: [{ type: "command", command: "echo hello" }] }],
       },
     };
     expect(removeSessionStartHook(settings)).toBe(false);
@@ -175,9 +173,7 @@ describe("removeSessionStartHook", () => {
       hooks: {
         SessionStart: [
           {
-            hooks: [
-              { type: "command", command: "/path/to/session-start.sh" },
-            ],
+            hooks: [{ type: "command", command: "/path/to/session-start.sh" }],
           },
         ],
       },
@@ -192,9 +188,7 @@ describe("removeSessionStartHook", () => {
       hooks: {
         SessionStart: [
           {
-            hooks: [
-              { type: "command", command: "/path/to/session-start.sh" },
-            ],
+            hooks: [{ type: "command", command: "/path/to/session-start.sh" }],
           },
           {
             hooks: [{ type: "command", command: "echo other" }],
@@ -204,8 +198,12 @@ describe("removeSessionStartHook", () => {
     };
     expect(removeSessionStartHook(settings)).toBe(true);
     const hooksObj = settings.hooks as Record<string, unknown>;
-    const sessionStart = hooksObj.SessionStart as Array<Record<string, unknown>>;
+    const sessionStart = hooksObj.SessionStart as Array<
+      Record<string, unknown>
+    >;
     expect(sessionStart).toHaveLength(1);
-    expect((sessionStart[0].hooks as Array<Record<string, unknown>>)[0].command).toBe("echo other");
+    expect(
+      (sessionStart[0].hooks as Array<Record<string, unknown>>)[0].command,
+    ).toBe("echo other");
   });
 });
