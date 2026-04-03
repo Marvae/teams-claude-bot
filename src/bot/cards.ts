@@ -386,24 +386,12 @@ export function buildHandoffCard(
 
 export function buildPermissionModeCard(currentMode: string): IAdaptiveCard {
   const modes = [
-    { id: "default", label: "🛡️ Default", desc: "Ask before risky operations" },
-    {
-      id: "auto",
-      label: "🤖 Auto",
-      desc: "AI decides safe actions, asks for risky ones",
-    },
-    {
-      id: "acceptEdits",
-      label: "📝 Accept Edits",
-      desc: "Auto-allow file edits, ask for others",
-    },
-    { id: "plan", label: "📋 Plan", desc: "Preview actions without executing" },
-    { id: "dontAsk", label: "✅ Don't Ask", desc: "Auto-approve all tools" },
-    {
-      id: "bypassPermissions",
-      label: "⚡ Bypass",
-      desc: "Skip all permission checks",
-    },
+    { id: "default", label: "🛡️ Default", desc: "Ask before risky actions" },
+    { id: "auto", label: "🤖 Auto mode", desc: "AI decides, blocks unsafe actions" },
+    { id: "acceptEdits", label: "📝 Accept edits", desc: "Auto-approve file edits" },
+    { id: "plan", label: "📋 Plan mode", desc: "Read-only, no execution" },
+    { id: "dontAsk", label: "🔒 Don't Ask", desc: "Only pre-approved tools" },
+    { id: "bypassPermissions", label: "⚡ Bypass Permissions", desc: "Skip all checks" },
   ];
 
   const current = modes.find((m) => m.id === currentMode);
