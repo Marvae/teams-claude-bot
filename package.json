@@ -25,7 +25,7 @@
     "dev": "concurrently -k -n bot,tunnel -c blue,green \"tsx watch src/index.ts\" \"node scripts/tunnel.mjs\"",
     "dev:local": "tsx watch src/index.ts",
     "build": "npm run build:bot && npm run build:cli",
-    "build:bot": "npx esbuild src/index.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/index.js --external:@anthropic-ai/claude-agent-sdk --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\"",
+    "build:bot": "npx esbuild src/index.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/index.js --external:@anthropic-ai/claude-agent-sdk --external:@microsoft/teams.apps --external:@microsoft/teams.api --external:@microsoft/teams.cards --external:@microsoft/teams.dev --external:express --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\"",
     "build:cli": "node scripts/build-cli.mjs",
     "start": "node dist/index.js",
     "test": "vitest run",
@@ -39,13 +39,16 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.64",
-    "botbuilder": "^4.23.0",
-    "dotenv": "^17.3.1",
+    "@microsoft/teams.api": "^2.0.6",
+    "@microsoft/teams.apps": "^2.0.6",
+    "@microsoft/teams.cards": "^2.0.6",
     "commander": "^14.0.1",
+    "dotenv": "^17.3.1",
     "express": "^5.2.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@microsoft/teams.dev": "^2.0.6",
     "@types/express": "^5.0.6",
     "@types/node": "^25.3.3",
     "@typescript-eslint/eslint-plugin": "^8.56.1",

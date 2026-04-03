@@ -74,25 +74,11 @@ describe("conversation refs file permissions", () => {
   });
 
   it("writes refs file with owner-only permissions (0600)", async () => {
-    const { TurnContext } = await import("botbuilder");
-    const { loadConversationRefs, saveConversationRef } =
+    const { loadConversationRefs, saveConversationId } =
       await import("../src/handoff/store.js");
     loadConversationRefs();
 
-    const mockCtx = {
-      activity: {
-        from: { aadObjectId: "test-sec-user", name: "test" },
-        recipient: { id: "bot" },
-        conversation: { id: "conv" },
-        channelId: "msteams",
-        serviceUrl: "https://test.com",
-      },
-    };
-    vi.spyOn(TurnContext, "getConversationReference").mockReturnValue({
-      conversation: { id: "conv" },
-    } as never);
-
-    saveConversationRef(mockCtx as never);
+    saveConversationId("test-sec-user", "conv-sec-1");
 
     if (process.platform !== "win32") {
       const stats = statSync(TEMP_REFS);

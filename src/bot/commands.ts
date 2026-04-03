@@ -1,19 +1,29 @@
-import { CardFactory, type TurnContext } from "botbuilder";
 import { listSessions } from "@anthropic-ai/claude-agent-sdk";
+import { MessageActivity } from "@microsoft/teams.api";
+import type { ActivityLike, SentActivity } from "@microsoft/teams.api";
+import type { IAdaptiveCard } from "@microsoft/teams.cards";
+import {
+  TextBlock,
+  ChoiceSetInput,
+  Choice,
+  ExecuteAction,
+} from "@microsoft/teams.cards";
 import * as state from "../session/state.js";
 import {
+  adaptiveCard,
   buildHelpCard,
   buildPermissionModeCard,
-  buildToolCard,
-  buildHandoffCard,
-  buildElicitationFormCard,
-  buildElicitationUrlCard,
 } from "./cards.js";
-import { createPromptCard } from "../claude/user-input.js";
-import {
-  buildAskUserQuestionCardData,
-  type AskUserQuestionInput,
-} from "../claude/user-questions.js";
+
+/** Minimal context interface matching Teams SDK's IActivityContext. */
+export interface CommandContext {
+  send(activity: ActivityLike): Promise<SentActivity>;
+}
+
+/** Send an Adaptive Card as a MessageActivity. */
+function sendCard(ctx: CommandContext, card: IAdaptiveCard) {
+  return ctx.send(new MessageActivity().addCard("adaptive", card));
+}
 
 function formatAge(iso: string): string {
   const ms = Date.now() - new Date(iso).getTime();
@@ -48,7 +58,7 @@ const VALID_PERMISSION_MODES = [
 
 export async function handleCommand(
   text: string,
-  ctx: TurnContext,
+  ctx: CommandContext,
 ): Promise<boolean> {
   if (!text.startsWith("/")) return false;
 
@@ -61,7 +71,7 @@ export async function handleCommand(
     case "/clear": {
       state.destroySession();
       state.clearPersistedSessionId();
-      await ctx.sendActivity("New session. Send your next message.");
+      await ctx.send("New session. Send your next message.");
       return true;
     }
 
@@ -69,17 +79,17 @@ export async function handleCommand(
     case "/cancel": {
       const managed = state.getSession();
       if (managed?.session.hasQuery) {
-        await ctx.sendActivity("🛑 Stopping...");
+        await ctx.send("🛑 Stopping...");
         managed.session.interrupt().catch(() => {});
       } else {
-        await ctx.sendActivity("Nothing to interrupt.");
+        await ctx.send("Nothing to interrupt.");
       }
       return true;
     }
 
     case "/project": {
       if (!arg) {
-        await ctx.sendActivity(
+        await ctx.send(
           `Current: \`${state.getWorkDir()}\`\n\nUsage: \`/project <path>\``,
         );
         return true;
@@ -91,22 +101,20 @@ export async function handleCommand(
 
       const result = state.setWorkDir(expanded);
       if (!result.ok) {
-        await ctx.sendActivity(result.error);
+        await ctx.send(result.error);
         return true;
       }
 
       state.destroySession();
       state.clearPersistedSessionId();
-      await ctx.sendActivity(
-        `Project: \`${state.getWorkDir()}\` (new session)`,
-      );
+      await ctx.send(`Project: \`${state.getWorkDir()}\` (new session)`);
       return true;
     }
 
     case "/model": {
       if (!arg) {
         const current = state.getModel();
-        await ctx.sendActivity(
+        await ctx.send(
           current
             ? `Current model: \`${current}\``
             : "No model override set (using default).\n\nUsage: `/model <name>` — e.g. `/model sonnet`",
@@ -118,7 +126,7 @@ export async function handleCommand(
       state.setModel(resolved);
       // Update running session dynamically (no restart needed)
       await state.getSession()?.session.setModel(resolved);
-      await ctx.sendActivity(`Model set to \`${resolved}\``);
+      await ctx.send(`Model set to \`${resolved}\``);
       return true;
     }
 
@@ -128,14 +136,14 @@ export async function handleCommand(
         (m) =>
           `- \`${m.shortcut}\` → \`${m.id}\`${m.id === current ? " (active)" : ""}`,
       );
-      await ctx.sendActivity("**Available models:**\n\n" + lines.join("\n"));
+      await ctx.send("**Available models:**\n\n" + lines.join("\n"));
       return true;
     }
 
     case "/thinking": {
       if (!arg) {
         const current = state.getThinkingTokens();
-        await ctx.sendActivity(
+        await ctx.send(
           current !== undefined && current !== null
             ? `Thinking budget: \`${current}\` tokens`
             : "No thinking budget override set.\n\nUsage: `/thinking <tokens>` or `/thinking off`",
@@ -145,20 +153,20 @@ export async function handleCommand(
 
       if (arg.toLowerCase() === "off") {
         state.setThinkingTokens(null);
-        await ctx.sendActivity("Thinking budget override removed.");
+        await ctx.send("Thinking budget override removed.");
         return true;
       }
 
       const tokens = parseInt(arg, 10);
       if (isNaN(tokens) || tokens <= 0) {
-        await ctx.sendActivity(
+        await ctx.send(
           "Invalid value. Usage: `/thinking <number>` or `/thinking off`",
         );
         return true;
       }
 
       state.setThinkingTokens(tokens);
-      await ctx.sendActivity(`Thinking budget set to \`${tokens}\` tokens`);
+      await ctx.send(`Thinking budget set to \`${tokens}\` tokens`);
       return true;
     }
 
@@ -166,19 +174,12 @@ export async function handleCommand(
       if (!arg) {
         const current = state.getPermissionMode();
         const card = buildPermissionModeCard(current);
-        await ctx.sendActivity({
-          attachments: [
-            {
-              contentType: "application/vnd.microsoft.card.adaptive",
-              content: card,
-            },
-          ],
-        });
+        await sendCard(ctx, card);
         return true;
       }
 
       if (!VALID_PERMISSION_MODES.includes(arg)) {
-        await ctx.sendActivity(
+        await ctx.send(
           `Invalid mode: \`${arg}\`\n\nValid modes: ${VALID_PERMISSION_MODES.map((m) => `\`${m}\``).join(", ")}`,
         );
         return true;
@@ -186,7 +187,7 @@ export async function handleCommand(
 
       state.setPermissionMode(arg);
       await state.getSession()?.session.setPermissionMode(arg);
-      await ctx.sendActivity(`Permission mode set to \`${arg}\``);
+      await ctx.send(`Permission mode set to \`${arg}\``);
       return true;
     }
     case "/status": {
@@ -213,7 +214,7 @@ export async function handleCommand(
           `**Usage:** ${usage.turns} turns · ${tokens}k tokens · $${usage.costUsd.toFixed(4)}`,
         );
       }
-      await ctx.sendActivity(lines.join("\n\n"));
+      await ctx.send(lines.join("\n\n"));
       return true;
     }
 
@@ -222,16 +223,16 @@ export async function handleCommand(
       if (sub === "name") {
         const title = parts.slice(2).join(" ").trim();
         if (!title) {
-          await ctx.sendActivity("Usage: `/session name <title>`");
+          await ctx.send("Usage: `/session name <title>`");
           return true;
         }
         const currentId = state.getSession()?.session.currentSessionId;
         if (!currentId) {
-          await ctx.sendActivity("No active session.");
+          await ctx.send("No active session.");
           return true;
         }
         state.setSessionTitle(currentId, title);
-        await ctx.sendActivity(`Session named: **${title}**`);
+        await ctx.send(`Session named: **${title}**`);
         return true;
       }
       return false;
@@ -246,14 +247,14 @@ export async function handleCommand(
         sdkSessions = await listSessions({ limit: MAX_SESSIONS });
         sdkSessions.sort((a, b) => b.lastModified - a.lastModified);
       } catch {
-        await ctx.sendActivity(
+        await ctx.send(
           "Could not list sessions. Start chatting to create one.",
         );
         return true;
       }
 
       if (sdkSessions.length === 0) {
-        await ctx.sendActivity("No sessions. Start chatting to create one.");
+        await ctx.send("No sessions. Start chatting to create one.");
         return true;
       }
 
@@ -278,45 +279,31 @@ export async function handleCommand(
         };
       });
 
-      const body: unknown[] = [
-        {
-          type: "TextBlock",
-          text: "Sessions",
-          weight: "bolder",
-          size: "medium",
-        },
-        {
-          type: "Input.ChoiceSet",
+      const sdkChoices = choices.map(
+        (c) => new Choice({ title: c.title, value: c.value }),
+      );
+
+      const card = adaptiveCard(
+        new TextBlock("Sessions", { weight: "Bolder", size: "Medium" }),
+        new ChoiceSetInput(...sdkChoices).withOptions({
           id: "sessionId",
           style: "expanded",
           value: currentId ?? sdkSessions[0].sessionId,
-          choices,
-        },
+        }),
+      );
+      card.actions = [
+        new ExecuteAction({
+          title: "Submit",
+          style: "positive",
+          data: { action: "resume_session", sessionCwds },
+        }),
+        new ExecuteAction({
+          title: "Cancel",
+          data: { action: "noop" },
+        }),
       ];
 
-      const card = CardFactory.adaptiveCard({
-        type: "AdaptiveCard",
-        version: "1.4",
-        body,
-        actions: [
-          {
-            type: "Action.Submit",
-            title: "Submit",
-            style: "positive",
-            data: {
-              action: "resume_session",
-              sessionCwds,
-            },
-          },
-          {
-            type: "Action.Submit",
-            title: "Cancel",
-            data: { action: "noop" },
-          },
-        ],
-      });
-
-      await ctx.sendActivity({ attachments: [card] });
+      await sendCard(ctx, card);
       return true;
     }
 
@@ -326,16 +313,16 @@ export async function handleCommand(
         const sessionId = state.getSession()?.session.currentSessionId;
 
         if (!mode && !sessionId) {
-          await ctx.sendActivity("No active handoff to hand back.");
+          await ctx.send("No active handoff to hand back.");
           return true;
         }
 
         state.clearHandoffMode();
-        await ctx.sendActivity(
+        await ctx.send(
           "Handed back. Your Terminal session is still active.\n\nYou can keep working here.",
         );
       } else {
-        await ctx.sendActivity(
+        await ctx.send(
           "**Handoff commands:**\n\n" +
             `\`/handoff back\` — hand session back to Terminal`,
         );
@@ -352,200 +339,7 @@ export async function handleCommand(
         sdkCommands = state.getCachedCommands();
       }
       const card = buildHelpCard(sdkCommands);
-      await ctx.sendActivity({
-        attachments: [CardFactory.adaptiveCard(card)],
-      });
-      return true;
-    }
-
-    case "/test-permission": {
-      const card = buildToolCard(
-        "Bash",
-        { command: "rm -rf /tmp/test-data" },
-        `test-perm-${Date.now()}`,
-        "potentially dangerous command",
-      );
-      await ctx.sendActivity({
-        attachments: [CardFactory.adaptiveCard(card)],
-      });
-      return true;
-    }
-
-    case "/test-permission-suggestion": {
-      const card = buildToolCard(
-        "Bash",
-        { command: "ls /home/user/projects" },
-        `test-perm-sug-${Date.now()}`,
-        "directory access",
-        [
-          {
-            type: "addRules",
-            destination: "session",
-            rules: [{ toolName: "Bash", ruleContent: "/home/user/projects" }],
-          } as import("@anthropic-ai/claude-agent-sdk").PermissionUpdate,
-        ],
-      );
-      await ctx.sendActivity({
-        attachments: [CardFactory.adaptiveCard(card)],
-      });
-      return true;
-    }
-
-    case "/test-elicitation": {
-      const card = buildElicitationFormCard(`test-elic-${Date.now()}`, {
-        serverName: "test-mcp-server",
-        message: "Please provide your configuration",
-        mode: "form",
-        elicitationId: `test-elic-${Date.now()}`,
-        requestedSchema: {
-          type: "object",
-          properties: {
-            project: { type: "string", title: "Project Name" },
-            branch: { type: "string", title: "Branch" },
-          },
-          required: ["project"],
-        },
-      });
-      await ctx.sendActivity({
-        attachments: [CardFactory.adaptiveCard(card)],
-      });
-      return true;
-    }
-
-    case "/test-elicitation-url": {
-      const card = buildElicitationUrlCard(`test-elic-url-${Date.now()}`, {
-        serverName: "github-mcp",
-        message: "Please authorize access to your GitHub account",
-        mode: "url",
-        elicitationId: `test-elic-url-${Date.now()}`,
-        url: "https://github.com/login/oauth/authorize?client_id=test",
-      });
-      await ctx.sendActivity({
-        attachments: [CardFactory.adaptiveCard(card)],
-      });
-      return true;
-    }
-
-    case "/test-prompt": {
-      const card = createPromptCard(
-        `test-prompt-${Date.now()}`,
-        "How would you like to proceed?",
-        [
-          { key: "retry", label: "Retry" },
-          { key: "skip", label: "Skip" },
-          { key: "abort", label: "Abort" },
-        ],
-      );
-      await ctx.sendActivity({
-        attachments: [CardFactory.adaptiveCard(card)],
-      });
-      return true;
-    }
-
-    case "/test-handoff": {
-      const card = buildHandoffCard(
-        "/Users/test/projects/my-app",
-        "test-session-abc123",
-        "Working on feature branch: add-auth\n\nLast action: Updated login component",
-        [
-          { content: "Add OAuth provider", done: true },
-          { content: "Implement token refresh", done: false },
-          { content: "Write tests", done: false },
-        ],
-      );
-      await ctx.sendActivity({
-        attachments: [
-          {
-            contentType: "application/vnd.microsoft.card.adaptive",
-            content: card,
-          },
-        ],
-      });
-      return true;
-    }
-
-    case "/test-question": {
-      const input: AskUserQuestionInput = {
-        questions: [
-          {
-            question: "Which testing framework do you prefer?",
-            header: "Testing Setup",
-            options: [
-              { label: "Vitest", description: "Fast, Vite-native" },
-              { label: "Jest", description: "Widely adopted" },
-              { label: "Mocha", description: "Flexible, minimal" },
-            ],
-            multiSelect: false,
-            allowFreeText: true,
-          },
-        ],
-      };
-      const cardData = buildAskUserQuestionCardData(
-        input,
-        `test-question-${Date.now()}`,
-      );
-      await ctx.sendActivity({
-        attachments: [
-          CardFactory.adaptiveCard({
-            type: "AdaptiveCard",
-            version: "1.4",
-            $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
-            body: cardData.body,
-            actions: cardData.actions,
-          }),
-        ],
-      });
-      return true;
-    }
-
-    case "/test-session": {
-      const card = CardFactory.adaptiveCard({
-        type: "AdaptiveCard",
-        version: "1.4",
-        body: [
-          {
-            type: "TextBlock",
-            text: "Sessions (Test)",
-            weight: "bolder",
-            size: "medium",
-          },
-          {
-            type: "Input.ChoiceSet",
-            id: "sessionId",
-            style: "expanded",
-            value: "sess-abc",
-            choices: [
-              {
-                title: "Feature Auth (my-app · 2h ago · main)",
-                value: "sess-abc",
-              },
-              {
-                title: "Bug Fix #123 (api · 5h ago · fix/123)",
-                value: "sess-def",
-              },
-              { title: "Code Review (frontend · 1d ago)", value: "sess-ghi" },
-            ],
-          },
-        ],
-        actions: [
-          {
-            type: "Action.Submit",
-            title: "Submit",
-            style: "positive",
-            data: { action: "resume_session", sessionCwds: {} },
-          },
-          { type: "Action.Submit", title: "Cancel", data: { action: "noop" } },
-        ],
-      });
-      await ctx.sendActivity({ attachments: [card] });
-      return true;
-    }
-
-    case "/test-permission-mode": {
-      const card = buildPermissionModeCard(state.getPermissionMode());
-      await ctx.sendActivity({
-        attachments: [CardFactory.adaptiveCard(card)],
-      });
+      await sendCard(ctx, card);
       return true;
     }
 

@@ -1,15 +1,52 @@
-// cards.ts
+// cards.ts — Adaptive Card builders using @microsoft/teams.cards typed API
 import type { PermissionUpdate } from "@anthropic-ai/claude-agent-sdk";
+import type {
+  ActivityParams,
+  AdaptiveCardActionMessageResponse,
+  AdaptiveCardActionErrorResponse,
+} from "@microsoft/teams.api";
+import type {
+  IAdaptiveCard,
+  CardElement,
+  CardAction,
+  CardElementArray,
+} from "@microsoft/teams.cards";
+import {
+  AdaptiveCard,
+  TextBlock,
+  ColumnSet,
+  Column,
+  ActionSet,
+  ExecuteAction,
+  ShowCardAction,
+  ChoiceSetInput,
+  Choice,
+  IMBackAction,
+} from "@microsoft/teams.cards";
 import {
   type AskUserQuestionInput,
   buildAskUserQuestionCardData,
   isAskUserQuestionInput,
 } from "../claude/user-questions.js";
+import * as state from "../session/state.js";
 import {
-  buildElicitationCard,
-  buildElicitationUrlCard as buildClaudeElicitationUrlCard,
-  type ElicitationRequest,
+  resolvePermission,
+  resolvePermissionWithSuggestion,
+} from "../claude/tool-interceptor.js";
+import { resolveAskUserQuestion } from "../claude/user-questions.js";
+import {
+  resolveElicitation,
+  resolveElicitationUrlComplete,
+  cancelElicitation,
 } from "../claude/elicitation.js";
+import { resolvePromptRequest } from "../claude/user-input.js";
+
+const CARD_VERSION = "1.5" as const;
+
+/** Create an AdaptiveCard with the centralized version. */
+export function adaptiveCard(...body: CardElementArray): AdaptiveCard {
+  return new AdaptiveCard(...body).withOptions({ version: CARD_VERSION });
+}
 
 interface CommandDef {
   title: string;
@@ -82,99 +119,72 @@ const COMMAND_GROUPS: CommandGroup[] = [
   },
 ];
 
+/** Build an AdaptiveCard from a body array and optional actions. */
+function card(body: CardElement[], actions?: CardAction[]): IAdaptiveCard {
+  const c = adaptiveCard(...body);
+  if (actions) c.actions = actions;
+  return c;
+}
+
 export function buildHelpCard(
   sdkCommands?: Array<{ name: string; description: string }>,
-): Record<string, unknown> {
-  const body: Record<string, unknown>[] = [
-    {
-      type: "TextBlock",
-      text: "Claude Code Teams Bot",
-      weight: "bolder",
-      size: "large",
-    },
-    {
-      type: "TextBlock",
-      text: "Send any message to Claude Code. Use different chats for different projects.",
-      wrap: true,
-      spacing: "small",
-    },
+): IAdaptiveCard {
+  const body: CardElement[] = [
+    new TextBlock("Claude Code Teams Bot", {
+      weight: "Bolder",
+      size: "Large",
+    }),
+    new TextBlock(
+      "Send any message to Claude Code. Use different chats for different projects.",
+      { wrap: true, spacing: "Small" },
+    ),
   ];
 
   for (const group of COMMAND_GROUPS) {
-    body.push({
-      type: "TextBlock",
-      text: group.label,
-      weight: "bolder",
-      size: "medium",
-      spacing: "large",
-    });
+    body.push(
+      new TextBlock(group.label, {
+        weight: "Bolder",
+        size: "Medium",
+        spacing: "Large",
+      }),
+    );
 
-    const columns: Record<string, unknown>[] = [];
-    for (const cmd of group.commands) {
-      columns.push({
-        type: "Column",
-        width: "auto",
-        items: [
-          {
-            type: "ActionSet",
-            actions: [
-              {
-                type: "Action.Submit",
-                title: cmd.title,
-                data: { msteams: { type: "imBack", value: cmd.command } },
-              },
-            ],
-          },
-        ],
-      });
-    }
+    const columns = group.commands.map((cmd) =>
+      new Column(
+        new ActionSet(new IMBackAction(cmd.command, { title: cmd.title })),
+      ).withOptions({ width: "auto" }),
+    );
 
-    body.push({ type: "ColumnSet", columns });
+    body.push(new ColumnSet({ columns }));
   }
 
   // SDK slash commands — all displayed inline, 3 per row
-  const actions: Record<string, unknown>[] = [];
   if (sdkCommands && sdkCommands.length > 0) {
     const COLS_PER_ROW = 3;
 
-    body.push({
-      type: "TextBlock",
-      text: "Claude Code",
-      weight: "bolder",
-      size: "medium",
-      spacing: "large",
-    });
+    body.push(
+      new TextBlock("Claude Code", {
+        weight: "Bolder",
+        size: "Medium",
+        spacing: "Large",
+      }),
+    );
 
     for (let i = 0; i < sdkCommands.length; i += COLS_PER_ROW) {
-      const row = sdkCommands.slice(i, i + COLS_PER_ROW).map((cmd) => ({
-        type: "Column",
-        width: "stretch",
-        items: [
-          {
-            type: "ActionSet",
-            actions: [
-              {
-                type: "Action.Submit",
-                title: `/${cmd.name}`,
-                data: {
-                  msteams: { type: "imBack", value: `/${cmd.name}` },
-                },
-              },
-            ],
-          },
-        ],
-      }));
-      body.push({ type: "ColumnSet", columns: row });
+      const columns = sdkCommands
+        .slice(i, i + COLS_PER_ROW)
+        .map((cmd) =>
+          new Column(
+            new ActionSet(
+              new IMBackAction(`/${cmd.name}`, { title: `/${cmd.name}` }),
+            ),
+          ).withOptions({ width: "stretch" }),
+        );
+      body.push(new ColumnSet({ columns }));
     }
   }
 
-  return {
-    type: "AdaptiveCard",
-    $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
-    version: "1.4",
-    body,
-    ...(actions.length > 0 ? { actions } : {}),
-  };
+  return card(body);
 }
 
 function suggestionLabel(s: PermissionUpdate): string {
@@ -206,7 +216,7 @@ export function buildToolCard(
   decisionReason?: string,
   suggestions?: PermissionUpdate[],
   result?: string,
-): Record<string, unknown> {
+): IAdaptiveCard {
   if (toolName === "AskUserQuestion" && isAskUserQuestionInput(input)) {
     return buildAskUserQuestionCard(input, toolUseID);
   }
@@ -217,154 +227,88 @@ export function buildToolCard(
   const summary =
     oneLiner.length > 120 ? oneLiner.slice(0, 117) + "..." : oneLiner;
 
-  const body: Record<string, unknown>[] = [
-    {
-      type: "TextBlock",
-      text: `🔒 **${toolName}**`,
+  const body: CardElement[] = [
+    new TextBlock(`🔒 **${toolName}**`, { wrap: true, size: "Small" }),
+    new TextBlock(summary, {
       wrap: true,
-      size: "small",
-    },
-    {
-      type: "TextBlock",
-      text: summary,
-      wrap: true,
-      fontType: "monospace",
-      size: "small",
-      spacing: "small",
-    },
+      fontType: "Monospace",
+      size: "Small",
+      spacing: "Small",
+    }),
   ];
 
   if (decisionReason) {
-    body.push({
-      type: "TextBlock",
-      text: decisionReason,
-      wrap: true,
-      isSubtle: true,
-      size: "small",
-      spacing: "small",
-    });
+    body.push(
+      new TextBlock(decisionReason, {
+        wrap: true,
+        isSubtle: true,
+        size: "Small",
+        spacing: "Small",
+      }),
+    );
   }
 
   if (result) {
-    body.push({
-      type: "TextBlock",
-      text: result,
-      weight: "bolder",
-      spacing: "medium",
-    });
-    return {
-      type: "AdaptiveCard",
-      version: "1.4",
-      $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
-      body,
-    };
+    body.push(new TextBlock(result, { weight: "Bolder", spacing: "Medium" }));
+    return card(body);
   }
 
   // Single ChoiceSet + Submit (avoids accidental double-click on separate buttons)
-  const choices: { title: string; value: string }[] = [
-    { title: "✅ Allow", value: "allow" },
-  ];
+  const choices = [new Choice({ title: "✅ Allow", value: "allow" })];
 
   if (suggestions) {
     for (let i = 0; i < suggestions.length; i++) {
-      choices.push({
-        title: `✅ ${suggestionLabel(suggestions[i])}`,
-        value: `suggestion_${i}`,
-      });
+      choices.push(
+        new Choice({
+          title: `✅ ${suggestionLabel(suggestions[i])}`,
+          value: `suggestion_${i}`,
+        }),
+      );
     }
   }
 
-  choices.push({ title: "❌ Deny", value: "deny" });
+  choices.push(new Choice({ title: "❌ Deny", value: "deny" }));
 
-  body.push({
-    type: "Input.ChoiceSet",
-    id: "permissionChoice",
-    style: "expanded",
-    value: "allow",
-    choices,
-  });
+  body.push(
+    new ChoiceSetInput(...choices).withOptions({
+      id: "permissionChoice",
+      style: "expanded",
+      value: "allow",
+    }),
+  );
 
-  const actions: Record<string, unknown>[] = [
-    {
-      type: "Action.Submit",
+  const actions: CardAction[] = [
+    new ExecuteAction({
       title: "Submit",
       style: "positive",
       data: { action: "permission_decision", toolUseID },
-    },
+    }),
   ];
 
   // Only show Details if the summary was truncated
   if (oneLiner.length > 120) {
-    actions.push({
-      type: "Action.ShowCard",
-      title: "Details",
-      card: {
-        type: "AdaptiveCard",
-        body: [
-          {
-            type: "TextBlock",
-            text: `\`\`\`\n${inputDisplay}\n\`\`\``,
+    actions.push(
+      new ShowCardAction({
+        title: "Details",
+        card: adaptiveCard(
+          new TextBlock(`\`\`\`\n${inputDisplay}\n\`\`\``, {
             wrap: true,
-            fontType: "monospace",
-            size: "small",
-          },
-        ],
-      },
-    });
+            fontType: "Monospace",
+            size: "Small",
+          }),
+        ),
+      }),
+    );
   }
 
-  return {
-    type: "AdaptiveCard",
-    version: "1.4",
-    $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
-    body,
-    actions,
-  };
+  return card(body, actions);
 }
 
 export function buildAskUserQuestionCard(
   input: AskUserQuestionInput,
   toolUseID: string,
-): Record<string, unknown> {
-  const questionCard = buildAskUserQuestionCardData(input, toolUseID);
-
-  return {
-    type: "AdaptiveCard",
-    version: "1.4",
-    $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
-    body: questionCard.body,
-    actions: questionCard.actions,
-  };
-}
-
-export function buildElicitationFormCard(
-  elicitationId: string,
-  request: ElicitationRequest,
-): Record<string, unknown> {
-  const card = buildElicitationCard(elicitationId, request);
-
-  return {
-    type: "AdaptiveCard",
-    version: "1.4",
-    $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
-    body: card.body,
-    actions: card.actions,
-  };
-}
-
-export function buildElicitationUrlCard(
-  elicitationId: string,
-  request: ElicitationRequest,
-): Record<string, unknown> {
-  const card = buildClaudeElicitationUrlCard(elicitationId, request);
-
-  return {
-    type: "AdaptiveCard",
-    version: "1.4",
-    $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
-    body: card.body,
-    actions: card.actions,
-  };
+): IAdaptiveCard {
+  return buildAskUserQuestionCardData(input, toolUseID);
 }
 
 export function buildHandoffCard(
@@ -375,100 +319,72 @@ export function buildHandoffCard(
   buttonText?: string,
   title?: string,
   result?: string,
-): Record<string, unknown> {
+): IAdaptiveCard {
   const dirName = workDir?.split("/").pop() ?? workDir ?? "unknown";
 
-  const body: Record<string, unknown>[] = [
-    {
-      type: "ColumnSet",
+  const body: CardElement[] = [
+    new ColumnSet({
       columns: [
-        {
-          type: "Column",
-          width: "stretch",
-          items: [
-            {
-              type: "TextBlock",
-              text: title || "Session Summary",
-              size: "medium",
-              weight: "bolder",
-            },
-            {
-              type: "TextBlock",
-              text: `📂 ${dirName}`,
-              size: "small",
-              isSubtle: true,
-              spacing: "none",
-            },
-          ],
-        },
+        new Column(
+          new TextBlock(title || "Session Summary", {
+            size: "Medium",
+            weight: "Bolder",
+          }),
+          new TextBlock(`📂 ${dirName}`, {
+            size: "Small",
+            isSubtle: true,
+            spacing: "None",
+          }),
+        ).withOptions({ width: "stretch" }),
       ],
-    },
+    }),
   ];
 
   if (summary) {
-    body.push({
-      type: "TextBlock",
-      text: summary,
-      wrap: true,
-      spacing: "medium",
-    });
+    body.push(new TextBlock(summary, { wrap: true, spacing: "Medium" }));
   }
 
   if (todos && todos.length > 0) {
     for (let i = 0; i < todos.length; i++) {
       const t = todos[i];
-      body.push({
-        type: "TextBlock",
-        text: `${t.done ? "✅" : "⬜"} ${t.content}`,
-        wrap: true,
-        spacing: i === 0 ? "medium" : "none",
-        isSubtle: t.done,
-      });
+      body.push(
+        new TextBlock(`${t.done ? "✅" : "⬜"} ${t.content}`, {
+          wrap: true,
+          spacing: i === 0 ? "Medium" : "None",
+          isSubtle: t.done,
+        }),
+      );
     }
   }
 
   if (result) {
-    body.push({
-      type: "TextBlock",
-      text: result,
-      weight: "bolder",
-      color: "good",
-      spacing: "medium",
-    });
-    return {
-      type: "AdaptiveCard",
-      version: "1.4",
-      $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
-      body,
-    };
+    body.push(
+      new TextBlock(result, {
+        weight: "Bolder",
+        color: "Good",
+        spacing: "Medium",
+      }),
+    );
+    return card(body);
   }
 
-  return {
-    type: "AdaptiveCard",
-    version: "1.4",
-    $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
-    body,
-    actions: [
-      {
-        type: "Action.Submit",
-        title: buttonText || "Accept Handoff",
-        style: "positive",
-        data: {
-          action: "handoff_accept",
-          workDir,
-          sessionId,
-          summary,
-          todos,
-          title,
-        },
+  return card(body, [
+    new ExecuteAction({
+      title: buttonText || "Accept Handoff",
+      style: "positive",
+      data: {
+        action: "handoff_accept",
+        workDir,
+        sessionId,
+        summary,
+        todos,
+        title,
       },
-    ],
-  };
+    }),
+  ]);
 }
 
-export function buildPermissionModeCard(
-  currentMode: string,
-): Record<string, unknown> {
+export function buildPermissionModeCard(currentMode: string): IAdaptiveCard {
   const modes = [
     { id: "default", label: "🛡️ Default", desc: "Ask before risky operations" },
     {
@@ -495,24 +411,239 @@ export function buildPermissionModeCard(
 
   const actions = modes
     .filter((m) => m.id !== currentMode)
-    .map((m) => ({
-      type: "Action.Submit",
-      title: `${m.label}  ·  ${m.desc}`,
-      data: { action: "set_permission_mode", mode: m.id },
-    }));
+    .map(
+      (m) =>
+        new ExecuteAction({
+          title: `${m.label}  ·  ${m.desc}`,
+          data: { action: "set_permission_mode", mode: m.id },
+        }),
+    );
 
-  return {
-    type: "AdaptiveCard",
-    version: "1.4",
-    $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
-    body: [
-      {
-        type: "TextBlock",
-        text: `Current: **${currentLabel}**`,
-        size: "medium",
-        weight: "bolder",
-      },
+  return card(
+    [
+      new TextBlock(`Current: **${currentLabel}**`, {
+        size: "Medium",
+        weight: "Bolder",
+      }),
     ],
     actions,
+  );
+}
+
+// ─── Card Action Handler ─────────────────────────────────────────────────
+//
+// Handles all Action.Execute invocations from Adaptive Cards.
+
+// Shared interactive card tracking (tool approval cards, elicitation cards, etc.)
+export const interactiveCards = new Map<
+  string,
+  {
+    toolName: string;
+    input: Record<string, unknown>;
+    decisionReason?: string;
+    suggestions?: PermissionUpdate[];
+    activityId: string;
+  }
+>();
+
+type CardActionResponse =
+  | AdaptiveCardActionMessageResponse
+  | AdaptiveCardActionErrorResponse;
+
+/** Delete an interactive card by its tracking ID (permission, elicitation, etc.) */
+async function deleteInteractiveCard(
+  id: string,
+  deleteFn?: (activityId: string) => Promise<void>,
+): Promise<void> {
+  const cardInfo = interactiveCards.get(id);
+  interactiveCards.delete(id);
+  if (cardInfo && deleteFn) {
+    try {
+      await deleteFn(cardInfo.activityId);
+    } catch {
+      /* card may be gone */
+    }
+  }
+}
+
+function actionMsg(value: string): AdaptiveCardActionMessageResponse {
+  return {
+    statusCode: 200,
+    type: "application/vnd.microsoft.activity.message",
+    value,
   };
+}
+
+/**
+ * Handle all card.action (Action.Execute) invocations.
+ */
+export async function handleCardAction(
+  data: Record<string, unknown>,
+  sendFn: (activity: string | ActivityParams) => Promise<void>,
+  deleteFn?: (activityId: string) => Promise<void>,
+  replyToId?: string,
+): Promise<CardActionResponse> {
+  const action = data.action as string | undefined;
+  if (!action) return actionMsg("No action specified");
+
+  const deleteCard = async () => {
+    if (replyToId && deleteFn) {
+      try {
+        await deleteFn(replyToId);
+      } catch {
+        /* card may be gone */
+      }
+    }
+  };
+
+  switch (action) {
+    case "resume_session": {
+      const sessionId = data.sessionId as string;
+      if (!sessionId) {
+        await sendFn("Session not found.");
+        break;
+      }
+      const currentId = state.getSession()?.session.currentSessionId;
+      if (sessionId === currentId) {
+        await deleteCard();
+        await sendFn("That session is already active.");
+        break;
+      }
+      const sessionCwds = data.sessionCwds as
+        | Record<string, string | undefined>
+        | undefined;
+      const cwd = sessionCwds?.[sessionId] ?? (data.cwd as string | undefined);
+      if (cwd) {
+        const r = state.setWorkDir(cwd);
+        if (!r.ok) {
+          await sendFn(
+            `Cannot resume — \`${cwd}\` is outside the allowed work directory.`,
+          );
+          break;
+        }
+      }
+      await deleteCard();
+      state.destroySession();
+      state.persistSessionId(sessionId);
+      const dirLabel = cwd ? `\n\n📂 ${cwd}` : "";
+      await sendFn(
+        `🔄 Resumed session \`${sessionId.slice(0, 8)}…\`${dirLabel}`,
+      );
+      break;
+    }
+
+    case "handoff_fork":
+      await deleteCard();
+      break; // No-op here — index.ts card.action handler sends the fork card (needs app context)
+
+    case "handoff_accept":
+      break; // No-op here — index.ts card.action handler updates card + runs handleHandoff
+
+    case "permission_decision": {
+      const toolUseID = data.toolUseID as string;
+      const choice = (data.permissionChoice as string) ?? "deny";
+      if (choice.startsWith("suggestion_")) {
+        resolvePermissionWithSuggestion(
+          toolUseID,
+          parseInt(choice.replace("suggestion_", ""), 10),
+        );
+      } else {
+        resolvePermission(toolUseID, choice === "allow");
+      }
+      await deleteInteractiveCard(toolUseID, deleteFn);
+      break;
+    }
+
+    case "permission_allow":
+    case "permission_deny":
+    case "permission_allow_session": {
+      const toolUseID = data.toolUseID as string;
+      if (action === "permission_allow_session") {
+        resolvePermissionWithSuggestion(
+          toolUseID,
+          data.suggestionIndex as number,
+        );
+      } else {
+        resolvePermission(toolUseID, action !== "permission_deny");
+      }
+      await deleteInteractiveCard(toolUseID, deleteFn);
+      break;
+    }
+
+    case "ask_user_question_submit": {
+      const toolUseID = data.toolUseID as string;
+      const resolved = resolveAskUserQuestion(toolUseID, data);
+      await deleteInteractiveCard(toolUseID, deleteFn);
+      if (!resolved) await sendFn("Question request expired or not found.");
+      break;
+    }
+
+    case "elicitation_form_submit": {
+      const id = data.elicitationId as string;
+      const resolved = resolveElicitation(id, data);
+      await deleteInteractiveCard(id, deleteFn);
+      await sendFn(
+        resolved ? "✅ Submitted" : "Elicitation request expired or not found.",
+      );
+      break;
+    }
+
+    case "elicitation_url_complete": {
+      const id = data.elicitationId as string;
+      const resolved = resolveElicitationUrlComplete(id);
+      await deleteInteractiveCard(id, deleteFn);
+      await sendFn(
+        resolved
+          ? "✅ Authorization confirmed"
+          : "Elicitation request expired or not found.",
+      );
+      break;
+    }
+
+    case "elicitation_form_cancel": {
+      const id = data.elicitationId as string;
+      const resolved = cancelElicitation(id);
+      await deleteInteractiveCard(id, deleteFn);
+      await sendFn(
+        resolved ? "❌ Canceled" : "Elicitation request expired or not found.",
+      );
+      break;
+    }
+
+    case "set_permission_mode": {
+      const mode = data.mode as string;
+      try {
+        await state.getSession()?.session.setPermissionMode(mode);
+        state.setPermissionMode(mode);
+        await deleteCard();
+        await sendFn(`Permission mode set to \`${mode}\``);
+      } catch (err) {
+        await sendFn(
+          `Failed to set \`${mode}\`: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      break;
+    }
+
+    case "prompt_response": {
+      const requestId = data.requestId as string;
+      const key = data.key as string;
+      const resolved = resolvePromptRequest(requestId, key);
+      interactiveCards.delete(requestId);
+      await deleteCard();
+      await sendFn(
+        resolved ? `Selected: ${key}` : "Prompt request expired or not found.",
+      );
+      break;
+    }
+
+    case "noop":
+      await deleteCard();
+      break;
+
+    default:
+      break;
+  }
+
+  return actionMsg("Action processed");
 }

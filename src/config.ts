@@ -87,3 +87,8 @@ export const config = {
   sessionInitPrompt: process.env.SESSION_INIT_PROMPT,
   defaultPermissionMode: process.env.PERMISSION_MODE ?? "default",
 } as const;
+
+// Map existing env vars for Teams SDK (SDK reads CLIENT_ID/CLIENT_SECRET/TENANT_ID)
+process.env.CLIENT_ID = config.microsoftAppId;
+process.env.CLIENT_SECRET = config.microsoftAppPassword;
+process.env.TENANT_ID = config.microsoftAppTenantId;

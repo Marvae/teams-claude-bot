@@ -54,7 +54,7 @@ describe("user-questions", () => {
 
     const actions = card.actions as Array<Record<string, unknown>>;
     expect(actions).toHaveLength(1);
-    expect(actions[0]?.type).toBe("Action.Submit");
+    expect(actions[0]?.type).toBe("Action.Execute");
     expect(actions[0]?.data).toEqual({
       action: "ask_user_question_submit",
       toolUseID: "tool-q-1",

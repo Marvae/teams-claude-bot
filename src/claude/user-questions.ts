@@ -2,6 +2,15 @@ import type {
   PermissionRequest,
   PermissionResult,
 } from "./tool-interceptor.js";
+import type { AdaptiveCard } from "@microsoft/teams.cards";
+import {
+  TextBlock,
+  TextInput,
+  ChoiceSetInput,
+  Choice,
+  ExecuteAction,
+} from "@microsoft/teams.cards";
+import { adaptiveCard } from "../bot/cards.js";
 
 export type UserQuestionOption = {
   label: string;
@@ -18,11 +27,6 @@ export type UserQuestion = {
 
 export type AskUserQuestionInput = {
   questions: UserQuestion[];
-};
-
-type AskUserQuestionCardData = {
-  body: Array<Record<string, unknown>>;
-  actions: Array<Record<string, unknown>>;
 };
 
 type PendingUserQuestion = {
@@ -146,60 +150,60 @@ export function buildAskUserQuestionResponse(
 export function buildAskUserQuestionCardData(
   input: AskUserQuestionInput,
   toolUseID: string,
-): AskUserQuestionCardData {
-  const body: Array<Record<string, unknown>> = [];
+): AdaptiveCard {
+  const body = [];
 
   for (const [index, question] of input.questions.entries()) {
-    body.push(
-      {
-        type: "TextBlock",
-        text: question.header,
-        weight: "bolder",
-        spacing: "medium",
-      },
-      {
-        type: "TextBlock",
-        text: question.question,
-        wrap: true,
-        spacing: "small",
-      },
-      {
-        type: "Input.ChoiceSet",
-        id: getQuestionInputId(index),
-        isMultiSelect: question.multiSelect ?? false,
-        style: "expanded",
-        choices: question.options.map((option) => ({
+    const choices = question.options.map(
+      (option) =>
+        new Choice({
           title: option.description
             ? `${option.label}: ${option.description}`
             : option.label,
           value: option.label,
-        })),
-      },
+        }),
+    );
+
+    body.push(
+      new TextBlock(question.header, {
+        weight: "Bolder",
+        spacing: "Medium",
+      }),
+      new TextBlock(question.question, {
+        wrap: true,
+        spacing: "Small",
+      }),
+      new ChoiceSetInput(...choices).withOptions({
+        id: getQuestionInputId(index),
+        isMultiSelect: question.multiSelect ?? false,
+        style: "expanded",
+      }),
     );
 
     if (question.allowFreeText) {
-      body.push({
-        type: "Input.Text",
-        id: getFreeTextInputId(index),
-        placeholder: "Additional details (optional)",
-        isMultiline: true,
-      });
+      body.push(
+        new TextInput({
+          id: getFreeTextInputId(index),
+          placeholder: "Additional details (optional)",
+          isMultiline: true,
+        }),
+      );
     }
   }
 
-  const actions: Array<Record<string, unknown>> = [
-    {
-      type: "Action.Submit",
+  const card = adaptiveCard(...body);
+  card.actions = [
+    new ExecuteAction({
       title: "Submit",
       style: "positive",
       data: {
         action: "ask_user_question_submit",
         toolUseID,
       },
-    },
+    }),
   ];
 
-  return { body, actions };
+  return card;
 }
 
 export function registerAskUserQuestion(

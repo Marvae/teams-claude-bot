@@ -2,17 +2,17 @@ import type {
   ElicitationRequest as SDKElicitationRequest,
   ElicitationResult as SDKElicitationResult,
 } from "@anthropic-ai/claude-agent-sdk";
+import type { CardElement, AdaptiveCard } from "@microsoft/teams.cards";
+import {
+  TextBlock,
+  TextInput,
+  ExecuteAction,
+  OpenUrlAction,
+} from "@microsoft/teams.cards";
+import { adaptiveCard } from "../bot/cards.js";
 
 export type ElicitationRequest = SDKElicitationRequest;
 export type ElicitationResult = SDKElicitationResult;
-
-type AdaptiveAction = Record<string, unknown>;
-type AdaptiveBody = Record<string, unknown>;
-
-export type ElicitationCardData = {
-  body: AdaptiveBody[];
-  actions: AdaptiveAction[];
-};
 
 type PendingElicitation = {
   resolve: (result: ElicitationResult) => void;
@@ -74,32 +74,26 @@ function collectFormContent(data: Record<string, unknown>): ElicitationContent {
 export function buildElicitationCard(
   elicitationId: string,
   request: ElicitationRequest,
-): ElicitationCardData {
+): AdaptiveCard {
   const fields = schemaProperties(request.requestedSchema);
   const required = schemaRequired(request.requestedSchema);
 
-  const body: AdaptiveBody[] = [
-    {
-      type: "TextBlock",
-      text: `**${request.serverName}**`,
-      size: "small",
-    },
-    {
-      type: "TextBlock",
-      text: request.message,
+  const body: CardElement[] = [
+    new TextBlock(`**${request.serverName}**`, { size: "Small" }),
+    new TextBlock(request.message, {
       wrap: true,
-      size: "small",
-      spacing: "small",
-    },
+      size: "Small",
+      spacing: "Small",
+    }),
   ];
 
   if (fields.length === 0) {
-    body.push({
-      type: "TextBlock",
-      text: "No form fields were provided by the MCP server.",
-      wrap: true,
-      isSubtle: true,
-    });
+    body.push(
+      new TextBlock("No form fields were provided by the MCP server.", {
+        wrap: true,
+        isSubtle: true,
+      }),
+    );
   }
 
   for (const [name, definition] of fields) {
@@ -114,104 +108,93 @@ export function buildElicitationCard(
     const requiredSuffix = required.has(name) ? " *" : "";
 
     body.push(
-      {
-        type: "TextBlock",
-        text: `${title}${requiredSuffix}`,
+      new TextBlock(`${title}${requiredSuffix}`, {
         wrap: true,
-        spacing: "medium",
-      },
-      {
-        type: "Input.Text",
+        spacing: "Medium",
+      }),
+      new TextInput({
         id: fieldId(name),
         placeholder: description ?? `Enter ${title}`,
         isMultiline: false,
-      },
+      }),
     );
   }
 
-  const actions: AdaptiveAction[] = [
-    {
-      type: "Action.Submit",
+  const card = adaptiveCard(...body);
+  card.actions = [
+    new ExecuteAction({
       title: "Submit",
       style: "positive",
       data: {
         action: "elicitation_form_submit",
         elicitationId,
       },
-    },
-    {
-      type: "Action.Submit",
+    }),
+    new ExecuteAction({
       title: "Cancel",
       data: {
         action: "elicitation_form_cancel",
         elicitationId,
       },
-    },
+    }),
   ];
 
-  return { body, actions };
+  return card;
 }
 
 export function buildElicitationUrlCard(
   elicitationId: string,
   request: ElicitationRequest,
-): ElicitationCardData {
-  const body: AdaptiveBody[] = [
-    {
-      type: "TextBlock",
-      text: `🔑 **${request.serverName}**`,
-      size: "small",
-    },
-    {
-      type: "TextBlock",
-      text: request.message,
+): AdaptiveCard {
+  const body = [
+    new TextBlock(`🔑 **${request.serverName}**`, { size: "Small" }),
+    new TextBlock(request.message, {
       wrap: true,
-      size: "small",
-      spacing: "small",
-    },
+      size: "Small",
+      spacing: "Small",
+    }),
   ];
 
   if (request.url) {
-    body.push({
-      type: "TextBlock",
-      text: request.url,
-      wrap: true,
-      color: "accent",
-      spacing: "medium",
-    });
+    body.push(
+      new TextBlock(request.url, {
+        wrap: true,
+        color: "Accent",
+        spacing: "Medium",
+      }),
+    );
   }
 
-  const actions: AdaptiveAction[] = [];
+  const card = adaptiveCard(...body);
+
+  const actions = [];
 
   if (request.url) {
-    actions.push({
-      type: "Action.OpenUrl",
-      title: "Open Authorization URL",
-      url: request.url,
-    });
+    actions.push(
+      new OpenUrlAction(request.url, { title: "Open Authorization URL" }),
+    );
   }
 
   actions.push(
-    {
-      type: "Action.Submit",
+    new ExecuteAction({
       title: "I've authorized",
       style: "positive",
       data: {
         action: "elicitation_url_complete",
         elicitationId,
       },
-    },
-    {
-      type: "Action.Submit",
+    }),
+    new ExecuteAction({
       title: "Cancel",
       data: {
         action: "elicitation_form_cancel",
         elicitationId,
       },
-    },
+    }),
   );
 
-  return { body, actions };
+  card.actions = actions;
+  return card;
 }
 
 export function registerElicitation(
