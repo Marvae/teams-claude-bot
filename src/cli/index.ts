@@ -13,6 +13,7 @@ import {
   logsCommand,
 } from "./commands.js";
 import { installSkill, uninstallSkill } from "./skill.js";
+import { testCommand } from "./test.js";
 
 declare const PKG_VERSION: string;
 
@@ -123,6 +124,30 @@ Examples:
     .action(async () => {
       await uninstallSkill();
     });
+
+  program
+    .command("test")
+    .description(
+      "Send messages to the bot via DevTools (no Teams/tunnel needed)",
+    )
+    .argument("[message]", "message to send (omit for interactive REPL)")
+    .option("--card <action>", "simulate Adaptive Card action")
+    .option("-d, --diagnose", "run connectivity diagnostics")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  teams-bot test                           Interactive REPL
+  teams-bot test "What is 2+2?"            One-shot message
+  teams-bot test --card prompt_response    Simulate card click
+  teams-bot test --diagnose                Check bot, DevTools, tunnel
+`,
+    )
+    .action(
+      async (message?: string, options?: { card?: string; diagnose?: boolean }) => {
+        await testCommand(message, options);
+      },
+    );
 
   await program.parseAsync(process.argv);
 }

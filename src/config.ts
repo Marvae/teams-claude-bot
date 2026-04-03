@@ -9,12 +9,18 @@ import { CANONICAL_ENV_PATH, HANDOFF_TOKEN_PATH } from "./paths.js";
 dotenv.config();
 dotenv.config({ path: CANONICAL_ENV_PATH });
 
+const isProduction = process.env.NODE_ENV === "production";
+
 function required(name: string): string {
   const value = process.env[name];
   if (!value) {
     throw new Error(`Missing required env var: ${name}`);
   }
   return value;
+}
+
+function optional(name: string): string {
+  return process.env[name] ?? "";
 }
 
 export function expandHome(p: string): string {
@@ -51,13 +57,19 @@ function persistHandoffToken(token: string): void {
   }
 }
 
+// In production, Azure credentials are required.
+// In dev mode, they're optional — DevTools works without them.
 export const config = {
-  microsoftAppId: required("MICROSOFT_APP_ID"),
-  microsoftAppPassword: required("MICROSOFT_APP_PASSWORD"),
-  microsoftAppTenantId: required("MICROSOFT_APP_TENANT_ID"),
+  microsoftAppId: isProduction ? required("MICROSOFT_APP_ID") : optional("MICROSOFT_APP_ID"),
+  microsoftAppPassword: isProduction ? required("MICROSOFT_APP_PASSWORD") : optional("MICROSOFT_APP_PASSWORD"),
+  microsoftAppTenantId: isProduction ? required("MICROSOFT_APP_TENANT_ID") : optional("MICROSOFT_APP_TENANT_ID"),
   port: parseInt(process.env.PORT ?? "3978", 10),
   claudeWorkDir: (() => {
-    const dir = expandHome(required("CLAUDE_WORK_DIR"));
+    const raw = process.env.CLAUDE_WORK_DIR || (isProduction ? undefined : ".");
+    if (!raw) {
+      throw new Error("Missing required env var: CLAUDE_WORK_DIR");
+    }
+    const dir = expandHome(raw);
     if (!existsSync(dir)) {
       throw new Error(`CLAUDE_WORK_DIR does not exist: ${dir}`);
     }
@@ -88,7 +100,10 @@ export const config = {
   defaultPermissionMode: process.env.PERMISSION_MODE ?? "default",
 } as const;
 
-// Map existing env vars for Teams SDK (SDK reads CLIENT_ID/CLIENT_SECRET/TENANT_ID)
-process.env.CLIENT_ID = config.microsoftAppId;
-process.env.CLIENT_SECRET = config.microsoftAppPassword;
-process.env.TENANT_ID = config.microsoftAppTenantId;
+// Map to Teams SDK env vars only if we have real credentials
+// Empty/dummy credentials = DevTools-only mode, skip Azure AD auth
+if (config.microsoftAppId && !config.microsoftAppId.startsWith("00000000")) {
+  process.env.CLIENT_ID = config.microsoftAppId;
+  process.env.CLIENT_SECRET = config.microsoftAppPassword;
+  process.env.TENANT_ID = config.microsoftAppTenantId;
+}
