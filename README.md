@@ -16,13 +16,14 @@ A Microsoft Teams bot that bridges to Claude Code on your local machine. Chat wi
 
 ```
 Teams (any device)
-  → Bot Framework SDK (botbuilder v4)
+  → Teams SDK (@microsoft/teams.apps v2)
     → Express server
       → Claude Agent SDK (streaming input mode)
         → Claude Code (local machine)
 ```
 
 - **TypeScript** — strict mode, ESM, Node.js 22+
+- **Teams SDK v2** — `@microsoft/teams.apps`, `@microsoft/teams.api`, `@microsoft/teams.cards`
 - **esbuild** — single-file bundle
 - **vitest** — testing (cross-platform CI on macOS, Linux, Windows)
 
@@ -99,3 +100,5 @@ npm test             # Run tests
 npm run build        # Production build
 npm run lint         # ESLint
 ```
+
+In development mode (`NODE_ENV !== 'production'`), the Teams DevTools plugin is enabled automatically. Access DevTools at `http://localhost:<port+1>` to inspect activities, cards, and bot state.

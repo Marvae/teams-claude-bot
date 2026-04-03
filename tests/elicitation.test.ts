@@ -8,10 +8,10 @@ import {
   resolveElicitationUrlComplete,
   type ElicitationRequest,
 } from "../src/claude/elicitation.js";
-import {
-  buildElicitationFormCard,
-  buildElicitationUrlCard as buildTeamsElicitationUrlCard,
-} from "../src/bot/cards.js";
+// After removing wrapper functions from cards.ts, these are now
+// the same as buildElicitationCard/buildElicitationUrlCard above.
+const buildElicitationFormCard = buildElicitationCard;
+const buildTeamsElicitationUrlCard = buildElicitationUrlCard;
 
 describe("elicitation", () => {
   beforeEach(() => {
@@ -113,7 +113,6 @@ describe("elicitation", () => {
 
     const card = buildElicitationFormCard("elicitation-form-2", request);
     expect(card.type).toBe("AdaptiveCard");
-    expect(card.version).toBe("1.4");
 
     const actions = card.actions as Array<Record<string, unknown>>;
     expect(actions[0]?.data).toEqual({
@@ -133,7 +132,6 @@ describe("elicitation", () => {
 
     const card = buildTeamsElicitationUrlCard("elicitation-url-2", request);
     expect(card.type).toBe("AdaptiveCard");
-    expect(card.version).toBe("1.4");
 
     const actions = card.actions as Array<Record<string, unknown>>;
     expect(actions.some((action) => action.type === "Action.OpenUrl")).toBe(
@@ -142,7 +140,7 @@ describe("elicitation", () => {
     expect(
       actions.some(
         (action) =>
-          action.type === "Action.Submit" &&
+          action.type === "Action.Execute" &&
           action.data &&
           typeof action.data === "object" &&
           (action.data as { action?: string }).action ===

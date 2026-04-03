@@ -45,10 +45,10 @@ describe("conversation ref store", () => {
   });
 
   it("returns null when no refs saved", async () => {
-    const { loadConversationRefs, getConversationRef } =
+    const { loadConversationRefs, getConversationId } =
       await import("../src/handoff/store.js");
     loadConversationRefs();
-    expect(getConversationRef("nobody")).toBeNull();
+    expect(getConversationId("nobody")).toBeNull();
   });
 
   it("returns last saved ref in single-user mode", async () => {
@@ -56,10 +56,10 @@ describe("conversation ref store", () => {
       REFS_FILE,
       JSON.stringify({ "user-1": { conversation: { id: "conv-1" } } }),
     );
-    const { loadConversationRefs, getConversationRef } =
+    const { loadConversationRefs, getConversationId } =
       await import("../src/handoff/store.js");
     loadConversationRefs();
-    const ref = getConversationRef();
+    const ref = getConversationId();
     expect(ref).not.toBeNull();
   });
 });

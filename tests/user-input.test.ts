@@ -30,7 +30,6 @@ describe("user-input", () => {
       );
 
       expect(card.type).toBe("AdaptiveCard");
-      expect(card.version).toBe("1.4");
 
       // Check body contains the message
       const body = card.body as Array<{ text?: string }>;

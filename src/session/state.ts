@@ -16,6 +16,7 @@ import {
 } from "fs";
 import { join, dirname, resolve } from "path";
 import { homedir } from "os";
+import type { IStreamer } from "@microsoft/teams.apps";
 import { ConversationSession } from "../claude/session.js";
 import { config } from "../config.js";
 import { TEAMS_BOT_DATA_DIR } from "../paths.js";
@@ -24,7 +25,10 @@ import { TEAMS_BOT_DATA_DIR } from "../paths.js";
 
 export interface ManagedSession {
   session: ConversationSession;
-  setRef: (ctx: unknown) => void;
+  /** Per-turn stream from the message handler context */
+  activeStream?: IStreamer;
+  /** Resolve callback to signal turn completion (lets handler return) */
+  onTurnComplete?: () => void;
 }
 
 // ─── Persistence ───

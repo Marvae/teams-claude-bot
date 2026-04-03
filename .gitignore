@@ -32,3 +32,7 @@ teams-claude-bot.zip
 
 # Temp assets
 manifest/claude-original.png
+*.tgz
+
+# Superpowers planning docs (local only)
+docs/superpowers/

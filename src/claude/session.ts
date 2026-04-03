@@ -264,6 +264,15 @@ export class ConversationSession {
       this.config.onSessionId?.(this.sessionId);
     }
 
+    // ── Local command output (e.g. /compact, /cost — SDK-handled slash commands) ──
+    if (
+      msg.type === "system" &&
+      msg.subtype === "local_command_output" &&
+      typeof msg.content === "string"
+    ) {
+      this.emitProgress({ type: "text", text: msg.content });
+    }
+
     // ── Auth status ──
     if (msg.type === "auth_status") {
       const error = msg.error as string | undefined;

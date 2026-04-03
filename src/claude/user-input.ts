@@ -5,22 +5,14 @@
  * We show an Adaptive Card and wait for user selection.
  */
 
+import type { IAdaptiveCard } from "@microsoft/teams.cards";
+import { TextBlock, ExecuteAction } from "@microsoft/teams.cards";
+import { adaptiveCard } from "../bot/cards.js";
+
 export type PromptRequestOption = {
   key: string;
   label: string;
   description?: string;
-};
-
-type AdaptiveCard = {
-  type: "AdaptiveCard";
-  version: "1.4";
-  $schema: string;
-  body: Array<Record<string, unknown>>;
-  actions: Array<{
-    type: "Action.Submit";
-    title: string;
-    data: { action: "prompt_response"; requestId: string; key: string };
-  }>;
 };
 
 type PendingPrompt = {
@@ -37,29 +29,22 @@ export function createPromptCard(
   requestId: string,
   message: string,
   options: PromptRequestOption[],
-): AdaptiveCard {
-  return {
-    type: "AdaptiveCard",
-    version: "1.4",
-    $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
-    body: [
-      {
-        type: "TextBlock",
-        text: message,
-        wrap: true,
-        weight: "bolder",
-      },
-    ],
-    actions: options.map((opt) => ({
-      type: "Action.Submit" as const,
-      title: opt.label,
-      data: {
-        action: "prompt_response" as const,
-        requestId,
-        key: opt.key,
-      },
-    })),
-  };
+): IAdaptiveCard {
+  return adaptiveCard(
+    new TextBlock(message, { wrap: true, weight: "Bolder" }),
+  ).withOptions({
+    actions: options.map(
+      (opt) =>
+        new ExecuteAction({
+          title: opt.label,
+          data: {
+            action: "prompt_response",
+            requestId,
+            key: opt.key,
+          },
+        }),
+    ),
+  });
 }
 
 export function registerPromptRequest(

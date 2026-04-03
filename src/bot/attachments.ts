@@ -1,8 +1,20 @@
-import { TurnContext, Attachment } from "botbuilder";
 import { writeFile, mkdir } from "fs/promises";
 import { join, basename } from "path";
 import { tmpdir } from "os";
 import { randomUUID } from "crypto";
+
+/** Minimal attachment context for downloading Teams file uploads. */
+export interface AttachmentContext {
+  authToken?: string; // Bearer token for downloading from Teams
+}
+
+/** Minimal attachment shape — replaces botbuilder Attachment. */
+export interface TeamsAttachment {
+  contentType?: string;
+  contentUrl?: string;
+  content?: unknown;
+  name?: string;
+}
 
 export interface DownloadedAttachment {
   data: Buffer;
@@ -62,8 +74,8 @@ function tryReadAsText(data: Buffer): string | null {
  * while keeping user-uploaded .html files (which have a downloadUrl or contentUrl).
  */
 export function filterPlatformAttachments(
-  attachments: Attachment[],
-): Attachment[] {
+  attachments: TeamsAttachment[],
+): TeamsAttachment[] {
   return attachments.filter((a) => {
     if (a.contentType === "text/html") {
       const content = a.content as Record<string, unknown> | undefined;
@@ -73,30 +85,17 @@ export function filterPlatformAttachments(
   });
 }
 
-function getBotToken(ctx: TurnContext): string | undefined {
-  const connectorClient = ctx.turnState.get(
-    ctx.adapter.ConnectorClientKey ?? "ConnectorClient",
-  );
-  if (connectorClient?.credentials?.token) {
-    return connectorClient.credentials.token as string;
-  }
-  const creds = (ctx.adapter as unknown as Record<string, unknown>)
-    .credentials as { token?: string } | undefined;
-  return creds?.token;
-}
-
 export async function downloadAttachment(
-  ctx: TurnContext,
-  attachment: Attachment,
+  ctx: AttachmentContext,
+  attachment: TeamsAttachment,
 ): Promise<DownloadedAttachment | null> {
   const content = attachment.content as Record<string, unknown> | undefined;
   const url = (content?.downloadUrl as string) ?? attachment.contentUrl;
   if (!url) return null;
 
   const headers: Record<string, string> = {};
-  const token = getBotToken(ctx);
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
+  if (ctx.authToken) {
+    headers["Authorization"] = `Bearer ${ctx.authToken}`;
   }
 
   const resp = await fetch(url, { headers });
@@ -134,8 +133,8 @@ export interface ProcessedAttachments {
  * - Other files → saved to tmp (Claude reads via Read tool)
  */
 export async function processAttachments(
-  ctx: TurnContext,
-  attachments: Attachment[],
+  ctx: AttachmentContext,
+  attachments: TeamsAttachment[],
 ): Promise<ProcessedAttachments> {
   const contentBlocks: ContentBlock[] = [];
   const savedFiles: string[] = [];

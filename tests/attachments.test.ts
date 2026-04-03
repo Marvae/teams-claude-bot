@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { TurnContext, Attachment } from "botbuilder";
+import type {
+  AttachmentContext,
+  TeamsAttachment,
+} from "../src/bot/attachments.js";
 
 // Mock fetch globally
 const mockFetch = vi.fn();
@@ -12,24 +15,21 @@ import {
   type ContentBlock,
 } from "../src/bot/attachments.js";
 
-function makeMockCtx(): TurnContext {
-  return {
-    turnState: { get: () => undefined },
-    adapter: {},
-  } as unknown as TurnContext;
+function makeMockCtx(): AttachmentContext {
+  return { authToken: undefined };
 }
 
 function makeAttachment(
   name: string,
   contentType: string,
   downloadUrl?: string,
-): Attachment {
+): TeamsAttachment {
   return {
     name,
     contentType,
     content: downloadUrl ? { downloadUrl } : undefined,
     contentUrl: downloadUrl,
-  } as Attachment;
+  } as TeamsAttachment;
 }
 
 function mockFetchResponse(
@@ -79,7 +79,7 @@ describe("downloadAttachment", () => {
       name: "file.txt",
       contentType: "text/plain",
       contentUrl: "https://example.com/file",
-    } as Attachment;
+    } as TeamsAttachment;
     const result = await downloadAttachment(makeMockCtx(), att);
 
     expect(result).not.toBeNull();
@@ -90,7 +90,10 @@ describe("downloadAttachment", () => {
   });
 
   it("returns null when no URL available", async () => {
-    const att = { name: "orphan.txt", contentType: "text/plain" } as Attachment;
+    const att = {
+      name: "orphan.txt",
+      contentType: "text/plain",
+    } as TeamsAttachment;
     const result = await downloadAttachment(makeMockCtx(), att);
     expect(result).toBeNull();
   });
@@ -365,7 +368,7 @@ describe("filterPlatformAttachments", () => {
         name: "card",
         contentType: "text/html",
         content: "<div>adaptive card</div>",
-      } as Attachment,
+      } as TeamsAttachment,
       // Normal file
       makeAttachment("file.txt", "text/plain", "https://example.com/file.txt"),
     ];
@@ -380,7 +383,7 @@ describe("filterPlatformAttachments", () => {
         name: "page.html",
         contentType: "text/html",
         contentUrl: "https://example.com/page.html",
-      } as Attachment,
+      } as TeamsAttachment,
     ];
     const result = filterPlatformAttachments(attachments);
     expect(result).toHaveLength(1);
@@ -393,7 +396,7 @@ describe("filterPlatformAttachments", () => {
         name: "index.html",
         contentType: "text/html",
         content: { downloadUrl: "https://example.com/index.html" },
-      } as Attachment,
+      } as TeamsAttachment,
     ];
     const result = filterPlatformAttachments(attachments);
     expect(result).toHaveLength(1);
@@ -407,7 +410,7 @@ describe("filterPlatformAttachments", () => {
       {
         name: "nourl.bin",
         contentType: "application/octet-stream",
-      } as Attachment,
+      } as TeamsAttachment,
     ];
     const result = filterPlatformAttachments(attachments);
     expect(result).toHaveLength(3);
