@@ -61,10 +61,6 @@ export function createStreamingProgress(
 
       if (event.type === "thinking") {
         thinkingText += event.text;
-        // Cap buffer — UI only shows the tail anyway
-        if (thinkingText.length > 600) {
-          thinkingText = thinkingText.slice(-500);
-        }
         if (!hasEmitted) {
           const display = thinkingText.length > 500
             ? "…" + thinkingText.slice(-499)
