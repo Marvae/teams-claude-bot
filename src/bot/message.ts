@@ -53,13 +53,10 @@ export function patchStreamCancellation(
       if (status === 403) {
         raw._canceled = true;
         if (raw.queue) raw.queue = [];
-        const resp = (err as { response?: { data?: Record<string, unknown> } })
-          ?.response?.data;
         const errMsg =
-          ((resp?.error as Record<string, unknown> | undefined)?.message as string) ??
-          (resp?.message as string) ??
-          "";
-        const isUserCancel = errMsg.toLowerCase().includes("cancel");
+          (err as { response?: { data?: { error?: { message?: string } } } })
+            ?.response?.data?.error?.message ?? "";
+        const isUserCancel = errMsg === "Content stream was cancelled by user.";
         console.log(
           `[BOT] Stream 403: ${errMsg || "unknown"} (userCancel=${isUserCancel})`,
         );

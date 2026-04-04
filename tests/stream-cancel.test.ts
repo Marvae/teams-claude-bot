@@ -5,11 +5,11 @@ type PatchTarget = Parameters<typeof patchStreamCancellation>[0];
 
 function make403Error(message?: string) {
   const err = new Error("403") as Error & {
-    response?: { status: number; data?: { message?: string } };
+    response?: { status: number; data?: { error?: { message?: string } } };
   };
   err.response = {
     status: 403,
-    ...(message ? { data: { message } } : {}),
+    ...(message ? { data: { error: { message } } } : {}),
   };
   return err;
 }
@@ -34,7 +34,7 @@ describe("patchStreamCancellation", () => {
     let sendCount = 0;
     const { stream, originalEmitCalls } = makeMockStream(async () => {
       sendCount++;
-      if (sendCount >= 2) throw make403Error("Content stream was canceled by user");
+      if (sendCount >= 2) throw make403Error("Content stream was cancelled by user.");
       return { id: "msg-1" };
     });
     const onCancel = vi.fn();
