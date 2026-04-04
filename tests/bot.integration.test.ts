@@ -565,33 +565,18 @@ describe("session resume failure recovery", () => {
 });
 
 describe("streaming progress via stream.emit", () => {
-  it("text events emit only delta text via stream.emit", () => {
+  it("text events emit delta text directly via stream.emit", () => {
     const stream = { emit: vi.fn() };
     const sendFn = vi.fn(async () => ({ id: "msg-1" }));
 
     const progress = createStreamingProgress(stream, sendFn);
 
-    // Accumulated text events (Claude sends full text each time)
+    // Text events now carry deltas directly (not accumulated)
     progress.onProgress({ type: "text", text: "Hello" });
     expect(stream.emit).toHaveBeenCalledWith("Hello");
 
-    progress.onProgress({ type: "text", text: "Hello world" });
+    progress.onProgress({ type: "text", text: " world" });
     expect(stream.emit).toHaveBeenCalledWith(" world");
-  });
-
-  it("non-continuation text emits separator then new text", () => {
-    const stream = { emit: vi.fn() };
-    const sendFn = vi.fn(async () => ({ id: "msg-1" }));
-
-    const progress = createStreamingProgress(stream, sendFn);
-
-    progress.onProgress({ type: "text", text: "First segment." });
-    expect(stream.emit).toHaveBeenCalledWith("First segment.");
-
-    // New segment that does NOT start with "First segment."
-    progress.onProgress({ type: "text", text: "Second segment." });
-    expect(stream.emit).toHaveBeenCalledWith("\n\n");
-    expect(stream.emit).toHaveBeenCalledWith("Second segment.");
   });
 
   it("tool_use events emit formatted tool message", () => {
@@ -770,9 +755,9 @@ describe("streaming progress via stream.emit", () => {
 
     const progress = createStreamingProgress(stream, sendFn);
 
-    // Accumulated text
+    // Delta text
     progress.onProgress({ type: "text", text: "Hello" });
-    progress.onProgress({ type: "text", text: "Hello world" });
+    progress.onProgress({ type: "text", text: " world" });
     expect(stream.emit).toHaveBeenCalledWith(" world");
 
     // Tool use breaks the text segment
