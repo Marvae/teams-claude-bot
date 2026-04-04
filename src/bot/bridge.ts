@@ -389,6 +389,7 @@ export function createManagedSession(
   // When managed.activeStream is set (native streaming), use createStreamingProgress;
   // otherwise fall back to the proactive send pattern (handoff context).
   let currentProgress: ReturnType<typeof createStreamingProgress> | null = null;
+  let switchedToProactive = false;
 
   const getOrCreateProgress = () => {
     if (!currentProgress) {
@@ -401,6 +402,13 @@ export function createManagedSession(
       } else {
         currentProgress = createProactiveProgress(proactiveSend);
       }
+    }
+    // If stream expired mid-turn, discard the dead streaming progress
+    // and switch to proactive so onResult's finalize sends all chunks.
+    const managed = state.getSession();
+    if (managed?.streamExpired && !switchedToProactive) {
+      switchedToProactive = true;
+      currentProgress = createProactiveProgress(proactiveSend);
     }
     return currentProgress;
   };
@@ -456,52 +464,58 @@ export function createManagedSession(
     onResult: async (result: ClaudeResult) => {
       const progress = getOrCreateProgress();
       currentProgress = null;
+      switchedToProactive = false;
 
-      state.addUsage(result.costUsd, result.usage);
+      try {
+        state.addUsage(result.costUsd, result.usage);
 
-      if (result.error) {
-        console.error(`[BOT] Error from session: ${result.error}`);
-        await progress.finalize([
-          friendlyError(result.error, result.stopReason),
-        ]);
-      } else if (result.interrupted) {
-        console.log("[BOT] Turn was interrupted");
-        if (result.result) {
-          await progress.finalize(splitMessage(result.result));
+        if (result.error) {
+          console.error(`[BOT] Error from session: ${result.error}`);
+          await progress.finalize([
+            friendlyError(result.error, result.stopReason),
+          ]);
+        } else if (result.interrupted) {
+          console.log("[BOT] Turn was interrupted");
+          if (result.result) {
+            await progress.finalize(splitMessage(result.result));
+          }
+        } else {
+          console.log("[BOT] Formatting and sending response");
+          await progress.finalize(splitMessage(formatResponse(result)));
         }
-      } else {
-        console.log("[BOT] Formatting and sending response");
-        await progress.finalize(splitMessage(formatResponse(result)));
-      }
 
-      const suggestion = progress.getPromptSuggestion();
-      if (suggestion) {
-        try {
-          await proactiveSend(
-            new MessageActivity("").withSuggestedActions({
-              to: [],
-              actions: [
-                { type: "imBack", title: suggestion, value: suggestion },
-              ],
-            }),
-          );
-        } catch {
-          // suggestedActions not supported — skip
+        const suggestion = progress.getPromptSuggestion();
+        if (suggestion) {
+          try {
+            await proactiveSend(
+              new MessageActivity("").withSuggestedActions({
+                to: [],
+                actions: [
+                  { type: "imBack", title: suggestion, value: suggestion },
+                ],
+              }),
+            );
+          } catch {
+            // suggestedActions not supported — skip
+          }
+        }
+
+        console.log("[BOT] Response sent successfully");
+      } finally {
+        // Always signal turn completion so the message handler can return
+        const managed = state.getSession();
+        if (managed?.activeStream) {
+          managed.activeStream = undefined;
+        }
+        if (managed?.streamExpired) {
+          managed.streamExpired = false;
+        }
+        if (managed?.onTurnComplete) {
+          const resolve = managed.onTurnComplete;
+          managed.onTurnComplete = undefined;
+          resolve();
         }
       }
-
-      // Signal turn completion so the message handler can return (closing the stream)
-      const managed = state.getSession();
-      if (managed?.activeStream) {
-        managed.activeStream = undefined;
-      }
-      if (managed?.onTurnComplete) {
-        const resolve = managed.onTurnComplete;
-        managed.onTurnComplete = undefined;
-        resolve();
-      }
-
-      console.log("[BOT] Response sent successfully");
     },
   };
 
