@@ -128,7 +128,7 @@ expressAdapter.post(
 
 // ─── Teams SDK App ───────────────────────────────────────────────────
 const plugins =
-  process.env.NODE_ENV !== "production" ? [new DevtoolsPlugin()] : [];
+  process.env.TEAMS_DEVTOOLS === "1" ? [new DevtoolsPlugin()] : [];
 
 const teamsApp = new App({
   httpServerAdapter: expressAdapter,
@@ -221,9 +221,7 @@ registerMessageHandler(teamsApp);
 
 // ─── Start ───────────────────────────────────────────────────────────
 teamsApp.start(config.port).then(() => {
-  console.log(`Bot running on http://localhost:${config.port}/api/messages`);
-  console.log(`Working directory: ${config.claudeWorkDir}`);
-  if (process.env.NODE_ENV !== "production") {
-    console.log(`DevTools available on port ${config.port + 1}`);
+  if (process.env.TEAMS_DEVTOOLS === "1") {
+    console.log(`DevTools on :${config.port + 1}`);
   }
 });

@@ -100,5 +100,3 @@ npm test             # Run tests
 npm run build        # Production build
 npm run lint         # ESLint
 ```
-
-In development mode (`NODE_ENV !== 'production'`), the Teams DevTools plugin is enabled automatically. Access DevTools at `http://localhost:<port+1>` to inspect activities, cards, and bot state.
