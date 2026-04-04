@@ -141,8 +141,18 @@ export async function processAttachments(
   const failed: string[] = [];
   let dir: string | null = null;
 
-  for (const att of attachments) {
-    const downloaded = await downloadAttachment(ctx, att);
+  // Download all attachments in parallel
+  const downloads = await Promise.all(
+    attachments.map(async (att) => ({
+      att,
+      result: await downloadAttachment(ctx, att).catch((err) => {
+        console.error(`[BOT] Attachment download failed: ${att.name ?? "unknown"}`, err);
+        return null;
+      }),
+    })),
+  );
+
+  for (const { att, result: downloaded } of downloads) {
     if (!downloaded) {
       failed.push(att.name ?? "unknown file");
       continue;

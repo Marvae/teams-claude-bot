@@ -251,9 +251,12 @@ describe("ClaudeCodeBot e2e (Teams SDK)", () => {
   it("handles /help command with Adaptive Card", async () => {
     const { sent } = await mock.invoke("message", makeActivity("/help"));
 
-    // Should send an activity with an adaptive card attachment
-    expect(sent.length).toBeGreaterThanOrEqual(1);
-    const reply = sent[0] as {
+    // sent[0] is TypingActivity, command response follows
+    const replies = sent.filter(
+      (s) => typeof s === "object" && (s as Record<string, unknown>).type !== "typing",
+    );
+    expect(replies.length).toBeGreaterThanOrEqual(1);
+    const reply = replies[0] as {
       attachments?: Array<{ contentType: string; content: unknown }>;
     };
     expect(reply.attachments?.[0].contentType).toBe(
@@ -283,8 +286,9 @@ describe("ClaudeCodeBot e2e (Teams SDK)", () => {
 
     const { sent } = await mock.invoke("message", makeActivity("/status"));
 
-    expect(sent.length).toBeGreaterThanOrEqual(1);
-    const text = sent[0] as string;
+    const texts = sent.filter((s) => typeof s === "string");
+    expect(texts.length).toBeGreaterThanOrEqual(1);
+    const text = texts[0] as string;
     expect(text).toContain("**Session:**");
     expect(text).toContain("sess-abcdef1");
     expect(text).toContain("**Work dir:** `/work/demo`");
@@ -296,22 +300,12 @@ describe("ClaudeCodeBot e2e (Teams SDK)", () => {
   it("handles /new command", async () => {
     const { sent } = await mock.invoke("message", makeActivity("/new"));
 
-    const text = sent[0] as string;
+    const texts = sent.filter((s) => typeof s === "string");
+    const text = texts[0] as string;
     expect(text).toBe("New session. Send your next message.");
 
     expect(vi.mocked(state.destroySession)).toHaveBeenCalled();
     expect(vi.mocked(state.clearPersistedSessionId)).toHaveBeenCalled();
-  });
-
-  it("ignores duplicate activities", async () => {
-    const activity = makeActivity("Hello");
-    activity.id = "dup-activity-1";
-
-    await mock.invoke("message", activity);
-    const { sent: sent2 } = await mock.invoke("message", activity);
-
-    // Second invocation should be short-circuited (duplicate)
-    expect(sent2.length).toBe(0);
   });
 
   it("rejects unauthorized users when allowedUsers is set", async () => {
@@ -383,8 +377,11 @@ describe("permission card interactions", () => {
   it("handles /permission command with card", async () => {
     const { sent } = await mock.invoke("message", makeActivity("/permission"));
 
-    expect(sent.length).toBeGreaterThanOrEqual(1);
-    const reply = sent[0] as {
+    const replies = sent.filter(
+      (s) => typeof s === "object" && (s as Record<string, unknown>).type !== "typing",
+    );
+    expect(replies.length).toBeGreaterThanOrEqual(1);
+    const reply = replies[0] as {
       attachments?: Array<{
         contentType: string;
         content: Record<string, unknown>;

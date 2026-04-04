@@ -29,6 +29,8 @@ export interface ManagedSession {
   activeStream?: IStreamer;
   /** Resolve callback to signal turn completion (lets handler return) */
   onTurnComplete?: () => void;
+  /** Whether the stream was proactively expired (timer or 403) */
+  streamExpired?: boolean;
 }
 
 // ─── Persistence ───

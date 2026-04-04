@@ -1,9 +1,7 @@
 /**
  * Message handler — registers the `message` and `install.add` routes on the
- * Teams SDK App. Handles dedup, auth, attachments, commands,
- * and dispatches to the Claude session.
- *
- * No botbuilder imports — uses @microsoft/teams.apps and @microsoft/teams.api.
+ * Teams SDK App. Handles auth, attachments, commands, and dispatches to the
+ * Claude session with stream resilience (90s timer with streaming→proactive fallback).
  */
 
 import type { App } from "@microsoft/teams.apps";
@@ -33,7 +31,7 @@ import { createManagedSession } from "./bridge.js";
 
 export function patchStreamCancellation(
   stream: IActivityContext["stream"] | undefined,
-  onCancel: () => void,
+  onCancel: (isUserCancel: boolean) => void,
 ): void {
   if (!stream) return;
   const raw = stream as unknown as {
@@ -46,7 +44,7 @@ export function patchStreamCancellation(
   raw._canceled = false;
 
   raw.send = async (activity: unknown) => {
-    if (raw._canceled) throw new Error("Stream canceled by user");
+    if (raw._canceled) throw new Error("Stream canceled");
     try {
       return await origSend(activity);
     } catch (err: unknown) {
@@ -55,8 +53,17 @@ export function patchStreamCancellation(
       if (status === 403) {
         raw._canceled = true;
         if (raw.queue) raw.queue = [];
-        console.log("[BOT] Stream canceled by user (403)");
-        onCancel();
+        const errMsg =
+          (err as { response?: { data?: { message?: string } } })?.response
+            ?.data?.message ?? "";
+        // Match Teams' documented error: "Content stream was canceled by user"
+        // https://learn.microsoft.com/en-us/microsoftteams/platform/bots/streaming-ux?tabs=csharp#error-codes
+        // Defaults to non-user-cancel (safe side) if Teams changes wording
+        const isUserCancel = errMsg.toLowerCase().includes("canceled by user");
+        console.log(
+          `[BOT] Stream 403: ${errMsg || "unknown"} (userCancel=${isUserCancel})`,
+        );
+        onCancel(isUserCancel);
       }
       throw err;
     }
@@ -67,26 +74,6 @@ export function patchStreamCancellation(
     if (raw._canceled) return;
     origEmit(activity);
   };
-}
-
-// ─── Dedup ────────────────────────────────────────────────────────────────
-
-const processedActivities = new Map<string, number>();
-
-function isDuplicate(activityId: string | undefined): boolean {
-  if (!activityId) return false;
-  if (processedActivities.has(activityId)) {
-    console.log(`[BOT] Ignoring duplicate activity: ${activityId}`);
-    return true;
-  }
-  processedActivities.set(activityId, Date.now());
-  if (processedActivities.size > 100) {
-    const cutoff = Date.now() - 60_000;
-    for (const [id, ts] of processedActivities) {
-      if (ts < cutoff) processedActivities.delete(id);
-    }
-  }
-  return false;
 }
 
 // ─── Auth ─────────────────────────────────────────────────────────────────
@@ -107,9 +94,14 @@ export function registerMessageHandler(app: App): void {
 
   app.on("message", async (ctx: IActivityContext<IMessageActivity>) => {
     const activity = ctx.activity;
+    const hasText = (activity.text ?? "").trim().length > 0;
+    const hasAttachments = activity.attachments && activity.attachments.length > 0;
 
-    // Deduplicate
-    if (isDuplicate(activity.id)) return;
+    // Skip empty messages — no typing for these
+    if (!hasText && !hasAttachments) return;
+
+    // Typing indicator first — user sees "..." immediately
+    await ctx.send(new TypingActivity());
 
     // Save conversationId for proactive messaging
     const convId = ctx.ref.conversation?.id;
@@ -120,8 +112,7 @@ export function registerMessageHandler(app: App): void {
       saveConversationId(userId, convId);
     }
 
-    // Auth check (isValidTeamsRequest from old bot is intentionally dropped —
-    // the new SDK validates JWT/service-URL at the framework level)
+    // Auth check
     if (!isUserAllowed(activity)) {
       await ctx.send("Sorry, you are not authorized to use this bot.");
       return;
@@ -129,8 +120,39 @@ export function registerMessageHandler(app: App): void {
 
     let text = (activity.text ?? "").trim();
 
-    // Process attachments — images/PDFs as inline content blocks, others saved to tmp
-    const rawAttachments = activity.attachments
+    // Commands are text-only — handle before any I/O
+    if (text && (await handleCommand(text, ctx))) return;
+
+    // Get or create session (sync — fast)
+    const convIdForSession = convId ?? getConversationId(userId) ?? "";
+    let managed = state.getSession();
+    if (!managed) {
+      managed = createManagedSession(app, convIdForSession, interactiveCards);
+      state.setSession(managed);
+    }
+
+    // Run init prompt on new sessions
+    if (!managed.session.hasQuery && config.sessionInitPrompt) {
+      console.log("[BOT] Running session init prompt...");
+      managed.session.send(config.sessionInitPrompt);
+    }
+
+    // Guard: if a turn is already in progress, queue the message
+    if (managed.activeStream) {
+      managed.session.send(text);
+      return;
+    }
+
+    // Set up stream early so we can show informative status during attachment download
+    const { stream } = ctx;
+
+    // Informative update: blue progress bar in Teams while waiting for response
+    if (stream) {
+      stream.update(hasAttachments ? "Processing attachments..." : "Thinking...");
+    }
+
+    // Process attachments — downloads happen while user sees informative update
+    const rawAttachments = hasAttachments
       ? filterPlatformAttachments(
           activity.attachments as Parameters<
             typeof filterPlatformAttachments
@@ -139,9 +161,6 @@ export function registerMessageHandler(app: App): void {
       : undefined;
     let inlineBlocks: ContentBlock[] = [];
     if (rawAttachments && rawAttachments.length > 0) {
-      // authToken: Teams file download URLs in personal scope include an
-      // embedded token and don't need separate auth. If tenant-restricted
-      // downloads fail, extract ctx.userToken here (requires OAuth setup).
       const { contentBlocks, savedFiles, failed } = await processAttachments(
         { authToken: undefined },
         rawAttachments,
@@ -162,45 +181,44 @@ export function registerMessageHandler(app: App): void {
 
     if (!text && inlineBlocks.length === 0) return;
 
-    if (await handleCommand(text, ctx)) return;
+    const handleStreamExpired = () => {
+      if (managed.streamExpired) return; // already expired
+      if (managed.activeStream === stream) {
+        managed.activeStream = undefined;
+        managed.streamExpired = true;
+        console.log("[BOT] Stream expired — switching to proactive messaging");
+      }
+      if (managed.onTurnComplete) {
+        const resolve = managed.onTurnComplete;
+        managed.onTurnComplete = undefined;
+        resolve();
+      }
+    };
 
-    // Get or create the managed session.
-    // Note: conversationId is captured once at session creation and reused for all
-    // proactive messages. This is fine for a single-user personal-scope bot; in a
-    // multi-user scenario we would need to re-resolve per message.
-    const convIdForSession = convId ?? getConversationId(userId) ?? "";
-    let managed = state.getSession();
-    if (!managed) {
-      managed = createManagedSession(app, convIdForSession, interactiveCards);
-      state.setSession(managed);
-    }
+    patchStreamCancellation(stream, (isUserCancel) => {
+      if (isUserCancel && !managed.streamExpired) {
+        // User clicked Stop before timer — interrupt Claude
+        managed.session.interrupt();
+      } else {
+        // Stream expired (timer, 2min limit, size limit, etc.) — don't interrupt,
+        // just ensure handler is released so bot isn't blocked
+        handleStreamExpired();
+      }
+    });
 
-    // Run init prompt on new sessions
-    if (!managed.session.hasQuery && config.sessionInitPrompt) {
-      console.log("[BOT] Running session init prompt...");
-      managed.session.send(config.sessionInitPrompt);
-    }
-
-    // Show typing indicator
-    await ctx.send(
-      new TypingActivity({ channelData: { streamType: "informative" } }),
-    );
-
-    // Guard: if a turn is already in progress, queue the message instead of
-    // overwriting activeStream/onTurnComplete (which would leak the previous promise).
-    if (managed.activeStream) {
-      managed.session.send(text);
-      return;
-    }
-
-    // Set up native stream with cancellation detection
-    const { stream } = ctx;
-    patchStreamCancellation(stream, () => managed.session.interrupt());
+    // Proactive timer: finalize stream before Teams' 2-min limit kills it.
+    // Teams hard limit is 2 minutes. 90s gives enough headroom for slow
+    // first-time startup while staying well under the limit.
+    const STREAM_MAX_AGE_MS = 90_000;
 
     const resultPromise = new Promise<void>((resolve) => {
       managed.activeStream = stream;
       managed.onTurnComplete = resolve;
     });
+
+    const streamTimer = setTimeout(() => {
+      handleStreamExpired();
+    }, STREAM_MAX_AGE_MS);
 
     console.log("[BOT] Sending message to session...");
     if (inlineBlocks.length > 0) {
@@ -213,8 +231,9 @@ export function registerMessageHandler(app: App): void {
       managed.session.send(text);
     }
 
-    // Await until onResult resolves — stream auto-closes when handler returns
+    // Await until onResult or stream timer resolves
     await resultPromise;
+    clearTimeout(streamTimer);
   });
 
   // Save conversation ref on bot install
