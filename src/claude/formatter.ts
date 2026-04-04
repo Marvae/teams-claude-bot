@@ -54,7 +54,9 @@ export function formatProgressMessage(
         ? "🚀"
         : event.status === "completed"
           ? "✅"
-          : "⚠️";
+          : event.status === "in_progress"
+            ? "🔧"
+            : "⚠️";
     return `${icon} Task: ${truncateProgress(event.summary, 150)}`;
   }
   if (event.type !== "tool_use") return undefined;

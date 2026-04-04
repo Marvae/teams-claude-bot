@@ -254,6 +254,7 @@ export class ConversationSession {
   }
 
   private async processMessage(msg: Record<string, unknown>): Promise<void> {
+
     // ── Init message ──
     if (
       msg.type === "system" &&
@@ -311,7 +312,16 @@ export class ConversationSession {
           this.turnStreamingText += delta.text;
           this.emitProgress({
             type: "text",
-            text: this.turnStreamingText,
+            text: delta.text,
+          });
+        }
+        if (
+          delta?.type === "thinking_delta" &&
+          typeof delta.thinking === "string"
+        ) {
+          this.emitProgress({
+            type: "thinking",
+            text: delta.thinking,
           });
         }
       }
@@ -343,6 +353,18 @@ export class ConversationSession {
     // ── User message (tool_use_result payloads from tool responses) ──
     if (msg.type === "user") {
       const toolUseResult = msg.tool_use_result;
+
+      // Skip tool errors — Claude handles retries internally, no need to show raw errors to user
+      const inner = msg.message as Record<string, unknown> | undefined;
+      const contentBlocks = Array.isArray(inner?.content)
+        ? (inner!.content as Array<Record<string, unknown>>)
+        : [];
+      const isToolError = contentBlocks.some((b) => b.is_error === true);
+      if (isToolError) {
+        // Claude sees the error and retries with adjusted params; don't surface to user
+        return;
+      }
+
       if (toolUseResult && typeof toolUseResult === "object") {
         const payload = toolUseResult as Record<string, unknown>;
         // FileEditOutput or FileWriteOutput — extract gitDiff.patch or structuredPatch
@@ -377,13 +399,17 @@ export class ConversationSession {
     // ── Task notifications (subagent background tasks) ──
     if (
       msg.type === "system" &&
-      (msg.subtype === "task_notification" || msg.subtype === "task_started") &&
+      (msg.subtype === "task_notification" ||
+        msg.subtype === "task_started" ||
+        msg.subtype === "task_progress") &&
       typeof msg.task_id === "string"
     ) {
       const status =
         msg.subtype === "task_started"
           ? "started"
-          : ((msg.status as string) ?? "unknown");
+          : msg.subtype === "task_progress"
+            ? "in_progress"
+            : ((msg.status as string) ?? "unknown");
       const summary =
         (msg.summary as string) ?? (msg.description as string) ?? "";
       this.emitProgress({
@@ -404,9 +430,11 @@ export class ConversationSession {
           if (
             typeof block === "object" &&
             block !== null &&
-            "type" in block &&
-            (block as Record<string, unknown>).type === "tool_use"
+            "type" in block
           ) {
+            const blockType = (block as Record<string, unknown>).type;
+
+            if (blockType !== "tool_use") continue;
             const b = block as Record<string, unknown>;
             // Emit todo updates
             if (
@@ -432,12 +460,12 @@ export class ConversationSession {
                 });
               }
             }
-            this.turnTools.push(
-              extractToolInfo(
-                (b.name as string) ?? "unknown",
-                b.input as Record<string, unknown> | undefined,
-              ),
+            const toolInfo = extractToolInfo(
+              (b.name as string) ?? "unknown",
+              b.input as Record<string, unknown> | undefined,
             );
+            this.emitProgress({ type: "tool_use", tool: toolInfo });
+            this.turnTools.push(toolInfo);
           }
         }
       }

@@ -219,6 +219,21 @@ teamsApp.on("card.action", async (ctx) => {
 // ─── Message handler + lifecycle ─────────────────────────────────────
 registerMessageHandler(teamsApp);
 
+// ─── Error handler (must be after all routes) ──────────────────────
+expressAdapter.use(
+  // Express identifies error handlers by their 4-argument signature
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  (err: Error & { type?: string }, _req: Request, res: Response, _next: () => void) => {
+    if (err.type === "entity.too.large") {
+      console.warn("[BOT] Payload too large — rejecting request");
+      res.status(413).json({ error: "Message too large to process." });
+      return;
+    }
+    console.error("[BOT] Unhandled error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  },
+);
+
 // ─── Start ───────────────────────────────────────────────────────────
 teamsApp.start(config.port).then(() => {
   if (process.env.TEAMS_DEVTOOLS === "1") {

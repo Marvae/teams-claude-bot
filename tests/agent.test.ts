@@ -419,10 +419,10 @@ describe("ConversationSession", () => {
         },
       });
 
-      // Verify accumulated text
+      // Verify delta text events
       const textEvents = events.filter((e) => e.type === "text");
       expect(textEvents).toHaveLength(2);
-      expect(textEvents[1]).toEqual({ type: "text", text: "Hello world" });
+      expect(textEvents[1]).toEqual({ type: "text", text: "world" });
 
       // User sends another message mid-stream — should NOT reset streaming text
       session.send("follow up");
@@ -439,7 +439,7 @@ describe("ConversationSession", () => {
 
       const allTextEvents = events.filter((e) => e.type === "text");
       const last = allTextEvents[allTextEvents.length - 1];
-      expect(last).toEqual({ type: "text", text: "Hello world!" });
+      expect(last).toEqual({ type: "text", text: "!" });
 
       // Clean up
       await finish();

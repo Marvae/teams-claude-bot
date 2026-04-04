@@ -54,12 +54,9 @@ export function patchStreamCancellation(
         raw._canceled = true;
         if (raw.queue) raw.queue = [];
         const errMsg =
-          (err as { response?: { data?: { message?: string } } })?.response
-            ?.data?.message ?? "";
-        // Match Teams' documented error: "Content stream was canceled by user"
-        // https://learn.microsoft.com/en-us/microsoftteams/platform/bots/streaming-ux?tabs=csharp#error-codes
-        // Defaults to non-user-cancel (safe side) if Teams changes wording
-        const isUserCancel = errMsg.toLowerCase().includes("canceled by user");
+          (err as { response?: { data?: { error?: { message?: string } } } })
+            ?.response?.data?.error?.message ?? "";
+        const isUserCancel = errMsg === "Content stream was cancelled by user.";
         console.log(
           `[BOT] Stream 403: ${errMsg || "unknown"} (userCancel=${isUserCancel})`,
         );
@@ -148,7 +145,7 @@ export function registerMessageHandler(app: App): void {
 
     // Informative update: blue progress bar in Teams while waiting for response
     if (stream) {
-      stream.update(hasAttachments ? "Processing attachments..." : "Thinking...");
+      stream.update(hasAttachments ? "⏳ Processing attachments..." : "⏳ Thinking...");
     }
 
     // Process attachments — downloads happen while user sees informative update

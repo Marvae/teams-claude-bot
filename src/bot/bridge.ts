@@ -44,18 +44,13 @@ export function createStreamingProgress(
 } {
   let promptSuggestion: string | undefined;
   let hasEmitted = false;
-  let lastTextLen = 0;
-  let lastTextValue: string | undefined;
 
   const emit = (content: string) => {
     hasEmitted = true;
     stream.emit(content);
   };
 
-  const resetTextSegment = () => {
-    lastTextLen = 0;
-    lastTextValue = undefined;
-  };
+  let thinkingText = "";
 
   return {
     onProgress: (event: ProgressEvent) => {
@@ -64,8 +59,19 @@ export function createStreamingProgress(
         return;
       }
 
+      if (event.type === "thinking") {
+        thinkingText += event.text;
+        if (!hasEmitted) {
+          const display = thinkingText.length > 500
+            ? "…" + thinkingText.slice(-499)
+            : thinkingText;
+          stream.update(`💭 Thinking: ${display}`);
+        }
+        return;
+      }
+
       if (event.type === "file_diff") {
-        resetTextSegment();
+
         const cwd = state.getWorkDir();
         const shortPath = event.filePath?.startsWith(cwd + "/")
           ? event.filePath.slice(cwd.length + 1)
@@ -83,19 +89,19 @@ export function createStreamingProgress(
       }
 
       if (event.type === "tool_result") {
-        resetTextSegment();
+
         emit(`\n\n${event.result}\n\n`);
         return;
       }
 
       if (event.type === "auth_error") {
-        resetTextSegment();
+
         emit("\n\n🔑 Login expired — run `claude login` in terminal\n\n");
         return;
       }
 
       if (event.type === "todo") {
-        resetTextSegment();
+
         const completed = event.todos.filter(
           (t) => t.status === "completed",
         ).length;
@@ -119,7 +125,7 @@ export function createStreamingProgress(
       }
 
       if (event.type === "rate_limit") {
-        resetTextSegment();
+
         const msg =
           event.status === "rejected"
             ? `⚠️ Rate limited.${event.resetsAt ? ` Resets at ${new Date(event.resetsAt).toLocaleTimeString()}.` : ""}`
@@ -129,23 +135,15 @@ export function createStreamingProgress(
       }
 
       if (event.type === "text") {
-        if (lastTextValue && !event.text.startsWith(lastTextValue)) {
-          emit("\n\n");
-          lastTextLen = 0;
+        if (event.text) {
+          emit(event.text);
         }
-        const delta = event.text.slice(lastTextLen);
-        if (delta) {
-          emit(delta);
-        }
-        lastTextLen = event.text.length;
-        lastTextValue = event.text;
         return;
       }
 
       // tool_use, tool_summary, task_status → emit as text in the stream
       // Note: stream.update() only works before first text chunk (SDK limitation),
       // so we use emit() for all progress to keep it visible throughout the turn.
-      resetTextSegment();
       const message = formatProgressMessage(event);
       if (message) {
         emit("\n\n" + message + "\n\n");
