@@ -45,6 +45,7 @@ export type ProgressEvent =
     }
   | { type: "todo"; todos: TodoItem[] }
   | { type: "text"; text: string }
+  | { type: "thinking"; text: string }
   | { type: "auth_error"; error: string }
   | { type: "done"; promptSuggestion?: string };
 
