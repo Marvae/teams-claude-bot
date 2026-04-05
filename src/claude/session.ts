@@ -66,7 +66,6 @@ export class ConversationSession {
   private sessionId: string | undefined;
   private eventConsumer: Promise<void> | null = null;
   private _lastActivity = Date.now();
-  private lastPromptSuggestion: string | undefined;
 
   // Per-turn tracking (reset on each result)
   private turnTools: ToolInfo[] = [];
@@ -186,6 +185,7 @@ export class ConversationSession {
     this.resetTurnState();
     await this.config.onResult?.(result);
   }
+
 
   private async startQuery(content: MessageContent): Promise<void> {
     this.lastStartPayload = { content };
@@ -492,18 +492,18 @@ export class ConversationSession {
       }
     }
 
-    // ── Prompt suggestion ──
-    if (msg.type === "prompt_suggestion" && typeof msg.prompt === "string") {
-      this.lastPromptSuggestion = msg.prompt;
+    // ── Prompt suggestion (arrives after result) ──
+    if (msg.type === "prompt_suggestion") {
+      const suggestion = (msg.suggestion ?? msg.prompt) as string | undefined;
+      if (typeof suggestion === "string") {
+        this.emitProgress({ type: "prompt_suggestion", suggestion });
+      }
+      return;
     }
 
     // ── Result ──
     if (msg.type === "result") {
-      this.emitProgress({
-        type: "done",
-        promptSuggestion: this.lastPromptSuggestion,
-      });
-      this.lastPromptSuggestion = undefined;
+      this.emitProgress({ type: "done" });
 
       const stopReason = (msg.stop_reason as string | null) ?? null;
 

@@ -33,6 +33,8 @@ export interface ManagedSession {
   onTurnComplete?: () => void;
   /** Whether the stream was proactively expired (timer or 403) */
   streamExpired?: boolean;
+  /** Activity ID of the prompt suggestion card (auto-deleted on next message) */
+  suggestionCardId?: string;
 }
 
 // ─── Persistence ───

@@ -40,9 +40,7 @@ export function createStreamingProgress(
 ): {
   onProgress: (event: ProgressEvent) => void;
   finalize: (chunks: string[]) => Promise<void>;
-  getPromptSuggestion: () => string | undefined;
 } {
-  let promptSuggestion: string | undefined;
   let hasEmitted = false;
 
   const emit = (content: string) => {
@@ -54,10 +52,7 @@ export function createStreamingProgress(
 
   return {
     onProgress: (event: ProgressEvent) => {
-      if (event.type === "done") {
-        promptSuggestion = event.promptSuggestion;
-        return;
-      }
+      if (event.type === "done") return;
 
       if (event.type === "thinking") {
         thinkingText += event.text;
@@ -157,7 +152,6 @@ export function createStreamingProgress(
         await sendFn(new MessageActivity(chunks[i]));
       }
     },
-    getPromptSuggestion: () => promptSuggestion,
   };
 }
 
@@ -168,23 +162,16 @@ export function createProactiveProgress(
 ): {
   onProgress: (event: ProgressEvent) => void;
   finalize: (chunks: string[]) => Promise<void>;
-  getPromptSuggestion: () => string | undefined;
 } {
-  let promptSuggestion: string | undefined;
-
   return {
-    onProgress: (event: ProgressEvent) => {
-      if (event.type === "done") {
-        promptSuggestion = event.promptSuggestion;
-      }
-      // All other events (including status) handled at session level
+    onProgress: (_event: ProgressEvent) => {
+      // All events (including status, done) handled at session level
     },
     finalize: async (chunks: string[]) => {
       for (const chunk of chunks) {
         await sendFn(new MessageActivity(chunk));
       }
     },
-    getPromptSuggestion: () => promptSuggestion,
   };
 }
 
@@ -527,6 +514,49 @@ export function createManagedSession(
         }
         return;
       }
+      // Prompt suggestion arrived (after result) — send as adaptive card.
+      // Using adaptive card because Teams suggestedActions requires non-empty
+      // text (returns 400 otherwise). If Teams ever allows suggestedActions
+      // without text, migrate to suggestedActions for a more native look.
+      if (event.type === "prompt_suggestion") {
+        const suggestion = event.suggestion;
+        console.log("[BOT] Prompt suggestion received");
+        void (async () => {
+          try {
+            // Only one suggestion card at a time — delete previous if exists
+            const m = state.getSession();
+            if (m?.suggestionCardId) {
+              await proactiveDelete(m.suggestionCardId).catch(() => {});
+              m.suggestionCardId = undefined;
+            }
+            const cardId = await sendCard({
+              type: "AdaptiveCard",
+              version: "1.4",
+              body: [],
+              actions: [
+                {
+                  type: "Action.Submit",
+                  title: `💡 ${suggestion}`,
+                  data: {
+                    msteams: {
+                      type: "imBack",
+                      value: suggestion,
+                    },
+                  },
+                },
+              ],
+            } as IAdaptiveCard);
+            if (cardId) {
+              const m = state.getSession();
+              if (m) m.suggestionCardId = cardId;
+              console.log("[BOT] Suggestion card sent:", cardId);
+            }
+          } catch (err) {
+            console.error("[BOT] Failed to send suggestion card:", err);
+          }
+        })();
+        return;
+      }
       getOrCreateProgress().onProgress(event);
     },
     onResult: async (result: ClaudeResult) => {
@@ -553,22 +583,6 @@ export function createManagedSession(
         } else {
           console.log("[BOT] Formatting and sending response");
           await progress.finalize(splitMessage(formatResponse(result)));
-        }
-
-        const suggestion = progress.getPromptSuggestion();
-        if (suggestion) {
-          try {
-            await proactiveSend(
-              new MessageActivity("").withSuggestedActions({
-                to: [],
-                actions: [
-                  { type: "imBack", title: suggestion, value: suggestion },
-                ],
-              }),
-            );
-          } catch {
-            // suggestedActions not supported — skip
-          }
         }
 
         console.log("[BOT] Response sent successfully");

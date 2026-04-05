@@ -257,11 +257,12 @@ describe("ConversationSession", () => {
       session.send("what branch am I on?");
       await yieldMsg({ type: "result", result: "You are on main branch." });
 
+      // finish() closes the mocked async iterator so the session's consume loop exits cleanly
+      await finish();
+
       expect(results).toHaveLength(2);
       expect(results[1].result).toBe("You are on main branch.");
       expect(results[1].error).toBeUndefined();
-
-      await finish();
     });
 
     it("auto-starts new query after previous query exits", async () => {
@@ -447,22 +448,30 @@ describe("ConversationSession", () => {
   });
 
   describe("prompt suggestions", () => {
-    it("passes prompt suggestion through done event", async () => {
+    it("emits prompt_suggestion as a separate progress event", async () => {
       mockQuery.mockImplementation(async function* () {
         yield { type: "system", subtype: "init", session_id: "s1" };
-        yield { type: "prompt_suggestion", prompt: "Run the tests" };
         yield { type: "result", result: "Done" };
+        yield { type: "prompt_suggestion", suggestion: "Run the tests" };
       });
       const { session, events, nextResult } = makeSession();
       session.send("fix the bug");
       await nextResult();
-      expect(events.find((e) => e.type === "done")).toEqual({
-        type: "done",
-        promptSuggestion: "Run the tests",
+      // prompt_suggestion is processed after result — wait for event loop
+      await vi.waitFor(() => {
+        expect(
+          events.filter((e) => e.type === "prompt_suggestion"),
+        ).toHaveLength(1);
       });
+      const suggestionEvents = events.filter(
+        (e) => e.type === "prompt_suggestion",
+      );
+      expect(
+        (suggestionEvents[0] as { suggestion: string }).suggestion,
+      ).toBe("Run the tests");
     });
 
-    it("done event has no suggestion when SDK does not emit one", async () => {
+    it("no prompt_suggestion event when SDK does not emit one", async () => {
       mockQuery.mockImplementation(async function* () {
         yield { type: "system", subtype: "init", session_id: "s1" };
         yield { type: "result", result: "Done" };
@@ -470,10 +479,10 @@ describe("ConversationSession", () => {
       const { session, events, nextResult } = makeSession();
       session.send("hello");
       await nextResult();
-      expect(events.find((e) => e.type === "done")).toEqual({
-        type: "done",
-        promptSuggestion: undefined,
-      });
+      const suggestionEvents = events.filter(
+        (e) => e.type === "prompt_suggestion",
+      );
+      expect(suggestionEvents).toHaveLength(0);
     });
   });
 });
