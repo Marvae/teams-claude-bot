@@ -25,8 +25,10 @@ import { TEAMS_BOT_DATA_DIR } from "../paths.js";
 
 export interface ManagedSession {
   session: ConversationSession;
-  /** Per-turn stream from the message handler context */
-  activeStream?: IStreamer;
+  /** Teams stream ref from message handler context */
+  stream?: IStreamer;
+  /** Whether stream has been activated (message_start received). Only emit/update when true. */
+  streamActivated?: boolean;
   /** Resolve callback to signal turn completion (lets handler return) */
   onTurnComplete?: () => void;
   /** Whether the stream was proactively expired (timer or 403) */

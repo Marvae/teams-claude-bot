@@ -177,7 +177,7 @@ export function createProactiveProgress(
       if (event.type === "done") {
         promptSuggestion = event.promptSuggestion;
       }
-      // All other events are ignored — no streaming in handoff/proactive context
+      // All other events (including status) handled at session level
     },
     finalize: async (chunks: string[]) => {
       for (const chunk of chunks) {
@@ -268,6 +268,21 @@ export function createManagedSession(
   const proactiveDelete = async (activityId: string): Promise<void> => {
     if (!conversationId) return;
     await app.api.conversations.activities(conversationId).delete(activityId);
+  };
+
+  // Proactive update — update a message in-place by id
+  const proactiveUpdate = async (
+    activityId: string,
+    activity: ActivityParams,
+  ): Promise<void> => {
+    if (!conversationId) return;
+    try {
+      await app.api.conversations
+        .activities(conversationId)
+        .update(activityId, activity);
+    } catch {
+      // Message may be gone — ignore
+    }
   };
 
   const sendCard = async (card: IAdaptiveCard): Promise<string | undefined> => {
@@ -384,17 +399,21 @@ export function createManagedSession(
   const savedId = state.loadPersistedSessionId();
 
   // Auto-managed progress — created on first event, destroyed on result.
-  // When managed.activeStream is set (native streaming), use createStreamingProgress;
-  // otherwise fall back to the proactive send pattern (handoff context).
+  // Stream is activated on "started" (message_start). Before that, everything
+  // is proactive (including compacting status). Timer starts on activation.
   let currentProgress: ReturnType<typeof createStreamingProgress> | null = null;
   let switchedToProactive = false;
+  let compactingActivityId: string | undefined;
+  let compactingSend: Promise<void> | undefined;
+  let streamTimer: ReturnType<typeof setTimeout> | undefined;
+  const STREAM_MAX_AGE_MS = 90_000;
 
   const getOrCreateProgress = () => {
     if (!currentProgress) {
       const managed = state.getSession();
-      if (managed?.activeStream) {
+      if (managed?.stream && managed.streamActivated) {
         currentProgress = createStreamingProgress(
-          managed.activeStream,
+          managed.stream,
           proactiveSend,
         );
       } else {
@@ -457,6 +476,57 @@ export function createManagedSession(
       );
     },
     onProgress: (event: ProgressEvent) => {
+      // Activate stream on message_start — before this, everything is proactive.
+      if (event.type === "started") {
+        const managed = state.getSession();
+        if (managed?.stream && !managed.streamActivated && !managed.streamExpired) {
+          console.log("[BOT] message_start — activating stream");
+          managed.streamActivated = true;
+          // Show thinking indicator now that stream is active
+          managed.stream.update("⏳ Thinking...");
+          // Start 90s timer now (not at send time)
+          streamTimer = setTimeout(() => {
+            if (managed.streamActivated) {
+              managed.streamActivated = false;
+              managed.streamExpired = true;
+              console.log("[BOT] Stream expired — switching to proactive messaging");
+            }
+            if (managed.onTurnComplete) {
+              const resolve = managed.onTurnComplete;
+              managed.onTurnComplete = undefined;
+              resolve();
+            }
+          }, STREAM_MAX_AGE_MS);
+        }
+        return;
+      }
+      // Handle compacting status — always proactive (happens before message_start).
+      // Chain completion update after send to avoid race where status=null
+      // arrives before proactiveSend resolves.
+      if (event.type === "status") {
+        if (event.status === "compacting") {
+          compactingSend = (async () => {
+            const resp = await proactiveSend(
+              new MessageActivity("🔄 Compacting context..."),
+            );
+            if (resp?.id) compactingActivityId = resp.id;
+          })();
+        } else {
+          // Compact ended — wait for send to finish, then update in-place
+          void (async () => {
+            if (compactingSend) await compactingSend;
+            compactingSend = undefined;
+            if (compactingActivityId) {
+              await proactiveUpdate(
+                compactingActivityId,
+                new MessageActivity("✅ Context compacted"),
+              );
+              compactingActivityId = undefined;
+            }
+          })();
+        }
+        return;
+      }
       getOrCreateProgress().onProgress(event);
     },
     onResult: async (result: ClaudeResult) => {
@@ -477,6 +547,9 @@ export function createManagedSession(
           if (result.result) {
             await progress.finalize(splitMessage(result.result));
           }
+        } else if (!result.result) {
+          // Nothing to send (e.g. /compact) — turn completion is the signal
+          console.log("[BOT] Turn complete (no output)");
         } else {
           console.log("[BOT] Formatting and sending response");
           await progress.finalize(splitMessage(formatResponse(result)));
@@ -501,9 +574,14 @@ export function createManagedSession(
         console.log("[BOT] Response sent successfully");
       } finally {
         // Always signal turn completion so the message handler can return
+        if (streamTimer) {
+          clearTimeout(streamTimer);
+          streamTimer = undefined;
+        }
         const managed = state.getSession();
-        if (managed?.activeStream) {
-          managed.activeStream = undefined;
+        if (managed?.stream) {
+          managed.stream = undefined;
+          managed.streamActivated = false;
         }
         if (managed?.streamExpired) {
           managed.streamExpired = false;
