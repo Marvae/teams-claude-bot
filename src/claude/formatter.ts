@@ -85,6 +85,41 @@ export function formatProgressMessage(
   return `🔧 Running: ${tool.name}`;
 }
 
+/** Convert a progress event to displayable text. Shared by streaming and proactive paths. */
+export function progressToText(event: ProgressEvent, cwd?: string): string | undefined {
+  if (event.type === "text" && event.text) return event.text;
+  if (event.type === "file_diff") {
+    const shortPath = cwd && event.filePath?.startsWith(cwd + "/")
+      ? event.filePath.slice(cwd.length + 1)
+      : event.filePath;
+    const label = shortPath ?? "file";
+    if (event.patch) {
+      const lang = event.filePath ? codeBlockLanguage(event.filePath) : "plaintext";
+      return `\n\n📝 ${label}\n\`\`\`${lang}\n${event.patch}\n\`\`\`\n\n`;
+    }
+    return `\n\n📝 Edited ${label}\n\n`;
+  }
+  if (event.type === "tool_result" && event.result) return `\n\n${event.result}\n\n`;
+  if (event.type === "auth_error") return "\n\n🔑 Login expired — run `claude login` in terminal\n\n";
+  if (event.type === "todo") {
+    const completed = event.todos.filter((t) => t.status === "completed").length;
+    const lines = event.todos.map((t) => {
+      const icon = t.status === "completed" ? "✅" : t.status === "in_progress" ? "🔧" : "⏳";
+      const text = t.status === "in_progress" && t.activeForm ? t.activeForm : t.content;
+      return `${icon} ${text}`;
+    });
+    return `\n\n📋 ${completed}/${event.todos.length}\n\n${lines.join("\n\n")}\n\n`;
+  }
+  if (event.type === "rate_limit") {
+    const reset = event.resetsAt ? ` Resets at ${new Date(event.resetsAt).toLocaleTimeString()}.` : "";
+    return event.status === "rejected"
+      ? `\n\n⚠️ Rate limited.${reset}\n\n`
+      : `\n\n⚠️ Approaching rate limit.${reset}\n\n`;
+  }
+  const msg = formatProgressMessage(event);
+  return msg ? "\n\n" + msg + "\n\n" : undefined;
+}
+
 export function formatResponse(result: ClaudeResult): string {
   return result.result || "Done (no output)";
 }

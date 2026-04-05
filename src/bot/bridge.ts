@@ -18,8 +18,7 @@ import { ConversationSession, type SessionConfig } from "../claude/session.js";
 import {
   formatResponse,
   splitMessage,
-  codeBlockLanguage,
-  formatProgressMessage,
+  progressToText,
 } from "../claude/formatter.js";
 import { createToolInterceptor } from "../claude/tool-interceptor.js";
 import { buildToolCard } from "./cards.js";
@@ -54,6 +53,7 @@ export function createStreamingProgress(
     onProgress: (event: ProgressEvent) => {
       if (event.type === "done") return;
 
+      // Thinking: show in stream placeholder before first real content
       if (event.type === "thinking") {
         thinkingText += event.text;
         if (!hasEmitted) {
@@ -65,84 +65,8 @@ export function createStreamingProgress(
         return;
       }
 
-      if (event.type === "file_diff") {
-
-        const cwd = state.getWorkDir();
-        const shortPath = event.filePath?.startsWith(cwd + "/")
-          ? event.filePath.slice(cwd.length + 1)
-          : event.filePath;
-        const label = shortPath ?? "file";
-        if (event.patch) {
-          const lang = event.filePath
-            ? codeBlockLanguage(event.filePath)
-            : "plaintext";
-          emit(`\n\n📝 ${label}\n\`\`\`${lang}\n${event.patch}\n\`\`\`\n\n`);
-        } else {
-          emit(`\n\n📝 Edited ${label}\n\n`);
-        }
-        return;
-      }
-
-      if (event.type === "tool_result") {
-
-        emit(`\n\n${event.result}\n\n`);
-        return;
-      }
-
-      if (event.type === "auth_error") {
-
-        emit("\n\n🔑 Login expired — run `claude login` in terminal\n\n");
-        return;
-      }
-
-      if (event.type === "todo") {
-
-        const completed = event.todos.filter(
-          (t) => t.status === "completed",
-        ).length;
-        const lines = event.todos.map((t) => {
-          const icon =
-            t.status === "completed"
-              ? "✅"
-              : t.status === "in_progress"
-                ? "🔧"
-                : "⏳";
-          const text =
-            t.status === "in_progress" && t.activeForm
-              ? t.activeForm
-              : t.content;
-          return `${icon} ${text}`;
-        });
-        emit(
-          `\n\n📋 ${completed}/${event.todos.length}\n\n${lines.join("\n\n")}\n\n`,
-        );
-        return;
-      }
-
-      if (event.type === "rate_limit") {
-
-        const msg =
-          event.status === "rejected"
-            ? `⚠️ Rate limited.${event.resetsAt ? ` Resets at ${new Date(event.resetsAt).toLocaleTimeString()}.` : ""}`
-            : `⚠️ Approaching rate limit.${event.resetsAt ? ` Resets at ${new Date(event.resetsAt).toLocaleTimeString()}.` : ""}`;
-        emit(`\n\n${msg}\n\n`);
-        return;
-      }
-
-      if (event.type === "text") {
-        if (event.text) {
-          emit(event.text);
-        }
-        return;
-      }
-
-      // tool_use, tool_summary, task_status → emit as text in the stream
-      // Note: stream.update() only works before first text chunk (SDK limitation),
-      // so we use emit() for all progress to keep it visible throughout the turn.
-      const message = formatProgressMessage(event);
-      if (message) {
-        emit("\n\n" + message + "\n\n");
-      }
+      const text = progressToText(event, state.getWorkDir());
+      if (text) emit(text);
     },
     finalize: async (chunks: string[]) => {
       // Stream auto-closes when handler returns, merging emitted text into final message.
@@ -155,19 +79,70 @@ export function createStreamingProgress(
   };
 }
 
-// ─── Proactive progress (handoff context, no active stream) ─────────────
+// ─── Proactive progress (stream expired or handoff, no active stream) ────
+// Send+update pattern with trailing-edge throttle and serial execution.
+// All async ops go through a promise chain — no concurrent sends, no deadlocks.
+
+const INITIAL_DELAY_MS = 500;
+const UPDATE_THROTTLE_MS = 1500;
+const MAX_MSG_LEN = 25_000;
 
 export function createProactiveProgress(
   sendFn: (activity: ActivityParams) => Promise<SentActivity | undefined>,
+  updateFn: (activityId: string, activity: ActivityParams) => Promise<void>,
 ): {
   onProgress: (event: ProgressEvent) => void;
   finalize: (chunks: string[]) => Promise<void>;
 } {
+  let activityId: string | undefined;
+  let buffer = "";
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let chain = Promise.resolve();
+
+  const flush = () => {
+    if (!buffer) return;
+    const snapshot = buffer;
+    const targetId = activityId; // capture — rollover resets activityId before chain runs
+    chain = chain.then(async () => {
+      try {
+        if (!targetId) {
+          const resp = await sendFn(new MessageActivity(snapshot));
+          if (resp?.id) activityId = resp.id;
+        } else {
+          await updateFn(targetId, new MessageActivity(snapshot));
+        }
+      } catch { /* transient Teams failure */ }
+    });
+  };
+
+  const scheduleFlush = () => {
+    if (timer) return;
+    timer = setTimeout(() => {
+      timer = undefined;
+      flush();
+    }, activityId ? UPDATE_THROTTLE_MS : INITIAL_DELAY_MS);
+  };
+
   return {
-    onProgress: (_event: ProgressEvent) => {
-      // All events (including status, done) handled at session level
+    onProgress: (event: ProgressEvent) => {
+      // Skip text — it arrives in finalize as the formatted response.
+      // Only show operational progress (tools, edits, errors).
+      if (event.type === "text" || event.type === "thinking") return;
+      const chunk = progressToText(event, state.getWorkDir());
+      if (!chunk) return;
+      buffer += chunk;
+      if (buffer.length >= MAX_MSG_LEN) {
+        if (timer) { clearTimeout(timer); timer = undefined; }
+        flush();
+        activityId = undefined;
+        buffer = "";
+      } else {
+        scheduleFlush();
+      }
     },
     finalize: async (chunks: string[]) => {
+      if (timer) { clearTimeout(timer); timer = undefined; }
+      await chain;
       for (const chunk of chunks) {
         await sendFn(new MessageActivity(chunk));
       }
@@ -404,15 +379,17 @@ export function createManagedSession(
           proactiveSend,
         );
       } else {
-        currentProgress = createProactiveProgress(proactiveSend);
+        currentProgress = createProactiveProgress(proactiveSend, proactiveUpdate);
       }
     }
-    // If stream expired mid-turn, discard the dead streaming progress
-    // and switch to proactive so onResult's finalize sends all chunks.
+    // If stream expired mid-turn, switch to proactive for remaining progress.
+    // The frozen streaming message keeps its partial content. Proactive
+    // shows tool/edit progress in a new message; finalize sends the
+    // formatted response as yet another new message.
     const managed = state.getSession();
     if (managed?.streamExpired && !switchedToProactive) {
       switchedToProactive = true;
-      currentProgress = createProactiveProgress(proactiveSend);
+      currentProgress = createProactiveProgress(proactiveSend, proactiveUpdate);
     }
     return currentProgress;
   };
@@ -564,47 +541,50 @@ export function createManagedSession(
       currentProgress = null;
       switchedToProactive = false;
 
-      try {
-        state.addUsage(result.costUsd, result.usage);
+      state.addUsage(result.costUsd, result.usage);
 
-        if (result.error) {
-          console.error(`[BOT] Error from session: ${result.error}`);
-          await progress.finalize([
-            friendlyError(result.error, result.stopReason),
-          ]);
-        } else if (result.interrupted) {
-          console.log("[BOT] Turn was interrupted");
-          if (result.result) {
-            await progress.finalize(splitMessage(result.result));
-          }
-        } else if (!result.result) {
-          // Nothing to send (e.g. /compact) — turn completion is the signal
-          console.log("[BOT] Turn complete (no output)");
-        } else {
-          console.log("[BOT] Formatting and sending response");
-          await progress.finalize(splitMessage(formatResponse(result)));
-        }
+      // Compute chunks to send
+      let chunks: string[];
+      if (result.error) {
+        console.error(`[BOT] Error from session: ${result.error}`);
+        chunks = [friendlyError(result.error, result.stopReason)];
+      } else if (result.interrupted) {
+        console.log("[BOT] Turn was interrupted");
+        chunks = result.result ? splitMessage(result.result) : [];
+      } else if (!result.result) {
+        console.log("[BOT] Turn complete (no output)");
+        chunks = [];
+      } else {
+        console.log("[BOT] Formatting and sending response");
+        chunks = splitMessage(formatResponse(result));
+      }
 
-        console.log("[BOT] Response sent successfully");
-      } finally {
-        // Always signal turn completion so the message handler can return
-        if (streamTimer) {
-          clearTimeout(streamTimer);
-          streamTimer = undefined;
-        }
-        const managed = state.getSession();
-        if (managed?.stream) {
-          managed.stream = undefined;
-          managed.streamActivated = false;
-        }
-        if (managed?.streamExpired) {
-          managed.streamExpired = false;
-        }
-        if (managed?.onTurnComplete) {
-          const resolve = managed.onTurnComplete;
-          managed.onTurnComplete = undefined;
-          resolve();
-        }
+      // Fire-and-forget: message delivery must never block session processing.
+      // If finalize hangs, subsequent messages still get processed.
+      if (chunks.length > 0) {
+        progress.finalize(chunks).then(
+          () => console.log("[BOT] Response sent successfully"),
+          (err) => console.error("[BOT] finalize error:", err),
+        );
+      }
+
+      // Always clean up immediately — never gated by finalize
+      if (streamTimer) {
+        clearTimeout(streamTimer);
+        streamTimer = undefined;
+      }
+      const managed = state.getSession();
+      if (managed?.stream) {
+        managed.stream = undefined;
+        managed.streamActivated = false;
+      }
+      if (managed?.streamExpired) {
+        managed.streamExpired = false;
+      }
+      if (managed?.onTurnComplete) {
+        const resolve = managed.onTurnComplete;
+        managed.onTurnComplete = undefined;
+        resolve();
       }
     },
   };

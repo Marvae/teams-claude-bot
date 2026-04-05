@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // ---- Mock SDK ----
 const mockQuery = vi.fn();
@@ -770,54 +770,145 @@ describe("streaming progress via stream.emit", () => {
   });
 });
 
-describe("proactive progress (handoff context)", () => {
-  it("ignores all progress events except done", () => {
+describe("proactive progress (send+update)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("tool_use events are accumulated as progress text", async () => {
     const sendFn = vi.fn(async () => ({ id: "msg-1" }));
+    const updateFn = vi.fn(async () => {});
 
-    const progress = createProactiveProgress(sendFn);
+    const progress = createProactiveProgress(sendFn, updateFn);
 
-    progress.onProgress({ type: "text", text: "Hello" });
     progress.onProgress({
       type: "tool_use",
       tool: { name: "Bash", command: "ls" },
     });
-    progress.onProgress({
-      type: "file_diff",
-      filePath: "src/index.ts",
-      patch: "diff",
-    });
 
-    expect(sendFn).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(sendFn).toHaveBeenCalledTimes(1);
   });
 
-  it("done event is ignored by proactive progress", () => {
+  it("done events are ignored", () => {
     const sendFn = vi.fn(async () => ({ id: "msg-1" }));
+    const updateFn = vi.fn(async () => {});
 
-    const progress = createProactiveProgress(sendFn);
+    const progress = createProactiveProgress(sendFn, updateFn);
 
     progress.onProgress({ type: "done" });
 
+    vi.advanceTimersByTime(2000);
+    expect(sendFn).not.toHaveBeenCalled();
+    expect(updateFn).not.toHaveBeenCalled();
+  });
+
+  it("text events are skipped (delivered via finalize)", () => {
+    const sendFn = vi.fn(async () => ({ id: "msg-1" }));
+    const updateFn = vi.fn(async () => {});
+
+    const progress = createProactiveProgress(sendFn, updateFn);
+
+    progress.onProgress({ type: "text", text: "Hello" });
+    vi.advanceTimersByTime(2000);
     expect(sendFn).not.toHaveBeenCalled();
   });
 
-  it("finalize sends each chunk as a new message", async () => {
+  it("first progress sends after initial delay (500ms)", async () => {
     const sendFn = vi.fn(async () => ({ id: "msg-1" }));
+    const updateFn = vi.fn(async () => {});
 
-    const progress = createProactiveProgress(sendFn);
+    const progress = createProactiveProgress(sendFn, updateFn);
 
-    await progress.finalize(["Chunk 1", "Chunk 2", "Chunk 3"]);
+    progress.onProgress({ type: "tool_use", tool: { name: "Read", file: "foo.ts" } } as never);
+    expect(sendFn).not.toHaveBeenCalled();
 
+    await vi.advanceTimersByTimeAsync(500);
+    expect(sendFn).toHaveBeenCalledTimes(1);
+    expect(updateFn).not.toHaveBeenCalled();
+  });
+
+  it("subsequent progress updates after 1.5s throttle", async () => {
+    const sendFn = vi.fn(async () => ({ id: "msg-1" }));
+    const updateFn = vi.fn(async () => {});
+
+    const progress = createProactiveProgress(sendFn, updateFn);
+
+    progress.onProgress({ type: "tool_use", tool: { name: "Read", file: "a.ts" } } as never);
+    await vi.advanceTimersByTimeAsync(500); // initial delay
+
+    progress.onProgress({ type: "tool_use", tool: { name: "Edit", file: "b.ts" } } as never);
+    await vi.advanceTimersByTimeAsync(1500); // update throttle
+
+    expect(sendFn).toHaveBeenCalledTimes(1);
+    expect(updateFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("finalize sends as new messages (does not replace progress)", async () => {
+    const sendFn = vi.fn(async () => ({ id: "msg-1" }));
+    const updateFn = vi.fn(async () => {});
+
+    const progress = createProactiveProgress(sendFn, updateFn);
+
+    progress.onProgress({ type: "tool_use", tool: { name: "Bash", command: "ls" } } as never);
+    await vi.advanceTimersByTimeAsync(500);
+
+    await progress.finalize(["**Formatted**", "Overflow chunk"]);
+
+    // progress send + 2 finalize chunks = 3 sends
     expect(sendFn).toHaveBeenCalledTimes(3);
+  });
+
+  it("finalize without prior send falls back to sendFn", async () => {
+    const sendFn = vi.fn(async () => ({ id: "msg-1" }));
+    const updateFn = vi.fn(async () => {});
+
+    const progress = createProactiveProgress(sendFn, updateFn);
+
+    await progress.finalize(["Chunk 1", "Chunk 2"]);
+
+    expect(sendFn).toHaveBeenCalledTimes(2);
+    expect(updateFn).not.toHaveBeenCalled();
   });
 
   it("finalize with empty chunks does nothing", async () => {
     const sendFn = vi.fn(async () => ({ id: "msg-1" }));
+    const updateFn = vi.fn(async () => {});
 
-    const progress = createProactiveProgress(sendFn);
+    const progress = createProactiveProgress(sendFn, updateFn);
 
     await progress.finalize([]);
 
     expect(sendFn).not.toHaveBeenCalled();
+    expect(updateFn).not.toHaveBeenCalled();
+  });
+
+  it("rollover updates old message then starts new one", async () => {
+    let msgCount = 0;
+    const sendFn = vi.fn(async () => ({ id: `msg-${++msgCount}` }));
+    const updateFn = vi.fn(async () => {});
+
+    const progress = createProactiveProgress(sendFn, updateFn);
+
+    // First progress → triggers initial send
+    progress.onProgress({ type: "tool_use", tool: { name: "Bash", command: "ls" } } as never);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(sendFn).toHaveBeenCalledTimes(1); // msg-1 created
+
+    // Push buffer over 25KB with a huge tool_result to trigger rollover
+    progress.onProgress({ type: "tool_result", result: "X".repeat(25_000) } as never);
+
+    // Rollover: flush updates msg-1 (not creates new), then resets
+    await vi.advanceTimersByTimeAsync(0); // drain chain
+    expect(updateFn).toHaveBeenCalledTimes(1); // msg-1 updated with full buffer
+
+    // New progress after rollover creates a new message
+    progress.onProgress({ type: "tool_use", tool: { name: "Edit", file: "c.ts" } } as never);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(sendFn).toHaveBeenCalledTimes(2); // msg-2 created
   });
 });
 
