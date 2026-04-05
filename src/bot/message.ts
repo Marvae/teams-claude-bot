@@ -143,9 +143,12 @@ export function registerMessageHandler(app: App): void {
     // Store stream ref — NOT activated yet (no emit/update).
     // Bridge will activate it on message_start. If no message_start
     // (e.g. /compact), stream stays untouched and closes silently.
+    // Set immediately after guard to prevent concurrent turns during
+    // async work (e.g. attachment downloads).
     const { stream } = ctx;
+    managed.pendingStream = stream;
 
-    // Process attachments — downloads happen while user sees informative update
+    // Process attachments — downloads happen while user sees typing indicator
     const rawAttachments = hasAttachments
       ? filterPlatformAttachments(
           activity.attachments as Parameters<
@@ -190,7 +193,6 @@ export function registerMessageHandler(app: App): void {
     });
 
     const resultPromise = new Promise<void>((resolve) => {
-      managed.pendingStream = stream;
       managed.onTurnComplete = resolve;
     });
 

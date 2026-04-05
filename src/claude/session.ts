@@ -260,7 +260,7 @@ export class ConversationSession {
       msgType === "system" && msgSubtype === "status"
         ? ` status=${msg.status}`
         : msgType === "result"
-          ? ` subtype=${msgSubtype} result=${typeof msg.result === "string" ? msg.result.slice(0, 80) : "N/A"}`
+          ? ` subtype=${msgSubtype}`
           : msgType === "stream_event"
             ? ` evt=${(msg.event as Record<string, unknown> | undefined)?.type}`
             : "";
