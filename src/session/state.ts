@@ -37,6 +37,8 @@ export interface ManagedSession {
   suggestionCardId?: string;
   /** Activity ID of the user's latest message (for reactions) */
   userActivityId?: string;
+  /** Pending reaction to send after stream closes (emoji response). */
+  pendingReaction?: string;
 }
 
 // ─── Persistence ───

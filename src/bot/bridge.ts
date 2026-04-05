@@ -80,14 +80,9 @@ function imageTooLargeMessage(event: ImageEvent): string {
 
 // ─── Native streaming progress (uses ctx.stream) ────────────────────────
 
-/** Max buffered text length before flushing to stream (allows reaction detection). */
-const REACTION_BUFFER_MAX = 20;
-
 export interface Progress {
   onProgress: (event: ProgressEvent) => void;
   finalize: (chunks: string[]) => Promise<void>;
-  /** Buffered text not yet emitted (streaming only). */
-  getBufferedText?: () => string;
 }
 
 export function createStreamingProgress(
@@ -95,20 +90,10 @@ export function createStreamingProgress(
   sendFn: (activity: ActivityParams) => Promise<SentActivity | undefined>,
 ): Progress {
   let hasEmitted = false;
-  let textBuffer = "";
-  let bufferFlushed = false;
 
   const emit = (content: string) => {
     hasEmitted = true;
     stream.emit(content);
-  };
-
-  const flushBuffer = () => {
-    if (textBuffer && !bufferFlushed) {
-      emit(textBuffer);
-      textBuffer = "";
-    }
-    bufferFlushed = true;
   };
 
   let thinkingText = "";
@@ -129,7 +114,7 @@ export function createStreamingProgress(
       }
 
       if (event.type === "file_diff") {
-        flushBuffer();
+
         const cwd = state.getWorkDir();
         const shortPath = event.filePath?.startsWith(cwd + "/")
           ? event.filePath.slice(cwd.length + 1)
@@ -147,7 +132,7 @@ export function createStreamingProgress(
       }
 
       if (event.type === "tool_result") {
-        flushBuffer();
+
         emit(`\n\n${event.result}\n\n`);
         return;
       }
@@ -205,15 +190,7 @@ export function createStreamingProgress(
 
       if (event.type === "text") {
         if (event.text) {
-          if (bufferFlushed) {
-            // Buffer already flushed — stream directly
-            emit(event.text);
-          } else {
-            textBuffer += event.text;
-            if (textBuffer.length > REACTION_BUFFER_MAX) {
-              flushBuffer();
-            }
-          }
+          emit(event.text);
         }
         return;
       }
@@ -223,12 +200,10 @@ export function createStreamingProgress(
       // so we use emit() for all progress to keep it visible throughout the turn.
       const message = formatProgressMessage(event);
       if (message) {
-        flushBuffer();
         emit("\n\n" + message + "\n\n");
       }
     },
     finalize: async (chunks: string[]) => {
-      flushBuffer();
       // Stream auto-closes when handler returns, merging emitted text into final message.
       // If nothing was emitted (e.g. error path), send all chunks proactively.
       const start = hasEmitted ? 1 : 0;
@@ -236,7 +211,6 @@ export function createStreamingProgress(
         await sendFn(new MessageActivity(chunks[i]));
       }
     },
-    getBufferedText: () => textBuffer,
   };
 }
 
@@ -675,29 +649,14 @@ export function createManagedSession(
           // Nothing to send (e.g. /compact) — turn completion is the signal
           console.log("[BOT] Turn complete (no output)");
         } else {
-          // Check if response is a single emoji that can be sent as a reaction.
-          // Only when the entire response is still in the buffer (no tool output
-          // or other content was streamed before it).
+          // Detect single-emoji response — queue reaction for after stream closes
           const managed = state.getSession();
-          const buffered = progress.getBufferedText?.() ?? "";
-          const isFullyBuffered = buffered.trim() === result.result.trim();
-          const reactionType = isFullyBuffered
-            ? getReactionType(buffered)
-            : undefined;
-          if (reactionType && managed?.userActivityId && conversationId) {
-            try {
-              console.log(`[BOT] Sending reaction: ${reactionType}`);
-              await app.api.reactions.add(conversationId, managed.userActivityId, reactionType);
-              // Close stream with empty finalize — no text to show
-              await progress.finalize([]);
-            } catch (err) {
-              console.warn("[BOT] Reaction failed, falling back to text:", err);
-              await progress.finalize(splitMessage(formatResponse(result)));
-            }
-          } else {
-            console.log("[BOT] Formatting and sending response");
-            await progress.finalize(splitMessage(formatResponse(result)));
+          const reactionType = getReactionType(result.result);
+          if (reactionType && managed?.userActivityId) {
+            managed.pendingReaction = reactionType;
           }
+          console.log("[BOT] Formatting and sending response");
+          await progress.finalize(splitMessage(formatResponse(result)));
         }
 
         console.log("[BOT] Response sent successfully");
