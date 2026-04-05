@@ -60,12 +60,10 @@ export function createStreamingProgress(
       }
 
       if (event.type === "status") {
-        if (!hasEmitted) {
-          const msg =
-            event.status === "compacting"
-              ? "🔄 Compacting context..."
-              : `⏳ ${event.status}`;
-          stream.update(msg);
+        if (event.status === "compacting") {
+          void sendFn(new MessageActivity("🔄 Compacting context..."));
+        } else {
+          void sendFn(new MessageActivity("✅ Context compacted"));
         }
         return;
       }
@@ -187,6 +185,15 @@ export function createProactiveProgress(
     onProgress: (event: ProgressEvent) => {
       if (event.type === "done") {
         promptSuggestion = event.promptSuggestion;
+        return;
+      }
+      if (event.type === "status") {
+        if (event.status === "compacting") {
+          void sendFn(new MessageActivity("🔄 Compacting context..."));
+        } else {
+          void sendFn(new MessageActivity("✅ Context compacted"));
+        }
+        return;
       }
       // All other events are ignored — no streaming in handoff/proactive context
     },

@@ -266,11 +266,10 @@ export class ConversationSession {
     }
 
     // ── Status changes (compacting, etc.) ──
+    // SDK sends status: 'compacting' when starting, status: null when done.
     if (msg.type === "system" && msg.subtype === "status") {
-      const status = msg.status as string | null;
-      if (status === "compacting") {
-        this.emitProgress({ type: "status", status: "compacting" });
-      }
+      const status = (msg.status as string | null) ?? "idle";
+      this.emitProgress({ type: "status", status });
     }
 
     // ── Local command output (e.g. /compact, /cost — SDK-handled slash commands) ──
