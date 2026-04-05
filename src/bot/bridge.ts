@@ -32,32 +32,24 @@ import type { IStreamer } from "@microsoft/teams.apps";
 import type { interactiveCards } from "./cards.js";
 type InteractiveCards = typeof interactiveCards;
 
-// ─── Emoji → reaction mapping ───────────────────────────────────────────
-
-/** Map of single-emoji responses to Teams reaction types. */
-const EMOJI_TO_REACTION: Record<string, string> = {
-  "👍": "like",
-  "👍🏻": "like",
-  "👍🏼": "like",
-  "👍🏽": "like",
-  "👍🏾": "like",
-  "👍🏿": "like",
-  "❤️": "heart",
-  "♥️": "heart",
-  "❤": "heart",
-  "👀": "1f440_eyes",
-  "✅": "2705_whiteheavycheckmark",
-  "🚀": "launch",
-  "📌": "1f4cc_pushpin",
-};
+// ─── Single-emoji detection ─────────────────────────────────────────────
 
 /**
- * If text is a single emoji that maps to a Teams reaction, return the reaction type.
- * Otherwise return undefined.
+ * If text is a single emoji, return it as a reaction type string.
+ * Teams accepts arbitrary emoji strings via `(string & {})`.
+ * Uses Intl.Segmenter to correctly handle all emoji (ZWJ, flags, skin tones).
  */
 function getReactionType(text: string): string | undefined {
   const trimmed = text.trim();
-  return EMOJI_TO_REACTION[trimmed];
+  if (!trimmed) return undefined;
+  const segmenter = new Intl.Segmenter("en", { granularity: "grapheme" });
+  const segments = [...segmenter.segment(trimmed)];
+  if (segments.length !== 1) return undefined;
+  // Verify it's actually an emoji, not a single letter/digit
+  if (/\p{Emoji_Presentation}/u.test(trimmed) || /\p{Emoji}\uFE0F/u.test(trimmed)) {
+    return trimmed;
+  }
+  return undefined;
 }
 
 // ─── Image helpers ──────────────────────────────────────────────────────
