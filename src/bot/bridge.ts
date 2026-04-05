@@ -59,15 +59,6 @@ export function createStreamingProgress(
         return;
       }
 
-      if (event.type === "status") {
-        if (event.status === "compacting") {
-          void sendFn(new MessageActivity("🔄 Compacting context..."));
-        } else {
-          void sendFn(new MessageActivity("✅ Context compacted"));
-        }
-        return;
-      }
-
       if (event.type === "thinking") {
         thinkingText += event.text;
         if (!hasEmitted) {
@@ -185,17 +176,8 @@ export function createProactiveProgress(
     onProgress: (event: ProgressEvent) => {
       if (event.type === "done") {
         promptSuggestion = event.promptSuggestion;
-        return;
       }
-      if (event.type === "status") {
-        if (event.status === "compacting") {
-          void sendFn(new MessageActivity("🔄 Compacting context..."));
-        } else {
-          void sendFn(new MessageActivity("✅ Context compacted"));
-        }
-        return;
-      }
-      // All other events are ignored — no streaming in handoff/proactive context
+      // All other events (including status) handled at session level
     },
     finalize: async (chunks: string[]) => {
       for (const chunk of chunks) {
@@ -286,6 +268,21 @@ export function createManagedSession(
   const proactiveDelete = async (activityId: string): Promise<void> => {
     if (!conversationId) return;
     await app.api.conversations.activities(conversationId).delete(activityId);
+  };
+
+  // Proactive update — update a message in-place by id
+  const proactiveUpdate = async (
+    activityId: string,
+    activity: ActivityParams,
+  ): Promise<void> => {
+    if (!conversationId) return;
+    try {
+      await app.api.conversations
+        .activities(conversationId)
+        .update(activityId, activity);
+    } catch {
+      // Message may be gone — ignore
+    }
   };
 
   const sendCard = async (card: IAdaptiveCard): Promise<string | undefined> => {
@@ -406,6 +403,7 @@ export function createManagedSession(
   // otherwise fall back to the proactive send pattern (handoff context).
   let currentProgress: ReturnType<typeof createStreamingProgress> | null = null;
   let switchedToProactive = false;
+  let compactingActivityId: string | undefined;
 
   const getOrCreateProgress = () => {
     if (!currentProgress) {
@@ -475,6 +473,24 @@ export function createManagedSession(
       );
     },
     onProgress: (event: ProgressEvent) => {
+      // Handle compacting status as a standalone proactive message (send → update)
+      if (event.type === "status") {
+        if (event.status === "compacting") {
+          void (async () => {
+            const resp = await proactiveSend(
+              new MessageActivity("🔄 Compacting context..."),
+            );
+            if (resp?.id) compactingActivityId = resp.id;
+          })();
+        } else if (compactingActivityId) {
+          void proactiveUpdate(
+            compactingActivityId,
+            new MessageActivity("✅ Context compacted"),
+          );
+          compactingActivityId = undefined;
+        }
+        return;
+      }
       getOrCreateProgress().onProgress(event);
     },
     onResult: async (result: ClaudeResult) => {
