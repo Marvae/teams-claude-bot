@@ -523,6 +523,11 @@ export function createManagedSession(
         console.log("[BOT] Prompt suggestion received");
         void (async () => {
           try {
+            // Delete previous suggestion card if still lingering
+            const prev = state.getSession()?.suggestionCardId;
+            if (prev) {
+              await proactiveDelete(prev).catch(() => {});
+            }
             const cardId = await sendCard({
               type: "AdaptiveCard",
               version: "1.4",
