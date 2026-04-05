@@ -135,18 +135,15 @@ export function registerMessageHandler(app: App): void {
     }
 
     // Guard: if a turn is already in progress, queue the message
-    if (managed.activeStream) {
+    if (managed.activeStream || managed.pendingStream || managed.onTurnComplete) {
       managed.session.send(text);
       return;
     }
 
-    // Set up stream early so we can show informative status during attachment download
+    // Store stream ref — NOT activated yet (no emit/update).
+    // Bridge will activate it on message_start. If no message_start
+    // (e.g. /compact), stream stays untouched and closes silently.
     const { stream } = ctx;
-
-    // Informative update: blue progress bar in Teams while waiting for response
-    if (stream) {
-      stream.update(hasAttachments ? "⏳ Processing attachments..." : "⏳ Thinking...");
-    }
 
     // Process attachments — downloads happen while user sees informative update
     const rawAttachments = hasAttachments
@@ -178,44 +175,24 @@ export function registerMessageHandler(app: App): void {
 
     if (!text && inlineBlocks.length === 0) return;
 
-    const handleStreamExpired = () => {
-      if (managed.streamExpired) return; // already expired
-      if (managed.activeStream === stream) {
-        managed.activeStream = undefined;
-        managed.streamExpired = true;
-        console.log("[BOT] Stream expired — switching to proactive messaging");
-      }
-      if (managed.onTurnComplete) {
-        const resolve = managed.onTurnComplete;
-        managed.onTurnComplete = undefined;
-        resolve();
-      }
-    };
-
     patchStreamCancellation(stream, (isUserCancel) => {
       if (isUserCancel && !managed.streamExpired) {
-        // User clicked Stop before timer — interrupt Claude
+        // User clicked Stop — interrupt Claude
         managed.session.interrupt();
       } else {
-        // Stream expired (timer, 2min limit, size limit, etc.) — don't interrupt,
-        // just ensure handler is released so bot isn't blocked
-        handleStreamExpired();
+        // Stream expired (2min limit, size limit, etc.)
+        if (!managed.streamExpired && managed.activeStream === stream) {
+          managed.activeStream = undefined;
+          managed.streamExpired = true;
+          console.log("[BOT] Stream expired — switching to proactive messaging");
+        }
       }
     });
 
-    // Proactive timer: finalize stream before Teams' 2-min limit kills it.
-    // Teams hard limit is 2 minutes. 90s gives enough headroom for slow
-    // first-time startup while staying well under the limit.
-    const STREAM_MAX_AGE_MS = 90_000;
-
     const resultPromise = new Promise<void>((resolve) => {
-      managed.activeStream = stream;
+      managed.pendingStream = stream;
       managed.onTurnComplete = resolve;
     });
-
-    const streamTimer = setTimeout(() => {
-      handleStreamExpired();
-    }, STREAM_MAX_AGE_MS);
 
     console.log("[BOT] Sending message to session...");
     if (inlineBlocks.length > 0) {
@@ -228,9 +205,8 @@ export function registerMessageHandler(app: App): void {
       managed.session.send(text);
     }
 
-    // Await until onResult or stream timer resolves
+    // Await until onResult resolves (or stream expires via 403)
     await resultPromise;
-    clearTimeout(streamTimer);
   });
 
   // Save conversation ref on bot install

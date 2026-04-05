@@ -25,7 +25,9 @@ import { TEAMS_BOT_DATA_DIR } from "../paths.js";
 
 export interface ManagedSession {
   session: ConversationSession;
-  /** Per-turn stream from the message handler context */
+  /** Stream ref from message handler — not yet activated (no emit/update called) */
+  pendingStream?: IStreamer;
+  /** Activated stream — safe to emit/update. Set on message_start. */
   activeStream?: IStreamer;
   /** Resolve callback to signal turn completion (lets handler return) */
   onTurnComplete?: () => void;

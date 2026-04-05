@@ -47,6 +47,7 @@ export type ProgressEvent =
   | { type: "text"; text: string }
   | { type: "thinking"; text: string }
   | { type: "auth_error"; error: string }
+  | { type: "started" }
   | { type: "status"; status: string }
   | { type: "done"; promptSuggestion?: string };
 

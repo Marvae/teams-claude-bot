@@ -254,6 +254,17 @@ export class ConversationSession {
   }
 
   private async processMessage(msg: Record<string, unknown>): Promise<void> {
+    const msgType = msg.type as string | undefined;
+    const msgSubtype = msg.subtype as string | undefined;
+    const extra =
+      msgType === "system" && msgSubtype === "status"
+        ? ` status=${msg.status}`
+        : msgType === "result"
+          ? ` subtype=${msgSubtype} result=${typeof msg.result === "string" ? msg.result.slice(0, 80) : "N/A"}`
+          : msgType === "stream_event"
+            ? ` evt=${(msg.event as Record<string, unknown> | undefined)?.type}`
+            : "";
+    console.log(`[SESSION] msg: type=${msgType} subtype=${msgSubtype}${extra}`);
 
     // ── Init message ──
     if (
@@ -268,7 +279,7 @@ export class ConversationSession {
     // ── Status changes (compacting, etc.) ──
     // SDK sends status: 'compacting' when starting, status: null when done.
     if (msg.type === "system" && msg.subtype === "status") {
-      const status = (msg.status as string | null) ?? "idle";
+      const status = typeof msg.status === "string" ? msg.status : "idle";
       this.emitProgress({ type: "status", status });
     }
 
@@ -313,6 +324,9 @@ export class ConversationSession {
     // ── Streaming text ──
     if (msg.type === "stream_event" && msg.parent_tool_use_id === null) {
       const evt = msg.event as Record<string, unknown> | undefined;
+      if (evt?.type === "message_start") {
+        this.emitProgress({ type: "started" });
+      }
       if (evt?.type === "content_block_delta") {
         const delta = evt.delta as Record<string, unknown> | undefined;
         if (delta?.type === "text_delta" && typeof delta.text === "string") {
