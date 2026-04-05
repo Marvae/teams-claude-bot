@@ -520,7 +520,7 @@ export function createManagedSession(
       // without text, migrate to suggestedActions for a more native look.
       if (event.type === "prompt_suggestion") {
         const suggestion = event.suggestion;
-        console.log("[BOT] Prompt suggestion received:", suggestion);
+        console.log("[BOT] Prompt suggestion received");
         void (async () => {
           try {
             const resp = await proactiveSend({
