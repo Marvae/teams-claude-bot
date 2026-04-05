@@ -227,6 +227,48 @@ describe("ConversationSession — image extraction", () => {
     expect(img.mimeType).toBe("image/png");
   });
 
+  it("emits image from nested tool_result content block (MCP tools)", async () => {
+    const mcpImageB64 = "bWNwLWltYWdl"; // fake base64
+    mockQuery.mockImplementation(async function* () {
+      yield { type: "system", subtype: "init", session_id: "s1" };
+      yield {
+        type: "user",
+        parent_tool_use_id: null,
+        tool_use_result: { "0": "some opaque mcp result" },
+        message: {
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "tool-mcp",
+              content: [
+                {
+                  type: "image",
+                  source: {
+                    type: "base64",
+                    media_type: "image/jpeg",
+                    data: mcpImageB64,
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      };
+      yield { type: "result", result: "Done" };
+    });
+
+    const { session, events, nextResult } = makeSession();
+    session.send("mcp screenshot");
+    await nextResult();
+
+    const imageEvents = events.filter((e) => e.type === "image");
+    expect(imageEvents).toHaveLength(1);
+    const img = imageEvents[0] as Extract<ProgressEvent, { type: "image" }>;
+    expect(img.base64).toBe(mcpImageB64);
+    expect(img.mimeType).toBe("image/jpeg");
+  });
+
   it("skips image when file.base64 is missing", async () => {
     mockQuery.mockImplementation(async function* () {
       yield { type: "system", subtype: "init", session_id: "s1" };

@@ -390,6 +390,25 @@ export class ConversationSession {
         return;
       }
 
+      // Nested image blocks inside tool_result content (MCP tools, etc.)
+      for (const block of contentBlocks) {
+        if (block.type === "tool_result" && Array.isArray(block.content)) {
+          for (const inner of block.content as Array<Record<string, unknown>>) {
+            if (inner.type === "image" && typeof inner.source === "object" && inner.source !== null) {
+              const src = inner.source as Record<string, unknown>;
+              if (src.type === "base64" && typeof src.data === "string") {
+                this.emitProgress({
+                  type: "image",
+                  base64: src.data,
+                  mimeType: (src.media_type as string) ?? "image/png",
+                  sizeBytes: Math.ceil(src.data.length * 3 / 4),
+                });
+              }
+            }
+          }
+        }
+      }
+
       if (toolUseResult && typeof toolUseResult === "object") {
         const payload = toolUseResult as Record<string, unknown>;
         // FileReadOutput — image type (screenshots, image file reads)
