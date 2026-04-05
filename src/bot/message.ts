@@ -128,6 +128,9 @@ export function registerMessageHandler(app: App): void {
       state.setSession(managed);
     }
 
+    // Store user's activity ID for potential reaction responses
+    managed.userActivityId = activity.id;
+
     // Delete prompt suggestion card from previous turn
     if (managed.suggestionCardId && convIdForSession) {
       const cardId = managed.suggestionCardId;

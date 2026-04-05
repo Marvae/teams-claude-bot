@@ -32,6 +32,34 @@ import type { IStreamer } from "@microsoft/teams.apps";
 import type { interactiveCards } from "./cards.js";
 type InteractiveCards = typeof interactiveCards;
 
+// ─── Emoji → reaction mapping ───────────────────────────────────────────
+
+/** Map of single-emoji responses to Teams reaction types. */
+const EMOJI_TO_REACTION: Record<string, string> = {
+  "👍": "like",
+  "👍🏻": "like",
+  "👍🏼": "like",
+  "👍🏽": "like",
+  "👍🏾": "like",
+  "👍🏿": "like",
+  "❤️": "heart",
+  "♥️": "heart",
+  "❤": "heart",
+  "👀": "1f440_eyes",
+  "✅": "2705_whiteheavycheckmark",
+  "🚀": "launch",
+  "📌": "1f4cc_pushpin",
+};
+
+/**
+ * If text is a single emoji that maps to a Teams reaction, return the reaction type.
+ * Otherwise return undefined.
+ */
+function getReactionType(text: string): string | undefined {
+  const trimmed = text.trim();
+  return EMOJI_TO_REACTION[trimmed];
+}
+
 // ─── Image helpers ──────────────────────────────────────────────────────
 
 const MAX_INLINE_BYTES = 4 * 1024 * 1024; // 4MB — Teams inline attachment limit
@@ -622,8 +650,23 @@ export function createManagedSession(
           // Nothing to send (e.g. /compact) — turn completion is the signal
           console.log("[BOT] Turn complete (no output)");
         } else {
-          console.log("[BOT] Formatting and sending response");
-          await progress.finalize(splitMessage(formatResponse(result)));
+          // Check if response is a single emoji that can be sent as a reaction
+          const managed = state.getSession();
+          const reactionType = getReactionType(result.result);
+          if (reactionType && managed?.userActivityId && conversationId) {
+            try {
+              console.log(`[BOT] Sending reaction: ${reactionType}`);
+              await app.api.reactions.add(conversationId, managed.userActivityId, reactionType);
+              // Close stream silently — no text to emit
+              await progress.finalize([]);
+            } catch (err) {
+              console.warn("[BOT] Reaction failed, falling back to text:", err);
+              await progress.finalize(splitMessage(formatResponse(result)));
+            }
+          } else {
+            console.log("[BOT] Formatting and sending response");
+            await progress.finalize(splitMessage(formatResponse(result)));
+          }
         }
 
         console.log("[BOT] Response sent successfully");
