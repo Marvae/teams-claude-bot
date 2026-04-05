@@ -135,7 +135,7 @@ export function registerMessageHandler(app: App): void {
     }
 
     // Guard: if a turn is already in progress, queue the message
-    if (managed.activeStream || managed.pendingStream || managed.onTurnComplete) {
+    if (managed.stream || managed.onTurnComplete) {
       managed.session.send(text);
       return;
     }
@@ -146,7 +146,7 @@ export function registerMessageHandler(app: App): void {
     // Set immediately after guard to prevent concurrent turns during
     // async work (e.g. attachment downloads).
     const { stream } = ctx;
-    managed.pendingStream = stream;
+    managed.stream = stream;
 
     // Process attachments — downloads happen while user sees typing indicator
     const rawAttachments = hasAttachments
@@ -184,8 +184,8 @@ export function registerMessageHandler(app: App): void {
         managed.session.interrupt();
       } else {
         // Stream expired (2min limit, size limit, etc.)
-        if (!managed.streamExpired && managed.activeStream === stream) {
-          managed.activeStream = undefined;
+        if (!managed.streamExpired && managed.streamActivated) {
+          managed.streamActivated = false;
           managed.streamExpired = true;
           console.log("[BOT] Stream expired — switching to proactive messaging");
         }

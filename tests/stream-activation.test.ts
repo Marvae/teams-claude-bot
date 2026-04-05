@@ -1,12 +1,12 @@
 /**
- * Tests for delayed stream activation (pendingStream → activeStream on message_start).
+ * Tests for delayed stream activation (stream + streamActivated on message_start).
  *
  * Key behaviors:
  * 1. Stream is NOT touched (emit/update) until "started" event
- * 2. "started" event promotes pendingStream → activeStream
+ * 2. "started" event sets streamActivated = true
  * 3. Compacting status is always proactive (before message_start)
  * 4. Empty results (e.g. /compact) don't send messages
- * 5. Busy guard checks pendingStream
+ * 5. Busy guard checks stream ref
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -202,7 +202,7 @@ describe("delayed stream activation — message handler", () => {
 // ─── Bridge "started" event tests ───────────────────────────────────────
 
 describe("delayed stream activation — bridge onProgress", () => {
-  it("started event promotes pendingStream to activeStream", () => {
+  it("stream is set but not activated initially", () => {
     const mock = createMockApp();
     const managed = createManagedSession(
       mock.app,
@@ -212,17 +212,14 @@ describe("delayed stream activation — bridge onProgress", () => {
 
     const stream = { emit: vi.fn(), update: vi.fn(), close: vi.fn() };
     // Simulate what message.ts does
-    (managed as ManagedSession).pendingStream =
-      stream as unknown as ManagedSession["pendingStream"];
+    (managed as ManagedSession).stream =
+      stream as unknown as ManagedSession["stream"];
 
     stateValues.managed = managed;
 
-    // Simulate session emitting "started" event
-    // Access onProgress via the session config — we test indirectly
-    // by checking state after the event
     const ms = managed as ManagedSession;
-    expect(ms.pendingStream).toBeDefined();
-    expect(ms.activeStream).toBeUndefined();
+    expect(ms.stream).toBeDefined();
+    expect(ms.streamActivated).toBeFalsy();
   });
 
   it("streaming progress does not emit for started event", () => {
@@ -251,12 +248,12 @@ describe("compacting status — always proactive", () => {
     );
 
     const stream = { emit: vi.fn(), update: vi.fn(), close: vi.fn() };
-    (managed as ManagedSession).pendingStream =
-      stream as unknown as ManagedSession["pendingStream"];
+    (managed as ManagedSession).stream =
+      stream as unknown as ManagedSession["stream"];
     stateValues.managed = managed;
 
-    // Even with a pendingStream, compacting should NOT call stream.update
-    // because pendingStream is not activeStream
+    // Even with a stream ref, compacting should NOT call stream.update
+    // because streamActivated is false
     expect(stream.update).not.toHaveBeenCalled();
   });
 

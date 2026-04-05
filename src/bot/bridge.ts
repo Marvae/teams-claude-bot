@@ -411,9 +411,9 @@ export function createManagedSession(
   const getOrCreateProgress = () => {
     if (!currentProgress) {
       const managed = state.getSession();
-      if (managed?.activeStream) {
+      if (managed?.stream && managed.streamActivated) {
         currentProgress = createStreamingProgress(
-          managed.activeStream,
+          managed.stream,
           proactiveSend,
         );
       } else {
@@ -479,14 +479,15 @@ export function createManagedSession(
       // Activate stream on message_start — before this, everything is proactive.
       if (event.type === "started") {
         const managed = state.getSession();
-        if (managed?.pendingStream && !managed.activeStream && !managed.streamExpired) {
+        if (managed?.stream && !managed.streamActivated && !managed.streamExpired) {
           console.log("[BOT] message_start — activating stream");
-          managed.activeStream = managed.pendingStream;
-          managed.pendingStream = undefined;
+          managed.streamActivated = true;
+          // Show thinking indicator now that stream is active
+          managed.stream.update("⏳ Thinking...");
           // Start 90s timer now (not at send time)
           streamTimer = setTimeout(() => {
-            if (managed.activeStream) {
-              managed.activeStream = undefined;
+            if (managed.streamActivated) {
+              managed.streamActivated = false;
               managed.streamExpired = true;
               console.log("[BOT] Stream expired — switching to proactive messaging");
             }
@@ -578,11 +579,9 @@ export function createManagedSession(
           streamTimer = undefined;
         }
         const managed = state.getSession();
-        if (managed?.pendingStream) {
-          managed.pendingStream = undefined;
-        }
-        if (managed?.activeStream) {
-          managed.activeStream = undefined;
+        if (managed?.stream) {
+          managed.stream = undefined;
+          managed.streamActivated = false;
         }
         if (managed?.streamExpired) {
           managed.streamExpired = false;
