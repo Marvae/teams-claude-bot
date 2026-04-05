@@ -164,7 +164,7 @@ export function createProactiveProgress(
   finalize: (chunks: string[]) => Promise<void>;
 } {
   return {
-    onProgress: (event: ProgressEvent) => {
+    onProgress: (_event: ProgressEvent) => {
       // All events (including status, done) handled at session level
     },
     finalize: async (chunks: string[]) => {
@@ -547,7 +547,7 @@ export function createManagedSession(
                   },
                 },
               ],
-            } as any);
+            } as ActivityParams);
             if (resp?.id) {
               const m = state.getSession();
               if (m) m.suggestionCardId = resp.id;
