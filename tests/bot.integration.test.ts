@@ -654,19 +654,16 @@ describe("streaming progress via stream.emit", () => {
     expect(emitted).toContain("Step 3");
   });
 
-  it("done event captures promptSuggestion without emitting", () => {
+  it("done event is ignored by streaming progress", () => {
     const stream = { emit: vi.fn() };
     const sendFn = vi.fn(async () => ({ id: "msg-1" }));
 
     const progress = createStreamingProgress(stream, sendFn);
 
-    progress.onProgress({
-      type: "done",
-      promptSuggestion: "Run tests next?",
-    });
+    progress.onProgress({ type: "done" });
 
-    expect(progress.getPromptSuggestion()).toBe("Run tests next?");
     expect(stream.emit).not.toHaveBeenCalled();
+    expect(sendFn).not.toHaveBeenCalled();
   });
 
   it("finalize sends extra chunks via sendFn (skips first when stream emitted)", async () => {
@@ -793,17 +790,14 @@ describe("proactive progress (handoff context)", () => {
     expect(sendFn).not.toHaveBeenCalled();
   });
 
-  it("done event captures promptSuggestion", () => {
+  it("done event is ignored by proactive progress", () => {
     const sendFn = vi.fn(async () => ({ id: "msg-1" }));
 
     const progress = createProactiveProgress(sendFn);
 
-    progress.onProgress({
-      type: "done",
-      promptSuggestion: "What next?",
-    });
+    progress.onProgress({ type: "done" });
 
-    expect(progress.getPromptSuggestion()).toBe("What next?");
+    expect(sendFn).not.toHaveBeenCalled();
   });
 
   it("finalize sends each chunk as a new message", async () => {

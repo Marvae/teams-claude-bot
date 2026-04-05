@@ -49,7 +49,8 @@ export type ProgressEvent =
   | { type: "auth_error"; error: string }
   | { type: "started" }
   | { type: "status"; status: string }
-  | { type: "done"; promptSuggestion?: string };
+  | { type: "done" }
+  | { type: "prompt_suggestion"; suggestion: string };
 
 export interface PromptRequestInfo {
   requestId: string;

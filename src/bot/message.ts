@@ -128,6 +128,15 @@ export function registerMessageHandler(app: App): void {
       state.setSession(managed);
     }
 
+    // Delete prompt suggestion card from previous turn
+    if (managed.suggestionCardId && convId) {
+      const cardId = managed.suggestionCardId;
+      managed.suggestionCardId = undefined;
+      void app.api.conversations.activities(convId).delete(cardId).catch(() => {
+        /* card may already be gone */
+      });
+    }
+
     // Run init prompt on new sessions
     if (!managed.session.hasQuery && config.sessionInitPrompt) {
       console.log("[BOT] Running session init prompt...");
