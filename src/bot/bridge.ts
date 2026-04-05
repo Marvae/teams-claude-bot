@@ -676,18 +676,23 @@ export function createManagedSession(
           console.log("[BOT] Turn complete (no output)");
         } else {
           // Check if response is a single emoji that can be sent as a reaction.
-          // Use buffered text (not yet emitted to stream) for clean reaction UX.
+          // Only when the entire response is still in the buffer (no tool output
+          // or other content was streamed before it).
           const managed = state.getSession();
           const buffered = progress.getBufferedText?.() ?? "";
-          const reactionType = buffered ? getReactionType(buffered) : getReactionType(result.result);
+          const isFullyBuffered = buffered.trim() === result.result.trim();
+          const reactionType = isFullyBuffered
+            ? getReactionType(buffered)
+            : undefined;
           if (reactionType && managed?.userActivityId && conversationId) {
             try {
               console.log(`[BOT] Sending reaction: ${reactionType}`);
               await app.api.reactions.add(conversationId, managed.userActivityId, reactionType);
-              // Don't flush buffer — close stream silently with no text
+              // Close stream with empty finalize — no text to show
+              await progress.finalize([]);
             } catch (err) {
               console.warn("[BOT] Reaction failed, falling back to text:", err);
-              progress.finalize(splitMessage(formatResponse(result)));
+              await progress.finalize(splitMessage(formatResponse(result)));
             }
           } else {
             console.log("[BOT] Formatting and sending response");
