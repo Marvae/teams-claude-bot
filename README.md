@@ -29,15 +29,19 @@ Teams (any device)
 
 ## Quick Start
 
-> **Prerequisites:** Node.js 22+, Claude Code CLI, Azure account
->
-> You'll also need to configure an Azure Bot and sideload it to Teams. For the complete walkthrough, see the **[Setup Guide](docs/setup-guide.md)**.
+> **Prerequisites:** Node.js 22+, Claude Code CLI, [Azure account](https://azure.microsoft.com/free/) (free tier is enough, personal Microsoft account recommended)
 
 ```bash
 npm install -g claude-code-teams-bot
-teams-bot setup            # Interactive config (generates manifest zip)
-teams-bot install           # Register as background service + start
+teams-bot setup --auto      # Creates bot, tunnel, sideloads to Teams
 ```
+
+A few browser sign-ins will open automatically:
+1. **Azure CLI** — to create bot resources (personal Microsoft account recommended)
+2. **Dev Tunnel** — to create a tunnel (any Microsoft account)
+3. **Teams** — to install the app (the Teams account you'll chat from)
+
+See the **[Setup Guide](docs/setup-guide.md)** for manual setup or troubleshooting.
 
 **Or install from source:**
 
@@ -45,8 +49,7 @@ teams-bot install           # Register as background service + start
 git clone https://github.com/Marvae/teams-claude-bot.git
 cd teams-claude-bot
 npm install && npm run build
-teams-bot setup
-teams-bot install
+teams-bot setup --auto
 ```
 
 ## Commands
@@ -80,7 +83,9 @@ In Teams, send `/handoff back` to clear handoff mode.
 ## Service Management
 
 ```bash
-teams-bot setup            # Interactive config
+teams-bot setup --auto     # One-command setup (recommended)
+teams-bot setup            # Interactive config (manual)
+teams-bot sideload          # Sideload app to Teams
 teams-bot install           # Register as background service + start
 teams-bot start / stop      # Start or stop service
 teams-bot restart           # Restart service

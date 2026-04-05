@@ -128,17 +128,7 @@ async function macStatus(): Promise<void> {
 }
 
 async function getWindowsBashPath(): Promise<string> {
-  // Under Git Bash, /bin/bash already works.
-  try {
-    await runCommand("/bin/bash", ["--version"], {
-      stdio: "pipe",
-      allowFailure: true,
-    });
-    return "/bin/bash";
-  } catch {
-    /* not git bash shell */
-  }
-  // Try the common Git for Windows path
+  // Try the common Git for Windows path first (works in all terminals)
   const gitBash = "C:\\Program Files\\Git\\bin\\bash.exe";
   if (fs.existsSync(gitBash)) {
     return gitBash;

@@ -5,10 +5,11 @@
  */
 
 import type { App } from "@microsoft/teams.apps";
-import { TypingActivity } from "@microsoft/teams.api";
+import { TypingActivity, MessageActivity } from "@microsoft/teams.api";
 import type { IMessageActivity } from "@microsoft/teams.api";
 import type { IActivityContext } from "@microsoft/teams.apps";
 import { handleCommand } from "./commands.js";
+import { buildWelcomeCard } from "./cards.js";
 import * as state from "../session/state.js";
 import {
   processAttachments,
@@ -230,5 +231,12 @@ export function registerMessageHandler(app: App): void {
       saveConversationId(userId, convId);
     }
     console.log("[BOT] Installation update — conversation ref saved");
+
+    // Send welcome card
+    try {
+      await ctx.send(new MessageActivity().addCard("adaptive", buildWelcomeCard()));
+    } catch (e) {
+      console.log("[BOT] Could not send welcome card:", e);
+    }
   });
 }

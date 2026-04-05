@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
 import { Command } from "commander";
+import fs from "fs";
+import path from "path";
 import { setupCommand, packageManifest } from "./setup.js";
 import {
   installCommand,
@@ -26,32 +28,59 @@ async function main(): Promise<void> {
 
   program
     .command("setup")
-    .description("Interactive config setup (run all steps, or pick one)")
+    .description("Configure bot (interactive or automated)")
     .addHelpText(
       "after",
       `
-Steps:
+Modes:
+  teams-bot setup           Interactive setup (manual steps)
+  teams-bot setup --auto    Automated setup via az CLI (recommended)
+
+Steps (interactive mode):
   azure     Azure Bot app registration (App ID, Client Secret, Tenant ID)
   bot       Bot settings (Work Directory, Allowed Users)
   tunnel    Dev Tunnel configuration (creates or reuses a devtunnel)
   skill     Install /handoff skill for Claude Code
 
 Examples:
-  teams-bot setup           Run all steps interactively
-  teams-bot setup azure     Only configure Azure Bot credentials
-  teams-bot setup tunnel    Only configure Dev Tunnel
+  teams-bot setup                     Interactive setup
+  teams-bot setup --auto                One-command setup (a few browser sign-ins)
+  teams-bot setup --auto --work-dir ~/projects  Specify work directory
+  teams-bot setup azure                 Only configure Azure Bot credentials
 `,
     )
     .argument("[step]", "run a single step: azure | bot | tunnel | skill")
-    .action(async (step?: string) => {
-      await setupCommand(step);
-    });
+    .option("--auto", "one-command setup: creates bot, tunnel, sideloads (a few browser sign-ins)")
+    .option("--work-dir <path>", "work directory for Claude Code")
+    .action(
+      async (
+        step: string | undefined,
+        opts: { auto?: boolean; workDir?: string },
+      ) => {
+        await setupCommand(step, opts);
+      },
+    );
 
   program
     .command("package")
     .description("Generate teams-claude-bot.zip for Teams upload")
     .action(async () => {
       await packageManifest();
+    });
+
+  program
+    .command("sideload")
+    .description("Sideload app to Teams via MOS3 API")
+    .action(async () => {
+      const { sideloadToTeams } = await import("./setup-auto.js");
+      const zipPath = path.resolve(process.cwd(), "teams-claude-bot.zip");
+      if (!fs.existsSync(zipPath)) {
+        console.log("  teams-claude-bot.zip not found. Run: teams-bot package");
+        process.exitCode = 1;
+        return;
+      }
+      const ok = await sideloadToTeams(zipPath);
+      if (!ok) process.exitCode = 1;
     });
 
   program
