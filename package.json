@@ -2,6 +2,17 @@
   "name": "claude-code-teams-bot",
   "version": "0.5.0",
   "description": "Microsoft Teams bot that bridges to Claude Code",
+  "keywords": [
+    "microsoft-teams",
+    "teams",
+    "claude",
+    "claude-code",
+    "ai",
+    "bot",
+    "chatbot",
+    "agent-sdk",
+    "streaming"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
