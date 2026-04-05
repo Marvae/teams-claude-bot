@@ -265,6 +265,14 @@ export class ConversationSession {
       this.config.onSessionId?.(this.sessionId);
     }
 
+    // ── Status changes (compacting, etc.) ──
+    if (msg.type === "system" && msg.subtype === "status") {
+      const status = msg.status as string | null;
+      if (status === "compacting") {
+        this.emitProgress({ type: "status", status: "compacting" });
+      }
+    }
+
     // ── Local command output (e.g. /compact, /cost — SDK-handled slash commands) ──
     if (
       msg.type === "system" &&

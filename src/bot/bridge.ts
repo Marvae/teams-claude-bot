@@ -59,6 +59,17 @@ export function createStreamingProgress(
         return;
       }
 
+      if (event.type === "status") {
+        if (!hasEmitted) {
+          const msg =
+            event.status === "compacting"
+              ? "🔄 Compacting context..."
+              : `⏳ ${event.status}`;
+          stream.update(msg);
+        }
+        return;
+      }
+
       if (event.type === "thinking") {
         thinkingText += event.text;
         if (!hasEmitted) {
