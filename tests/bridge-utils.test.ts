@@ -4,6 +4,7 @@ import {
   formatProgressMessage,
   truncateProgress,
   codeBlockLanguage,
+  progressToText,
 } from "../src/claude/formatter.js";
 
 describe("friendlyError", () => {
@@ -182,5 +183,71 @@ describe("codeBlockLanguage", () => {
 
   it("returns plaintext for no extension", () => {
     expect(codeBlockLanguage("Makefile")).toBe("plaintext");
+  });
+});
+
+describe("progressToText", () => {
+  it("returns text content for text events", () => {
+    expect(progressToText({ type: "text", text: "hello" })).toBe("hello");
+  });
+
+  it("returns undefined for empty text", () => {
+    expect(progressToText({ type: "text", text: "" })).toBeUndefined();
+  });
+
+  it("returns undefined for done events", () => {
+    expect(progressToText({ type: "done" } as never)).toBeUndefined();
+  });
+
+  it("formats file_diff with language tag", () => {
+    const result = progressToText({
+      type: "file_diff",
+      filePath: "/proj/src/index.ts",
+      patch: "+code",
+    } as never);
+    expect(result).toContain("```typescript");
+    expect(result).toContain("+code");
+  });
+
+  it("shortens file_diff paths relative to cwd", () => {
+    const result = progressToText(
+      { type: "file_diff", filePath: "/proj/src/index.ts", patch: "diff" } as never,
+      "/proj",
+    );
+    expect(result).toContain("📝 src/index.ts");
+  });
+
+  it("formats auth_error", () => {
+    const result = progressToText({ type: "auth_error", error: "expired" } as never);
+    expect(result).toContain("🔑");
+  });
+
+  it("formats todo list", () => {
+    const result = progressToText({
+      type: "todo",
+      todos: [
+        { content: "Task 1", status: "completed" },
+        { content: "Task 2", status: "in_progress" },
+      ],
+    } as never);
+    expect(result).toContain("✅ Task 1");
+    expect(result).toContain("🔧 Task 2");
+    expect(result).toContain("1/2");
+  });
+
+  it("formats rate_limit rejected", () => {
+    const result = progressToText({
+      type: "rate_limit",
+      status: "rejected",
+    } as never);
+    expect(result).toContain("Rate limited");
+  });
+
+  it("delegates tool_use to formatProgressMessage", () => {
+    const result = progressToText({
+      type: "tool_use",
+      tool: { name: "Bash", command: "ls" },
+    } as never);
+    expect(result).toContain("🔧 Running: ls");
   });
 });
