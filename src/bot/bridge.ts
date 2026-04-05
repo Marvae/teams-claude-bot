@@ -521,13 +521,11 @@ export function createManagedSession(
       if (event.type === "prompt_suggestion") {
         const suggestion = event.suggestion;
         console.log("[BOT] Prompt suggestion received");
+        // Skip if a new turn has already started (suggestion is stale)
+        const managed = state.getSession();
+        if (managed?.stream || managed?.onTurnComplete) return;
         void (async () => {
           try {
-            // Delete previous suggestion card if still lingering
-            const prev = state.getSession()?.suggestionCardId;
-            if (prev) {
-              await proactiveDelete(prev).catch(() => {});
-            }
             const cardId = await sendCard({
               type: "AdaptiveCard",
               version: "1.4",
