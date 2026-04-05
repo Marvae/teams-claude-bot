@@ -39,6 +39,13 @@ export type ProgressEvent =
     }
   | { type: "tool_result"; result: string }
   | {
+      type: "image";
+      base64: string;
+      mimeType: string;
+      name?: string;
+      sizeBytes: number;
+    }
+  | {
       type: "rate_limit";
       status: "allowed_warning" | "rejected";
       resetsAt?: number;
