@@ -129,10 +129,10 @@ export function registerMessageHandler(app: App): void {
     }
 
     // Delete prompt suggestion card from previous turn
-    if (managed.suggestionCardId && convId) {
+    if (managed.suggestionCardId && convIdForSession) {
       const cardId = managed.suggestionCardId;
       managed.suggestionCardId = undefined;
-      void app.api.conversations.activities(convId).delete(cardId).catch(() => {
+      void app.api.conversations.activities(convIdForSession).delete(cardId).catch(() => {
         /* card may already be gone */
       });
     }

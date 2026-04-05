@@ -523,35 +523,27 @@ export function createManagedSession(
         console.log("[BOT] Prompt suggestion received");
         void (async () => {
           try {
-            const resp = await proactiveSend({
-              type: "message",
-              attachments: [
+            const cardId = await sendCard({
+              type: "AdaptiveCard",
+              version: "1.4",
+              body: [],
+              actions: [
                 {
-                  contentType: "application/vnd.microsoft.card.adaptive",
-                  content: {
-                    type: "AdaptiveCard",
-                    version: "1.4",
-                    body: [],
-                    actions: [
-                      {
-                        type: "Action.Submit",
-                        title: `💡 ${suggestion}`,
-                        data: {
-                          msteams: {
-                            type: "imBack",
-                            value: suggestion,
-                          },
-                        },
-                      },
-                    ],
+                  type: "Action.Submit",
+                  title: `💡 ${suggestion}`,
+                  data: {
+                    msteams: {
+                      type: "imBack",
+                      value: suggestion,
+                    },
                   },
                 },
               ],
-            } as ActivityParams);
-            if (resp?.id) {
+            } as IAdaptiveCard);
+            if (cardId) {
               const m = state.getSession();
-              if (m) m.suggestionCardId = resp.id;
-              console.log("[BOT] Suggestion card sent:", resp.id);
+              if (m) m.suggestionCardId = cardId;
+              console.log("[BOT] Suggestion card sent:", cardId);
             }
           } catch (err) {
             console.error("[BOT] Failed to send suggestion card:", err);

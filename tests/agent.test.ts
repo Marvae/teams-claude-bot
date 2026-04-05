@@ -257,7 +257,7 @@ describe("ConversationSession", () => {
       session.send("what branch am I on?");
       await yieldMsg({ type: "result", result: "You are on main branch." });
 
-      // Result is pending until iterator ends (pendingResult waits for prompt_suggestion)
+      // finish() closes the mocked async iterator so the session's consume loop exits cleanly
       await finish();
 
       expect(results).toHaveLength(2);
@@ -458,11 +458,14 @@ describe("ConversationSession", () => {
       session.send("fix the bug");
       await nextResult();
       // prompt_suggestion is processed after result — wait for event loop
-      await new Promise((r) => setTimeout(r, 10));
+      await vi.waitFor(() => {
+        expect(
+          events.filter((e) => e.type === "prompt_suggestion"),
+        ).toHaveLength(1);
+      });
       const suggestionEvents = events.filter(
         (e) => e.type === "prompt_suggestion",
       );
-      expect(suggestionEvents).toHaveLength(1);
       expect(
         (suggestionEvents[0] as { suggestion: string }).suggestion,
       ).toBe("Run the tests");
