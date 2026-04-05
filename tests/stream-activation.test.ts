@@ -9,7 +9,7 @@
  * 5. Busy guard checks pendingStream
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // ---- Mock SDK ----
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
@@ -264,7 +264,8 @@ describe("compacting status — always proactive", () => {
     const stream = { emit: vi.fn() };
     const sendFn = vi.fn(async () => ({ id: "msg-1" }));
 
-    const progress = createStreamingProgress(stream, sendFn);
+    // Create progress but don't use it — simulates empty result
+    createStreamingProgress(stream, sendFn);
 
     // Simulate empty result finalize with no prior emit
     // This is what happens for /compact — nothing was streamed, nothing to send

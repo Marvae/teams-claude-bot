@@ -404,6 +404,7 @@ export function createManagedSession(
   let currentProgress: ReturnType<typeof createStreamingProgress> | null = null;
   let switchedToProactive = false;
   let compactingActivityId: string | undefined;
+  let compactingSend: Promise<void> | undefined;
   let streamTimer: ReturnType<typeof setTimeout> | undefined;
   const STREAM_MAX_AGE_MS = 90_000;
 
