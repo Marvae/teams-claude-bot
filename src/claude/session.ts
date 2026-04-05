@@ -7,6 +7,7 @@ import {
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import { join, dirname, resolve } from "path";
+import { readFile } from "fs/promises";
 import { AsyncQueue } from "../session/async-queue.js";
 import type {
   ClaudeResult,
@@ -71,6 +72,8 @@ export class ConversationSession {
   private turnTools: ToolInfo[] = [];
   private turnStreamingText = "";
   private resumeRetryAttempted = false;
+  // Map tool_use_id → file_path for Read tool calls (used to send original images)
+  private readToolPaths = new Map<string, string>();
   private pendingRetry: { content: MessageContent } | undefined = undefined;
   private lastStartPayload: { content: MessageContent } | undefined = undefined;
 
@@ -174,6 +177,7 @@ export class ConversationSession {
   private resetTurnState(): void {
     this.turnTools = [];
     this.turnStreamingText = "";
+    this.readToolPaths.clear();
   }
 
   private emitProgress(event: ProgressEvent): void {
@@ -388,6 +392,26 @@ export class ConversationSession {
 
       if (toolUseResult && typeof toolUseResult === "object") {
         const payload = toolUseResult as Record<string, unknown>;
+        // FileReadOutput — image type (screenshots, image file reads)
+        if (payload.type === "image" && payload.file) {
+          await this.emitImageFromFileRead(payload, msg);
+        }
+
+        // BashOutput — isImage flag (command output screenshots)
+        if (
+          payload.isImage === true &&
+          typeof payload.stdout === "string" &&
+          payload.stdout.length > 0
+        ) {
+          const b64 = payload.stdout;
+          this.emitProgress({
+            type: "image",
+            base64: b64,
+            mimeType: "image/png",
+            sizeBytes: Math.ceil(b64.length * 3 / 4),
+          });
+        }
+
         // FileEditOutput or FileWriteOutput — extract gitDiff.patch or structuredPatch
         if (
           typeof payload.filePath === "string" &&
@@ -479,6 +503,15 @@ export class ConversationSession {
                     activeForm: t.activeForm as string | undefined,
                   })),
                 });
+              }
+            }
+            // Track Read tool file paths for original image forwarding
+            if (b.name === "Read" || b.name === "FileRead") {
+              const input = b.input as Record<string, unknown> | undefined;
+              const filePath = input?.file_path as string | undefined;
+              const toolId = b.id as string | undefined;
+              if (filePath && toolId) {
+                this.readToolPaths.set(toolId, filePath);
               }
             }
             const toolInfo = extractToolInfo(
@@ -589,6 +622,58 @@ export class ConversationSession {
         result: msg.result as string,
         tools: [...this.turnTools],
       });
+    }
+  }
+
+  /** Extract and emit an image from a FileReadOutput tool result.
+   *  Tries to read the original file for full quality; falls back to the SDK's resized version. */
+  private async emitImageFromFileRead(
+    payload: Record<string, unknown>,
+    msg: Record<string, unknown>,
+  ): Promise<void> {
+    const file = payload.file as Record<string, unknown>;
+    const mimeType = file.type as string | undefined;
+    if (!mimeType) return;
+
+    const sdkBase64 = file.base64 as string | undefined;
+    if (typeof sdkBase64 !== "string") return;
+
+    const sdkSizeBytes = (file.originalSize as number) ?? Math.ceil(sdkBase64.length * 3 / 4);
+
+    // Find the original file path from the Read tool call.
+    // parent_tool_use_id is typically null; the real ID is inside
+    // msg.message.content[].tool_use_id (ToolResultBlockParam).
+    const toolId =
+      (msg.parent_tool_use_id as string | undefined) ??
+      (Array.isArray((msg.message as Record<string, unknown> | undefined)?.content)
+        ? ((msg.message as Record<string, unknown>).content as Array<Record<string, unknown>>)
+            .find((b) => b.type === "tool_result" && typeof b.tool_use_id === "string")
+            ?.tool_use_id as string | undefined
+        : undefined);
+    const originalPath = toolId ? this.readToolPaths.get(toolId) : undefined;
+
+    if (!originalPath) {
+      this.emitProgress({ type: "image", base64: sdkBase64, mimeType, sizeBytes: sdkSizeBytes });
+      return;
+    }
+
+    try {
+      // Resolve POSIX-style /c/... paths to Windows C:\... on win32
+      let fsPath = originalPath;
+      if (process.platform === "win32" && /^\/[a-zA-Z]\//.test(fsPath)) {
+        fsPath = fsPath[1].toUpperCase() + ":" + fsPath.slice(2).replace(/\//g, "\\");
+      }
+      const buf = await readFile(fsPath);
+      this.emitProgress({
+        type: "image",
+        base64: buf.toString("base64"),
+        mimeType,
+        name: originalPath.split(/[/\\]/).pop(),
+        sizeBytes: buf.length,
+      });
+    } catch (err) {
+      console.warn("[SESSION] Could not read original image, using SDK version:", err);
+      this.emitProgress({ type: "image", base64: sdkBase64, mimeType, sizeBytes: sdkSizeBytes });
     }
   }
 

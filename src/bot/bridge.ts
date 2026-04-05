@@ -32,6 +32,24 @@ import type { IStreamer } from "@microsoft/teams.apps";
 import type { interactiveCards } from "./cards.js";
 type InteractiveCards = typeof interactiveCards;
 
+// ─── Image helpers ──────────────────────────────────────────────────────
+
+const MAX_INLINE_BYTES = 4 * 1024 * 1024; // 4MB — Teams inline attachment limit
+
+type ImageEvent = Extract<ProgressEvent, { type: "image" }>;
+
+function buildImageAttachment(event: ImageEvent) {
+  return {
+    contentType: event.mimeType,
+    contentUrl: `data:${event.mimeType};base64,${event.base64}`,
+    name: event.name ?? "image.png",
+  };
+}
+
+function imageTooLargeMessage(event: ImageEvent): string {
+  return `⚠️ Image too large to display inline (${(event.sizeBytes / 1024 / 1024).toFixed(1)}MB). Large file upload not yet supported.`;
+}
+
 // ─── Native streaming progress (uses ctx.stream) ────────────────────────
 
 export function createStreamingProgress(
@@ -129,6 +147,17 @@ export function createStreamingProgress(
         return;
       }
 
+      if (event.type === "image") {
+        if (event.sizeBytes >= MAX_INLINE_BYTES) {
+          // TODO: implement FileConsentCard for large files
+          emit(`\n\n${imageTooLargeMessage(event)}\n\n`);
+          return;
+        }
+        hasEmitted = true;
+        stream.emit({ type: "message", attachments: [buildImageAttachment(event)] });
+        return;
+      }
+
       if (event.type === "text") {
         if (event.text) {
           emit(event.text);
@@ -164,8 +193,20 @@ export function createProactiveProgress(
   finalize: (chunks: string[]) => Promise<void>;
 } {
   return {
-    onProgress: (_event: ProgressEvent) => {
-      // All events (including status, done) handled at session level
+    onProgress: (event: ProgressEvent) => {
+      if (event.type === "image") {
+        if (event.sizeBytes >= MAX_INLINE_BYTES) {
+          // TODO: implement FileConsentCard for large files
+          sendFn(new MessageActivity(imageTooLargeMessage(event))).catch(
+            (err) => console.error("[BRIDGE] image send failed:", err),
+          );
+          return;
+        }
+        sendFn(
+          new MessageActivity().addAttachments(buildImageAttachment(event)),
+        ).catch((err) => console.error("[BRIDGE] image send failed:", err));
+      }
+      // Other events (status, done, etc.) handled at session level
     },
     finalize: async (chunks: string[]) => {
       for (const chunk of chunks) {
