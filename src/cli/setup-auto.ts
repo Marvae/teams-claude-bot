@@ -224,6 +224,20 @@ function createAppRegistration(
       `ad app create --display-name "${botName}" --sign-in-audience AzureADMultipleOrgs`,
     );
     console.log(`  ✓ App ID: ${app.appId}`);
+
+    // Create service principal — az ad app create does NOT create one automatically
+    // (unlike the Azure Portal UI). Without it, token acquisition fails with AADSTS7000229.
+    try {
+      az(`ad sp create --id ${app.appId}`);
+      console.log(`  ✓ Service Principal created`);
+    } catch (spErr: unknown) {
+      const spMsg = (spErr as Error).message;
+      // Ignore "already exists" — idempotent
+      if (!spMsg.includes("already exist")) {
+        throw new Error("Failed to create Service Principal. Token acquisition will fail (AADSTS7000229).", { cause: spErr });
+      }
+    }
+
     return { ...state, appId: app.appId, botName, tenantId };
   } catch (e: unknown) {
     const msg = (e as Error).message;
