@@ -6,7 +6,6 @@ import { CANONICAL_ENV_PATH, HANDOFF_TOKEN_PATH } from "../paths.js";
 import { projectDir, resolveDevtunnel, resetDevtunnelCache } from "./constants.js";
 import { prompt, normalizeYesNo, runCommand } from "./utils.js";
 import { maybeInstallSkillPrompt } from "./skill.js";
-import { autoSetupCommand } from "./setup-auto.js";
 
 interface SetupConfig {
   MICROSOFT_APP_ID: string;
@@ -473,6 +472,7 @@ export async function setupCommand(
 ): Promise<void> {
   if (options?.auto) {
     try {
+      const { autoSetupCommand } = await import("./setup-auto.js");
       await autoSetupCommand(options.workDir);
     } catch (e: unknown) {
       console.error(`\n  ✗ ${(e as Error).message}\n`);

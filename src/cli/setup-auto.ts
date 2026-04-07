@@ -11,7 +11,7 @@ import os from "os";
 import path from "path";
 import { randomUUID } from "crypto";
 import { CANONICAL_ENV_PATH } from "../paths.js";
-import { projectDir, resolveDevtunnel } from "./constants.js";
+import { resolveDevtunnel } from "./constants.js";
 import { runCommand } from "./utils.js";
 import { loadExistingSetupConfig, generateHandoffToken, ensureDevtunnelCli, ensureDevtunnelLogin } from "./setup.js";
 
@@ -88,7 +88,7 @@ function az(cmd: string): string {
     }).trim();
   } catch (e: unknown) {
     const err = e as { stderr?: string; message: string };
-    throw new Error(`az ${cmd} failed: ${err.stderr || err.message}`);
+    throw new Error(`az ${cmd} failed: ${err.stderr || err.message}`, { cause: e });
   }
 }
 
@@ -173,13 +173,13 @@ function ensureLogin(): { tenantId: string; userName: string } {
           console.log("\n  ⚠ Login failed. Please log in manually, then re-run setup:");
           console.log(`    az login --tenant ${tenant}`);
           console.log("    teams-bot setup --auto\n");
-          throw new Error("Azure login failed. See instructions above.");
+          throw new Error("Azure login failed. See instructions above.", { cause: e });
         }
       } else {
         console.log("\n  ⚠ Login failed. Please log in manually, then re-run setup:");
         console.log("    az login");
         console.log("    teams-bot setup --auto\n");
-        throw new Error("Azure login failed. Log in manually with 'az login' and re-run.");
+        throw new Error("Azure login failed. Log in manually with 'az login' and re-run.", { cause: e });
       }
     }
     account = azJson<typeof account>("account show");
@@ -228,7 +228,7 @@ function createAppRegistration(
   } catch (e: unknown) {
     const msg = (e as Error).message;
     if (msg.includes("Forbidden") || msg.includes("Authorization")) {
-      throw new Error("Permission denied creating App Registration. Your account may not have Azure AD permissions.");
+      throw new Error("Permission denied creating App Registration. Your account may not have Azure AD permissions.", { cause: e });
     }
     throw e;
   }
@@ -271,10 +271,10 @@ function createBot(state: AutoSetupState): AutoSetupState {
     } catch (e: unknown) {
       const msg = (e as Error).message;
       if (msg.includes("SubscriptionNotFound") || msg.includes("subscription")) {
-        throw new Error("No active subscription. Create a free one at https://azure.microsoft.com/free/");
+        throw new Error("No active subscription. Create a free one at https://azure.microsoft.com/free/", { cause: e });
       }
       if (msg.includes("LocationNotAvailableForResourceGroup")) {
-        throw new Error(`Region 'eastus' not available for your subscription. Try a different Azure region.`);
+        throw new Error(`Region 'eastus' not available for your subscription. Try a different Azure region.`, { cause: e });
       }
       throw e;
     }
@@ -456,7 +456,8 @@ async function generateManifest(state: AutoSetupState): Promise<AutoSetupState> 
 export async function sideloadToTeams(zipPath: string): Promise<boolean> {
   console.log("  Sideloading to Teams via MOS3...");
 
-  let msalNode: typeof import("@azure/msal-node");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let msalNode: any;
   try {
     msalNode = await import("@azure/msal-node");
   } catch {
