@@ -3,7 +3,7 @@ import os from "os";
 import path from "path";
 import { randomBytes, randomUUID } from "crypto";
 import { CANONICAL_ENV_PATH, HANDOFF_TOKEN_PATH } from "../paths.js";
-import { projectDir, resolveDevtunnel } from "./constants.js";
+import { projectDir, resolveDevtunnel, resetDevtunnelCache } from "./constants.js";
 import { prompt, normalizeYesNo, runCommand } from "./utils.js";
 import { maybeInstallSkillPrompt } from "./skill.js";
 
@@ -139,7 +139,7 @@ function saveConfig(config: Partial<SetupConfig>): void {
   });
 }
 
-function generateHandoffToken(): void {
+export function generateHandoffToken(): void {
   try {
     const existing = fs.readFileSync(HANDOFF_TOKEN_PATH, "utf8").trim();
     if (existing) return;
@@ -247,11 +247,12 @@ async function stepBot(
   );
   if (await offerSkip("bot", existing)) return {};
 
-  const { expandHome } = await import("../config.js");
   const defaultDir = existing.CLAUDE_WORK_DIR || os.homedir();
-  const workDir = expandHome(
-    (await prompt(`  Work Directory [${defaultDir}]: `)) || defaultDir,
-  );
+  let workDir = (await prompt(`  Work Directory [${defaultDir}]: `)) || defaultDir;
+  if (workDir === "~") workDir = os.homedir();
+  else if (workDir.startsWith("~/") || workDir.startsWith("~\\"))
+    workDir = path.resolve(os.homedir(), workDir.slice(2));
+  else workDir = path.resolve(workDir);
 
   const port = "3978";
 
@@ -268,7 +269,7 @@ async function stepBot(
 
 // ─── Step: Tunnel ───
 
-async function ensureDevtunnelCli(): Promise<boolean> {
+export async function ensureDevtunnelCli(): Promise<boolean> {
   let hasCli: { code: number };
   try {
     hasCli = await runCommand(resolveDevtunnel(), ["--version"], {
@@ -302,6 +303,7 @@ async function ensureDevtunnelCli(): Promise<boolean> {
     );
   }
   if (installResult.code === 0) {
+    resetDevtunnelCache();
     hasCli = await runCommand(resolveDevtunnel(), ["--version"], {
       stdio: "pipe",
       allowFailure: true,
@@ -317,7 +319,7 @@ async function ensureDevtunnelCli(): Promise<boolean> {
   return true;
 }
 
-async function ensureDevtunnelLogin(): Promise<boolean> {
+export async function ensureDevtunnelLogin(): Promise<boolean> {
   const check = await runCommand(resolveDevtunnel(), ["user", "show"], {
     stdio: "pipe",
     allowFailure: true,
@@ -464,7 +466,22 @@ async function stepSkill(): Promise<void> {
 
 // ─── Main entry point ───
 
-export async function setupCommand(step?: string): Promise<void> {
+export async function setupCommand(
+  step?: string,
+  options?: { auto?: boolean; workDir?: string },
+): Promise<void> {
+  if (options?.auto) {
+    try {
+      const { autoSetupCommand } = await import("./setup-auto.js");
+      await autoSetupCommand(options.workDir);
+    } catch (e: unknown) {
+      console.error(`\n  ✗ ${(e as Error).message}\n`);
+      console.error("  Progress has been saved. Run 'teams-bot setup --auto' again to resume.\n");
+      process.exitCode = 1;
+    }
+    return;
+  }
+
   if (step && !VALID_STEPS.includes(step as SetupStep)) {
     console.error(`Unknown step: "${step}"`);
     console.error(`Valid steps: ${VALID_STEPS.join(", ")}`);
@@ -548,13 +565,9 @@ export async function setupCommand(step?: string): Promise<void> {
     printSummary(final);
     console.log(`  Config saved to ${CANONICAL_ENV_PATH}\n`);
     console.log("  Next steps:");
-    if (final.DEVTUNNEL_ID && final.PORT) {
-      console.log(`    1. Set messaging endpoint in Azure Portal:`);
-      console.log(
-        `       https://${final.DEVTUNNEL_ID}-${final.PORT}.devtunnels.ms/api/messages`,
-      );
-    } else {
-      console.log("    1. Set messaging endpoint in Azure Portal");
+    console.log("    1. Set messaging endpoint in Azure Portal");
+    if (final.DEVTUNNEL_ID) {
+      console.log(`       Run: devtunnel show ${final.DEVTUNNEL_ID}  (to find the URL)`);
     }
     console.log(`    2. Sideload teams-claude-bot.zip to Teams`);
     console.log(`       File: ${path.resolve("teams-claude-bot.zip")}`);

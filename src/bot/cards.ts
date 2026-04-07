@@ -187,6 +187,31 @@ export function buildHelpCard(
   return card(body);
 }
 
+export function buildWelcomeCard(): IAdaptiveCard {
+  const body: CardElement[] = [
+    new TextBlock("Welcome to Claude Code!", {
+      weight: "Bolder",
+      size: "Large",
+    }),
+    new TextBlock(
+      "I'm Claude Code running on your local machine. Send me a message to get started.",
+      { wrap: true, spacing: "Small" },
+    ),
+  ];
+
+  const columns = [
+    new Column(
+      new ActionSet(new IMBackAction("Hi! What can you help me with?", { title: "Say hi 👋" })),
+    ).withOptions({ width: "auto" }),
+    new Column(
+      new ActionSet(new IMBackAction("/help", { title: "/help" })),
+    ).withOptions({ width: "auto" }),
+  ];
+  body.push(new ColumnSet({ columns }));
+
+  return card(body);
+}
+
 function suggestionLabel(s: PermissionUpdate): string {
   const destLabel: Record<string, string> = {
     session: "for session",

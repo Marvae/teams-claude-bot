@@ -26,6 +26,8 @@ __pycache__/
 
 # Build artifacts
 teams-claude-bot.zip
+test-bot.zip
+test/.e2e-test-state.json
 
 # Claude Code worktrees
 .claude/worktrees/

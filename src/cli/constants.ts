@@ -48,6 +48,10 @@ export const linuxUnitPath = path.join(
 
 /** Resolve devtunnel executable – on Windows it may live outside Git Bash PATH */
 let _devtunnelPath: string | undefined;
+/** Clear cached devtunnel path (call after installing devtunnel) */
+export function resetDevtunnelCache(): void {
+  _devtunnelPath = undefined;
+}
 export function resolveDevtunnel(): string {
   if (_devtunnelPath) return _devtunnelPath;
   // Try plain "devtunnel" first (works if already in PATH)
@@ -86,8 +90,7 @@ export function resolveDevtunnel(): string {
       }
     }
   }
-  // Fall back to bare name (will fail gracefully in callers)
-  _devtunnelPath = name;
+  // Not found — return bare name but DON'T cache so we re-check after install
   return name;
 }
 

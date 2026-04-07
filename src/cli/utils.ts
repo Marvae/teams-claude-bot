@@ -48,6 +48,14 @@ export function runCommand(
 
     child.on("error", (error) => {
       if (timer) clearTimeout(timer);
+      if (options.allowFailure) {
+        resolve({ code: 1, stdout, stderr: stderr + "\n" + error.message });
+        return;
+      }
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        reject(new Error(`Command not found: ${command}`));
+        return;
+      }
       reject(error);
     });
 
