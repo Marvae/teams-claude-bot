@@ -109,27 +109,82 @@ expressAdapter.post(
         buttonText as string | undefined,
         title as string | undefined,
       );
-      await teamsApp.send(
-        conversationId,
-        new MessageActivity().addCard("adaptive", card),
+
+      // Use Bot Framework REST API directly — SDK's app.send() has token
+      // scope issues that cause 403 on proactive messaging.
+      const serviceUrl = (
+        process.env.SERVICE_URL ?? "https://smba.trafficmanager.net/teams"
+      ).replace(/\/+$/, "");
+      const tokenRes = await fetch(
+        `https://login.microsoftonline.com/${config.microsoftAppTenantId}/oauth2/v2.0/token`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            client_id: config.microsoftAppId,
+            client_secret: config.microsoftAppPassword,
+            scope: "https://api.botframework.com/.default",
+            grant_type: "client_credentials",
+          }),
+        },
       );
+      const tokenData = (await tokenRes.json()) as {
+        access_token?: string;
+        error?: string;
+      };
+      if (!tokenData.access_token) {
+        throw new Error(
+          `Token request failed: ${JSON.stringify(tokenData)}`,
+        );
+      }
+
+      const activity = new MessageActivity().addCard("adaptive", card);
+      const sendRes = await fetch(
+        `${serviceUrl}/v3/conversations/${conversationId}/activities`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${tokenData.access_token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            type: "message",
+            ...activity,
+          }),
+        },
+      );
+
+      if (!sendRes.ok) {
+        const body = await sendRes.text();
+        throw new Error(`Bot Framework API ${sendRes.status}: ${body}`);
+      }
 
       console.log("[HANDOFF] Handoff card sent to Teams");
       res.json({ success: true });
     } catch (err) {
-      console.error(`[HANDOFF] ${err}`);
-      const status =
-        (err as { response?: { status?: number } })?.response?.status;
-      if (status === 403 || status === 401) {
+      console.error("[HANDOFF]", err instanceof Error ? err.stack : err);
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("decrypt conversation")) {
+        res.status(400).json({
+          success: false,
+          error:
+            "Conversation expired. Send a message to the bot in Teams to refresh, then retry.",
+        });
+      } else if (msg.includes("403") || msg.includes("401")) {
         res.status(502).json({
           success: false,
           error:
-            "Teams rejected the message (auth expired). Send any message to the bot in Teams first to refresh the connection, then retry.",
+            "Teams rejected the message. Check bot credentials (MICROSOFT_APP_PASSWORD may be expired).",
+        });
+      } else if (msg.includes("Token request failed")) {
+        res.status(502).json({
+          success: false,
+          error: "Could not obtain bot token. Check Azure AD app credentials.",
         });
       } else {
         res.status(500).json({
           success: false,
-          error: "Failed to send notification",
+          error: `Failed to send notification: ${msg.slice(0, 200)}`,
         });
       }
     }

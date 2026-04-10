@@ -60,6 +60,10 @@ export async function maybeInstallSkillPrompt(): Promise<void> {
 }
 
 function installSkillFiles(destinationDir: string, sourceDir: string): void {
+  // Clean destination to remove stale files from older versions (e.g. get-session-id.sh)
+  if (fs.existsSync(destinationDir)) {
+    fs.rmSync(destinationDir, { recursive: true, force: true });
+  }
   fs.mkdirSync(destinationDir, { recursive: true });
 
   const source = path.join(sourceDir, "SKILL.md");
@@ -128,6 +132,34 @@ export async function uninstallSkill(): Promise<void> {
     if (fs.existsSync(skillDir)) {
       fs.rmSync(skillDir, { recursive: true, force: true });
       console.log(`Removed skill from ${skillDir}`);
+    }
+  }
+
+  // Clean up legacy SessionStart hooks that pointed to the now-removed session-start.sh
+  const settingsFiles = [
+    path.join(homeDir, ".claude", "settings.json"),
+    path.join(process.cwd(), ".claude", "settings.json"),
+  ];
+  for (const settingsFile of settingsFiles) {
+    if (!fs.existsSync(settingsFile)) continue;
+    const settings = readJson(settingsFile);
+    const hooks = settings.hooks as Record<string, unknown> | undefined;
+    if (!hooks?.SessionStart) continue;
+    const groups = hooks.SessionStart as Array<Record<string, unknown>>;
+    const filtered = groups.filter((g) => {
+      const gh = Array.isArray(g.hooks) ? g.hooks : [];
+      return !gh.some(
+        (h: Record<string, unknown>) =>
+          typeof h.command === "string" &&
+          h.command.includes("session-start.sh"),
+      );
+    });
+    if (filtered.length < groups.length) {
+      if (filtered.length === 0) delete hooks.SessionStart;
+      else hooks.SessionStart = filtered;
+      if (Object.keys(hooks).length === 0) delete settings.hooks;
+      writeJson(settingsFile, settings);
+      console.log(`Removed legacy hook from ${settingsFile}`);
     }
   }
 
