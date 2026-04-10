@@ -118,10 +118,20 @@ expressAdapter.post(
       res.json({ success: true });
     } catch (err) {
       console.error(`[HANDOFF] ${err}`);
-      res.status(500).json({
-        success: false,
-        error: "Failed to send notification",
-      });
+      const status =
+        (err as { response?: { status?: number } })?.response?.status;
+      if (status === 403 || status === 401) {
+        res.status(502).json({
+          success: false,
+          error:
+            "Teams rejected the message (auth expired). Send any message to the bot in Teams first to refresh the connection, then retry.",
+        });
+      } else {
+        res.status(500).json({
+          success: false,
+          error: "Failed to send notification",
+        });
+      }
     }
   },
 );
