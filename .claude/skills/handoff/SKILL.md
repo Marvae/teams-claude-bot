@@ -34,5 +34,9 @@ EOF
 
 IMPORTANT: Replace `YOUR_JSON_HERE` with the actual JSON from step 2. The heredoc is single-quoted — content is passed verbatim, no escaping needed.
 
-4. If HTTP_STATUS is 200: `Handoff sent! Check Teams to continue. You can keep working here — both sides are independent.`
-5. If not 200: `Handoff failed - is the Teams Bot running?`
+4. Parse the JSON response. If `success` is true: `Handoff sent! Check Teams to continue. You can keep working here — both sides are independent.`
+5. If `success` is false or HTTP_STATUS is not 200: show the `error` field from the response. Common errors:
+   - "First time setup: send any message to the bot in Teams first" → user needs to message the bot once
+   - "Conversation expired" → user needs to send a message to refresh
+   - "Teams rejected" / "bot token" → bot credentials issue
+   - Connection refused → bot is not running, try `teams-bot start`
