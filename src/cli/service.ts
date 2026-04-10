@@ -204,13 +204,17 @@ async function windowsStopService(): Promise<void> {
         `Stop-Process -Id ${botPid} -Force -ErrorAction SilentlyContinue`,
       { allowFailure: true },
     );
-    // Kill orphaned devtunnel host processes
-    await runPowerShell(
-      `Get-CimInstance Win32_Process -Filter "Name='devtunnel.exe'" -ErrorAction SilentlyContinue | ` +
-        `Where-Object { $_.CommandLine -match 'host' } | ` +
-        `ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`,
-      { allowFailure: true },
-    );
+    // Kill devtunnel host for this bot's tunnel (scoped by tunnel ID from config)
+    const { loadExistingSetupConfig } = await import("./setup.js");
+    const tunnelId = loadExistingSetupConfig().DEVTUNNEL_ID;
+    if (tunnelId) {
+      await runPowerShell(
+        `Get-CimInstance Win32_Process -Filter "Name='devtunnel.exe'" -ErrorAction SilentlyContinue | ` +
+          `Where-Object { $_.CommandLine -match 'host' -and $_.CommandLine -match '${tunnelId}' } | ` +
+          `ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`,
+        { allowFailure: true },
+      );
+    }
     portResult = { stdout: `killed_pid_${botPid}` };
   }
 
@@ -223,7 +227,7 @@ async function windowsStopService(): Promise<void> {
   if (portOut.startsWith("killed_pid_")) {
     const pid = portOut.replace("killed_pid_", "");
     console.log(`Killed bot process (pid ${pid}).`);
-  } else if (taskOut === "no_task" && portOut === "no_process") {
+  } else if (portOut === "no_process") {
     console.log("Bot is not running.");
   }
 }
@@ -247,14 +251,17 @@ async function windowsStartBackground(): Promise<void> {
   const { spawn: spawnProc } = await import("child_process");
   const outFd = fs.openSync(winLogPath, "w");
   const errFd = fs.openSync(winErrLogPath, "w");
-  const child = spawnProc(bashPath, [scriptPath], {
-    detached: true,
-    stdio: ["ignore", outFd, errFd],
-    windowsHide: true,
-  });
-  child.unref();
-  fs.closeSync(outFd);
-  fs.closeSync(errFd);
+  try {
+    const child = spawnProc(bashPath, [scriptPath], {
+      detached: true,
+      stdio: ["ignore", outFd, errFd],
+      windowsHide: true,
+    });
+    child.unref();
+  } finally {
+    fs.closeSync(outFd);
+    fs.closeSync(errFd);
+  }
 }
 
 async function windowsInstallService(): Promise<void> {

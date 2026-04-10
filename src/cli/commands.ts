@@ -17,8 +17,8 @@ async function preflightCheck(): Promise<void> {
   const tunnelId = cfg.DEVTUNNEL_ID;
   if (!tunnelId) return;
 
-  // On Windows, devtunnel.exe may not resolve without shell.
-  // Pass args via shell as a single command string to avoid DEP0190 warning.
+  // On Windows, devtunnel.exe may not resolve via spawn() without a shell.
+  // Use cmd /c to let Windows handle PATH resolution.
   const isWin = process.platform === "win32";
   const devtunnel = resolveDevtunnel();
 
