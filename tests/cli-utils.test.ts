@@ -12,7 +12,6 @@ import {
   pathExistsAndNonEmpty,
 } from "../src/cli/utils.js";
 import { maskPassword } from "../src/cli/setup.js";
-import { removeSessionStartHook } from "../src/cli/skill.js";
 
 // Temp directory for file-based tests
 let tmpDir: string;
@@ -153,57 +152,3 @@ describe("pathExistsAndNonEmpty", () => {
   });
 });
 
-describe("removeSessionStartHook", () => {
-  it("returns false when no hooks exist", () => {
-    const settings: Record<string, unknown> = {};
-    expect(removeSessionStartHook(settings)).toBe(false);
-  });
-
-  it("returns false when no session-start.sh hook found", () => {
-    const settings: Record<string, unknown> = {
-      hooks: {
-        SessionStart: [{ hooks: [{ type: "command", command: "echo hello" }] }],
-      },
-    };
-    expect(removeSessionStartHook(settings)).toBe(false);
-  });
-
-  it("removes session-start.sh hook and returns true", () => {
-    const settings: Record<string, unknown> = {
-      hooks: {
-        SessionStart: [
-          {
-            hooks: [{ type: "command", command: "/path/to/session-start.sh" }],
-          },
-        ],
-      },
-    };
-    expect(removeSessionStartHook(settings)).toBe(true);
-    // SessionStart removed since no hooks left
-    expect(settings.hooks).toBeUndefined();
-  });
-
-  it("keeps other hooks when removing session-start.sh", () => {
-    const settings: Record<string, unknown> = {
-      hooks: {
-        SessionStart: [
-          {
-            hooks: [{ type: "command", command: "/path/to/session-start.sh" }],
-          },
-          {
-            hooks: [{ type: "command", command: "echo other" }],
-          },
-        ],
-      },
-    };
-    expect(removeSessionStartHook(settings)).toBe(true);
-    const hooksObj = settings.hooks as Record<string, unknown>;
-    const sessionStart = hooksObj.SessionStart as Array<
-      Record<string, unknown>
-    >;
-    expect(sessionStart).toHaveLength(1);
-    expect(
-      (sessionStart[0].hooks as Array<Record<string, unknown>>)[0].command,
-    ).toBe("echo other");
-  });
-});
