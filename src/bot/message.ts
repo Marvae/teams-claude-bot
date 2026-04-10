@@ -129,6 +129,9 @@ export function registerMessageHandler(app: App): void {
       state.setSession(managed);
     }
 
+    // Store user's activity ID for potential reaction responses
+    managed.userActivityId = activity.id;
+
     // Delete prompt suggestion card from previous turn
     if (managed.suggestionCardId && convIdForSession) {
       const cardId = managed.suggestionCardId;
@@ -219,6 +222,23 @@ export function registerMessageHandler(app: App): void {
 
     // Await until onResult resolves (or stream expires via 403)
     await resultPromise;
+
+    // If response was a single emoji, replace the stream message with a reaction
+    if (managed.pendingReaction && managed.userActivityId && convIdForSession) {
+      const reactionType = managed.pendingReaction;
+      managed.pendingReaction = undefined;
+      // Listen for stream close to get the final message's activity ID, then delete it
+      stream.events.on("close", async (sent) => {
+        try {
+          await app.api.reactions.add(convIdForSession, managed.userActivityId!, reactionType);
+          if (sent?.id) {
+            await app.api.conversations.activities(convIdForSession).delete(sent.id);
+          }
+        } catch (err) {
+          console.warn("[BOT] Emoji reaction failed:", err);
+        }
+      });
+    }
   });
 
   // Save conversation ref on bot install

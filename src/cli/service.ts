@@ -160,15 +160,66 @@ async function runPowerShell(
 }
 
 async function windowsStopService(): Promise<void> {
-  // Stop the scheduled task (if running) + kill any leftover process
-  await runPowerShell(
-    `Stop-ScheduledTask -TaskName '${winTaskName}' -ErrorAction SilentlyContinue`,
+  // Stop the scheduled task (if running)
+  const taskResult = await runPowerShell(
+    `$t = Get-ScheduledTask -TaskName '${winTaskName}' -ErrorAction SilentlyContinue; ` +
+      `if ($t -and $t.State -eq 'Running') { Stop-ScheduledTask -TaskName '${winTaskName}'; Write-Output 'stopped_task' } ` +
+      `elseif ($t) { Write-Output 'task_not_running' } ` +
+      `else { Write-Output 'no_task' }`,
     { allowFailure: true },
   );
-  await runPowerShell(
-    `Get-Process -Name node -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -eq '' } | Stop-Process -Force -ErrorAction SilentlyContinue`,
+
+  // Kill bot process tree by port 3978
+  const pidResult = await runPowerShell(
+    `Get-NetTCPConnection -LocalPort 3978 -State Listen -ErrorAction SilentlyContinue | ` +
+      `Select-Object -First 1 -ExpandProperty OwningProcess`,
     { allowFailure: true },
   );
+  const botPid = pidResult.stdout.trim();
+
+  let portResult: { stdout: string } = { stdout: "no_process" };
+  if (botPid && /^\d+$/.test(botPid)) {
+    // Kill parent bash (run.sh) if present — this takes down bot + devtunnel together
+    await runPowerShell(
+      `$p = (Get-CimInstance Win32_Process -Filter "ProcessId=${botPid}" -ErrorAction SilentlyContinue).ParentProcessId; ` +
+        `if ($p) { $pp = Get-CimInstance Win32_Process -Filter "ProcessId=$p" -ErrorAction SilentlyContinue; ` +
+        `if ($pp -and $pp.Name -match 'bash') { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue } }`,
+      { allowFailure: true },
+    );
+    // Kill bot process + its children (e.g. claude-agent-sdk subprocess)
+    await runPowerShell(
+      `Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | ` +
+        `Where-Object { $_.ParentProcessId -eq ${botPid} } | ` +
+        `ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; ` +
+        `Stop-Process -Id ${botPid} -Force -ErrorAction SilentlyContinue`,
+      { allowFailure: true },
+    );
+    // Kill devtunnel host for this bot's tunnel (scoped by tunnel ID from config)
+    const { loadExistingSetupConfig } = await import("./setup.js");
+    const tunnelId = loadExistingSetupConfig().DEVTUNNEL_ID;
+    if (tunnelId) {
+      await runPowerShell(
+        `Get-CimInstance Win32_Process -Filter "Name='devtunnel.exe'" -ErrorAction SilentlyContinue | ` +
+          `Where-Object { $_.CommandLine -match 'host' -and $_.CommandLine -match '${tunnelId}' } | ` +
+          `ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`,
+        { allowFailure: true },
+      );
+    }
+    portResult = { stdout: `killed_pid_${botPid}` };
+  }
+
+  const taskOut = taskResult.stdout.trim();
+  const portOut = portResult.stdout.trim();
+
+  if (taskOut === "stopped_task") {
+    console.log("Scheduled task stopped.");
+  }
+  if (portOut.startsWith("killed_pid_")) {
+    const pid = portOut.replace("killed_pid_", "");
+    console.log(`Killed bot process (pid ${pid}).`);
+  } else if (portOut === "no_process") {
+    console.log("Bot is not running.");
+  }
 }
 
 async function windowsStartBackground(): Promise<void> {
@@ -176,12 +227,31 @@ async function windowsStartBackground(): Promise<void> {
   const scriptPath = path
     .join(projectDir, "scripts", "run.sh")
     .replace(/\\/g, "/");
-  await runPowerShell(
-    `Start-Process -FilePath '${bashPath}' -ArgumentList '${scriptPath}' ` +
-      `-WindowStyle Hidden ` +
-      `-RedirectStandardOutput '${winLogPath}' ` +
-      `-RedirectStandardError '${winErrLogPath}'`,
-  );
+
+  // Truncate old logs so we only tail fresh output
+  for (const logPath of [winLogPath, winErrLogPath]) {
+    try {
+      fs.writeFileSync(logPath, "", "utf8");
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // Use spawn with detached+unref to start background process without blocking
+  const { spawn: spawnProc } = await import("child_process");
+  const outFd = fs.openSync(winLogPath, "w");
+  const errFd = fs.openSync(winErrLogPath, "w");
+  try {
+    const child = spawnProc(bashPath, [scriptPath], {
+      detached: true,
+      stdio: ["ignore", outFd, errFd],
+      windowsHide: true,
+    });
+    child.unref();
+  } finally {
+    fs.closeSync(outFd);
+    fs.closeSync(errFd);
+  }
 }
 
 async function windowsInstallService(): Promise<void> {
@@ -246,43 +316,30 @@ async function windowsStartService(): Promise<void> {
 }
 
 async function windowsStatus(): Promise<void> {
+  // Check scheduled task
   const result = await runPowerShell(
     `$t = Get-ScheduledTask -TaskName '${winTaskName}' -ErrorAction SilentlyContinue; ` +
-      `if ($t) { ` +
-      `  $info = $t | Get-ScheduledTaskInfo; ` +
-      `  Write-Output "State: $($t.State)"; ` +
-      `  Write-Output "LastRun: $($info.LastRunTime)"; ` +
-      `  Write-Output "LastResult: $($info.LastTaskResult)"; ` +
-      `  Write-Output "NextRun: $($info.NextRunTime)" ` +
-      `} else { Write-Output 'NOT_INSTALLED' }`,
+      `if ($t) { Write-Output $t.State } else { Write-Output 'NOT_INSTALLED' }`,
     { allowFailure: true },
   );
-
-  const out = result.stdout.trim();
-  if (out === "NOT_INSTALLED") {
-    console.log("Service is not installed.");
-    return;
+  const taskState = result.stdout.trim();
+  if (taskState === "NOT_INSTALLED") {
+    console.log("Auto-start: not installed (run 'teams-bot install' to enable)");
+  } else {
+    console.log(`Auto-start: ${taskState.toLowerCase()}`);
   }
 
-  for (const line of out.split("\n")) {
-    const [key, ...rest] = line.split(": ");
-    const value = rest.join(": ").trim();
-    if (key === "State") {
-      console.log(
-        value === "Running"
-          ? "Service: RUNNING"
-          : `Service: ${value.toUpperCase()}`,
-      );
-    }
-  }
-
-  // Also check for any node process on port 3978
+  // Check if bot process is actually running on port 3978
   const portCheck = await runPowerShell(
-    `Get-NetTCPConnection -LocalPort 3978 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1 OwningProcess`,
+    `$conn = Get-NetTCPConnection -LocalPort 3978 -State Listen -ErrorAction SilentlyContinue; ` +
+      `if ($conn) { Write-Output $conn.OwningProcess[0] } else { Write-Output 'NONE' }`,
     { allowFailure: true },
   );
-  if (portCheck.stdout.includes("OwningProcess")) {
-    console.log("Port 3978: IN USE");
+  const pid = portCheck.stdout.trim();
+  if (pid !== "NONE" && pid) {
+    console.log(`Process: running (pid ${pid})`);
+  } else {
+    console.log("Process: not running");
   }
 }
 

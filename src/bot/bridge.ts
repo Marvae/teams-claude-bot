@@ -32,6 +32,26 @@ import type { IStreamer } from "@microsoft/teams.apps";
 import type { interactiveCards } from "./cards.js";
 type InteractiveCards = typeof interactiveCards;
 
+// ─── Single-emoji detection ─────────────────────────────────────────────
+
+/**
+ * If text is a single emoji, return it as a reaction type string.
+ * Teams accepts arbitrary emoji strings via `(string & {})`.
+ * Uses Intl.Segmenter to correctly handle all emoji (ZWJ, flags, skin tones).
+ */
+function getReactionType(text: string): string | undefined {
+  const trimmed = text.trim();
+  if (!trimmed) return undefined;
+  const segmenter = new Intl.Segmenter("en", { granularity: "grapheme" });
+  const segments = [...segmenter.segment(trimmed)];
+  if (segments.length !== 1) return undefined;
+  // Verify it's actually an emoji, not a single letter/digit
+  if (/\p{Emoji_Presentation}/u.test(trimmed) || /\p{Emoji}\uFE0F/u.test(trimmed)) {
+    return trimmed;
+  }
+  return undefined;
+}
+
 // ─── Image helpers ──────────────────────────────────────────────────────
 
 const MAX_INLINE_BYTES = 4 * 1024 * 1024; // 4MB — Teams inline attachment limit
@@ -52,13 +72,15 @@ function imageTooLargeMessage(event: ImageEvent): string {
 
 // ─── Native streaming progress (uses ctx.stream) ────────────────────────
 
+export interface Progress {
+  onProgress: (event: ProgressEvent) => void;
+  finalize: (chunks: string[]) => Promise<void>;
+}
+
 export function createStreamingProgress(
   stream: IStreamer,
   sendFn: (activity: ActivityParams) => Promise<SentActivity | undefined>,
-): {
-  onProgress: (event: ProgressEvent) => void;
-  finalize: (chunks: string[]) => Promise<void>;
-} {
+): Progress {
   let hasEmitted = false;
 
   const emit = (content: string) => {
@@ -188,10 +210,7 @@ export function createStreamingProgress(
 
 export function createProactiveProgress(
   sendFn: (activity: ActivityParams) => Promise<SentActivity | undefined>,
-): {
-  onProgress: (event: ProgressEvent) => void;
-  finalize: (chunks: string[]) => Promise<void>;
-} {
+): Progress {
   return {
     onProgress: (event: ProgressEvent) => {
       if (event.type === "image") {
@@ -429,7 +448,7 @@ export function createManagedSession(
   // Auto-managed progress — created on first event, destroyed on result.
   // Stream is activated on "started" (message_start). Before that, everything
   // is proactive (including compacting status). Timer starts on activation.
-  let currentProgress: ReturnType<typeof createStreamingProgress> | null = null;
+  let currentProgress: Progress | null = null;
   let switchedToProactive = false;
   let compactingActivityId: string | undefined;
   let compactingSend: Promise<void> | undefined;
@@ -455,7 +474,7 @@ export function createManagedSession(
       switchedToProactive = true;
       currentProgress = createProactiveProgress(proactiveSend);
     }
-    return currentProgress;
+    return currentProgress!;
   };
 
   const sessionConfig: SessionConfig = {
@@ -622,6 +641,12 @@ export function createManagedSession(
           // Nothing to send (e.g. /compact) — turn completion is the signal
           console.log("[BOT] Turn complete (no output)");
         } else {
+          // Detect single-emoji response — queue reaction for after stream closes
+          const managed = state.getSession();
+          const reactionType = getReactionType(result.result);
+          if (reactionType && managed?.userActivityId) {
+            managed.pendingReaction = reactionType;
+          }
           console.log("[BOT] Formatting and sending response");
           await progress.finalize(splitMessage(formatResponse(result)));
         }

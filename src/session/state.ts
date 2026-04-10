@@ -35,6 +35,10 @@ export interface ManagedSession {
   streamExpired?: boolean;
   /** Activity ID of the prompt suggestion card (auto-deleted on next message) */
   suggestionCardId?: string;
+  /** Activity ID of the user's latest message (for reactions) */
+  userActivityId?: string;
+  /** Pending reaction to send after stream closes (emoji response). */
+  pendingReaction?: string;
 }
 
 // ─── Persistence ───

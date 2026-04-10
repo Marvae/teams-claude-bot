@@ -1,5 +1,5 @@
 import fs from "fs";
-import { detectPlatform, resolveDevtunnel } from "./constants.js";
+import { type Platform, detectPlatform, resolveDevtunnel } from "./constants.js";
 import { runCommand, runBuild, pathExistsAndNonEmpty } from "./utils.js";
 import {
   installService,
@@ -17,20 +17,31 @@ async function preflightCheck(): Promise<void> {
   const tunnelId = cfg.DEVTUNNEL_ID;
   if (!tunnelId) return;
 
-  const result = await runCommand(
-    resolveDevtunnel(),
-    ["token", tunnelId, "--scope", "host"],
-    {
-      stdio: "pipe",
-      allowFailure: true,
-    },
-  );
+  // On Windows, devtunnel.exe may not resolve via spawn() without a shell.
+  // Use cmd /c to let Windows handle PATH resolution.
+  const isWin = process.platform === "win32";
+  const devtunnel = resolveDevtunnel();
+
+  const devtunnelRun = (args: string[], opts?: { stdio?: "pipe" | "inherit"; timeoutMs?: number }) =>
+    isWin
+      ? runCommand("cmd", ["/c", devtunnel, ...args], {
+          stdio: opts?.stdio ?? "pipe",
+          allowFailure: true,
+          timeoutMs: opts?.timeoutMs ?? 10_000,
+        })
+      : runCommand(devtunnel, args, {
+          stdio: opts?.stdio ?? "pipe",
+          allowFailure: true,
+          timeoutMs: opts?.timeoutMs ?? 10_000,
+        });
+
+  const result = await devtunnelRun(["token", tunnelId, "--scope", "host"]);
 
   if (result.code !== 0) {
     console.log("Tunnel auth expired. Logging in...");
-    const login = await runCommand(resolveDevtunnel(), ["user", "login"], {
+    const login = await devtunnelRun(["user", "login"], {
       stdio: "inherit",
-      allowFailure: true,
+      timeoutMs: 60_000,
     });
     if (login.code !== 0) {
       throw new Error(
@@ -38,14 +49,7 @@ async function preflightCheck(): Promise<void> {
       );
     }
     // Verify token works after login
-    const retry = await runCommand(
-      resolveDevtunnel(),
-      ["token", tunnelId, "--scope", "host"],
-      {
-        stdio: "pipe",
-        allowFailure: true,
-      },
-    );
+    const retry = await devtunnelRun(["token", tunnelId, "--scope", "host"]);
     if (retry.code !== 0) {
       throw new Error(
         "Tunnel auth still invalid after login. Check tunnel ownership.",
@@ -70,11 +74,19 @@ async function probe(url: string, timeoutMs: number): Promise<boolean> {
 }
 
 async function getTunnelUrl(tunnelId: string): Promise<string | undefined> {
-  const result = await runCommand(resolveDevtunnel(), ["show", tunnelId], {
-    stdio: "pipe",
-    allowFailure: true,
-    timeoutMs: 10000,
-  });
+  const devtunnel = resolveDevtunnel();
+  const isWin = process.platform === "win32";
+  const result = isWin
+    ? await runCommand("cmd", ["/c", devtunnel, "show", tunnelId], {
+        stdio: "pipe",
+        allowFailure: true,
+        timeoutMs: 10_000,
+      })
+    : await runCommand(devtunnel, ["show", tunnelId], {
+        stdio: "pipe",
+        allowFailure: true,
+        timeoutMs: 10_000,
+      });
   if (result.code !== 0) return undefined;
   const match = result.stdout.match(/(https:\/\/\S+devtunnels\.ms)\S*/);
   return match?.[1];
@@ -112,7 +124,57 @@ export async function restartCommand(): Promise<void> {
   await preflightCheck();
   await runBuild();
   await startService(platform);
-  console.log("Restarted.");
+  await pollAndShowLogs(platform);
+}
+
+/** Poll healthz and show startup log output. Shared by start and restart. */
+async function pollAndShowLogs(platform: Platform): Promise<void> {
+  console.log("Starting...");
+  const { getLogPaths } = await import("./service.js");
+  const logPaths = getLogPaths(platform);
+  let ok = false;
+  for (let i = 0; i < 15; i++) {
+    await new Promise((r) => setTimeout(r, 1000));
+    ok = await probe("http://127.0.0.1:3978/healthz", 2000);
+    if (ok) break;
+  }
+
+  // Show log output (success or failure)
+  const logLines: string[] = [];
+  for (const logPath of logPaths) {
+    try {
+      const content = fs.readFileSync(logPath, "utf8").trim();
+      if (content) {
+        logLines.push(...content.split(/\r?\n/));
+      }
+    } catch {
+      /* no log file */
+    }
+  }
+
+  if (ok) {
+    // Show key lines from startup log (tunnel URL, etc.)
+    const interesting = logLines.filter(
+      (l) =>
+        l.includes("listening on port") ||
+        l.includes("Ready to accept") ||
+        l.includes("Connect via browser") ||
+        l.includes("Bot PID") ||
+        l.includes("ERROR"),
+    );
+    if (interesting.length > 0) {
+      for (const line of interesting) console.log(`  ${line}`);
+    }
+    console.log("Bot is running.");
+  } else {
+    console.error("Bot failed to start.\n");
+    const tail = logLines.slice(-15);
+    if (tail.length > 0) {
+      for (const line of tail) console.error(`  ${line}`);
+    } else {
+      console.error("  (no log output — check bash/node installation)");
+    }
+  }
 }
 
 export async function startCommand(): Promise<void> {
@@ -126,37 +188,16 @@ export async function startCommand(): Promise<void> {
 
   await preflightCheck();
   await startService(platform);
-
-  // Poll until bot is reachable or timeout
-  console.log("Starting...");
-  let ok = false;
-  for (let i = 0; i < 10; i++) {
-    await new Promise((r) => setTimeout(r, 1000));
-    ok = await probe("http://127.0.0.1:3978/healthz", 2000);
-    if (ok) break;
-  }
-  if (ok) {
-    console.log("Bot is running.");
-  } else {
-    console.error("Bot failed to start.\n");
-    // Show last few lines of log
-    const { getLogPaths } = await import("./service.js");
-    for (const logPath of getLogPaths(platform)) {
-      try {
-        const content = fs.readFileSync(logPath, "utf8").trim();
-        const lines = content.split(/\r?\n/).slice(-15);
-        console.error(lines.join("\n"));
-      } catch {
-        /* no log file */
-      }
-    }
-  }
+  await pollAndShowLogs(platform);
 }
 
 export async function stopCommand(): Promise<void> {
   const platform = detectPlatform();
   await stopService(platform);
-  console.log("Stopped.");
+  // Windows stopService prints its own status messages; mac/linux need explicit confirmation
+  if (platform !== "win32") {
+    console.log("Stopped.");
+  }
 }
 
 export async function statusCommand(): Promise<void> {
