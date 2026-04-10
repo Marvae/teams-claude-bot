@@ -64,7 +64,7 @@ const SERVICE_URL = (
 
 async function sendActivity(
   conversationId: string,
-  activity: Record<string, unknown>,
+  activity: object,
 ): Promise<void> {
   const token = await getBotToken();
   const res = await fetch(
@@ -133,7 +133,7 @@ async function handleHandoffRequest(
     );
 
     const activity = new MessageActivity().addCard("adaptive", card);
-    await sendActivity(conversationId, activity as Record<string, unknown>);
+    await sendActivity(conversationId, activity);
 
     console.log("[HANDOFF] Handoff card sent to Teams");
     res.json({ success: true });
@@ -169,7 +169,7 @@ async function handleHandoffRequest(
 // ─── Export: register route on adapter ───────────────────────────────
 
 export function registerHandoffRoute(
-  adapter: { post: (path: string, ...handlers: unknown[]) => void },
+  adapter: import("@microsoft/teams.apps").ExpressAdapter,
 ): void {
   adapter.post("/api/handoff", express.json(), handleHandoffRequest);
 }
