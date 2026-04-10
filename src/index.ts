@@ -3,15 +3,15 @@ import { App, ExpressAdapter } from "@microsoft/teams.apps";
 import { DevtoolsPlugin } from "@microsoft/teams.dev";
 import { MessageActivity } from "@microsoft/teams.api";
 import type { ActivityParams } from "@microsoft/teams.api";
-import express from "express";
 import type { Request, Response } from "express";
 import {
   buildHandoffCard,
   handleCardAction,
   interactiveCards,
 } from "./bot/cards.js";
-import { loadConversationRefs, getConversationId } from "./handoff/store.js";
-import { getWorkDir, getSession, loadPersistedState } from "./session/state.js";
+import { loadConversationRefs } from "./handoff/store.js";
+import { registerHandoffRoute } from "./handoff/api.js";
+import { getSession, loadPersistedState } from "./session/state.js";
 import { registerMessageHandler } from "./bot/message.js";
 import { handleHandoff } from "./bot/bridge.js";
 
@@ -45,86 +45,8 @@ expressAdapter.get("/healthz", (_req: Request, res: Response) => {
   });
 });
 
-// Simple in-memory rate limiter for handoff endpoint
-const handoffHits = new Map<string, number[]>();
-function checkHandoffRate(ip: string): boolean {
-  const now = Date.now();
-  const windowStart = now - 60_000;
-  const timestamps = (handoffHits.get(ip) ?? []).filter((t) => t > windowStart);
-  if (timestamps.length >= 10) return false;
-  timestamps.push(now);
-  handoffHits.set(ip, timestamps);
-  if (handoffHits.size > 1000) {
-    for (const [key, ts] of handoffHits) {
-      if (ts.every((t) => t <= windowStart)) handoffHits.delete(key);
-    }
-  }
-  return true;
-}
-
-// Handoff API — called by Terminal skill to notify Teams
-// Note: teamsApp is referenced before assignment but only called at runtime (after start)
-expressAdapter.post(
-  "/api/handoff",
-  express.json(),
-  async (req: Request, res: Response) => {
-    const ip = req.ip ?? "unknown";
-    if (!checkHandoffRate(ip)) {
-      res.status(429).json({ error: "Too many requests" });
-      return;
-    }
-
-    const token = req.headers["x-handoff-token"];
-    if (token !== config.handoffToken) {
-      res.status(401).json({ success: false, error: "Unauthorized" });
-      return;
-    }
-
-    const {
-      workDir: rawWorkDir,
-      sessionId,
-      summary,
-      todos,
-      buttonText,
-      title,
-    } = req.body ?? {};
-    const workDir = (rawWorkDir as string) ?? getWorkDir();
-
-    const conversationId = getConversationId();
-    if (!conversationId) {
-      res.status(404).json({
-        success: false,
-        error:
-          "First time setup: send any message to the bot in Teams first, then retry /handoff. This is only needed once.",
-      });
-      return;
-    }
-
-    try {
-      const card = buildHandoffCard(
-        workDir,
-        sessionId as string | undefined,
-        summary as string | undefined,
-        todos as { content: string; done: boolean }[] | undefined,
-        buttonText as string | undefined,
-        title as string | undefined,
-      );
-      await teamsApp.send(
-        conversationId,
-        new MessageActivity().addCard("adaptive", card),
-      );
-
-      console.log("[HANDOFF] Handoff card sent to Teams");
-      res.json({ success: true });
-    } catch (err) {
-      console.error(`[HANDOFF] ${err}`);
-      res.status(500).json({
-        success: false,
-        error: "Failed to send notification",
-      });
-    }
-  },
-);
+// Handoff API — called by /handoff skill in Claude Code
+registerHandoffRoute(expressAdapter);
 
 // ─── Teams SDK App ───────────────────────────────────────────────────
 const plugins =

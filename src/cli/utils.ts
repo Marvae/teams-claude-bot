@@ -147,14 +147,6 @@ export function writeJson(
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
-export function ensureExecutable(filePath: string): void {
-  try {
-    fs.chmodSync(filePath, 0o755);
-  } catch {
-    // Ignore on filesystems/platforms that do not support chmod.
-  }
-}
-
 export function pathExistsAndNonEmpty(filePath: string): boolean {
   if (!fs.existsSync(filePath)) {
     return false;

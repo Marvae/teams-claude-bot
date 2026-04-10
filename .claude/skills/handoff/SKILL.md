@@ -1,54 +1,42 @@
 ---
 name: handoff
 description: Hand off the current Claude Code session to Microsoft Teams for mobile continuation
-allowedTools:
-  - Bash(curl*)
-  - Bash(*/get-session-id.sh)
-  - Bash(echo*)
-  - Bash(ps*)
+allowed-tools: Bash(curl *)
 ---
 
 # Handoff to Teams
 
+Session ID: ${CLAUDE_SESSION_ID}
+
 When the user runs `/handoff`:
 
-1. Get the session ID using the helper script:
+1. The session ID is already available above via template variable. If it shows as empty or literal `${CLAUDE_SESSION_ID}`, ask the user to run /status and paste their Session ID.
 
-```bash
-SKILL_DIR="$(dirname "$(readlink -f ~/.claude/skills/handoff/SKILL.md 2>/dev/null || echo .claude/skills/handoff/SKILL.md)")"
-SID=$("$SKILL_DIR/get-session-id.sh")
-echo "SESSION_ID=${SID:-not found}"
-```
-
-2. If session ID is empty, ask the user to run /status and paste their Session ID.
-
-3. **Generate a session summary** before calling the API. Based on the current conversation, prepare these fields in the **same language as the conversation** (do NOT default to English):
-   - `workDir`: the current working directory (use `pwd`)
-   - `title`: card title (e.g., "Session Summary" / "会话摘要" / "セッション概要" — match conversation language)
+2. **Generate a session summary** based on the current conversation, in the **same language as the conversation** (do NOT default to English). Construct the full JSON body with these fields:
+   - `workDir`: current working directory (forward slashes only, e.g. `C:/Users/...`)
+   - `sessionId`: the session ID from above
+   - `title`: card title (e.g. "Session Summary" / "会话摘要")
    - `summary`: 1-2 sentence summary of what was discussed/done
-   - `todos`: JSON array of tasks `[{"content": "task description", "done": true/false}]` — omit if no tasks
-   - `buttonText`: the accept button label (e.g., "Continue" / "继续" / "続ける" — match conversation language)
+   - `todos`: array of `{"content": "...", "done": true/false}` — omit if none
+   - `buttonText`: accept button label (e.g. "Continue" / "继续")
 
-4. Call the handoff API. Construct the full JSON payload directly in the curl command — do NOT use sed or placeholder substitution. Use proper JSON escaping for all values:
+3. Send via curl with a single-quoted heredoc (no shell expansion, safe for unicode and special chars):
 
 ```bash
-curl -s --ipv4 -w "\nHTTP_STATUS:%{http_code}" -X POST "${TEAMS_BOT_URL:-http://localhost:3978}/api/handoff" \
+curl -s -X POST "${TEAMS_BOT_URL:-http://localhost:3978}/api/handoff" \
   -H "Content-Type: application/json" \
-  -H "x-handoff-token: ${HANDOFF_TOKEN:-$(cat "$HOME/.claude/teams-bot/handoff-token" 2>/dev/null)}" \
-  -d '{ ... your JSON here ... }'
+  -H "x-handoff-token: $(cat "$HOME/.claude/teams-bot/handoff-token" 2>/dev/null)" \
+  -w "\nHTTP_STATUS:%{http_code}" \
+  -d @- <<'EOF'
+YOUR_JSON_HERE
+EOF
 ```
 
-IMPORTANT: You must fill in the actual summary, todos, and buttonText values based on the conversation context. Do NOT use placeholders.
+IMPORTANT: Replace `YOUR_JSON_HERE` with the actual JSON from step 2. The heredoc is single-quoted — content is passed verbatim, no escaping needed.
 
-5. If the response contains `"success":true` or HTTP_STATUS is 200:
-
-```
-Handoff sent! A forked session has been created on Teams — check Teams to continue.
-You can keep working here — both sides work independently on the same codebase.
-```
-
-6. If the API call fails or HTTP_STATUS is not 200:
-
-```
-Handoff failed - is the Teams Bot running?
-```
+4. Parse the JSON response. If `success` is true: `Handoff sent! Check Teams to continue. You can keep working here — both sides are independent.`
+5. If `success` is false or HTTP_STATUS is not 200: show the `error` field from the response. Common errors:
+   - "First time setup: send any message to the bot in Teams first" → user needs to message the bot once
+   - "Conversation expired" → user needs to send a message to refresh
+   - "Teams rejected" / "bot token" → bot credentials issue
+   - Connection refused → bot is not running, try `teams-bot start`
