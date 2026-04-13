@@ -36,7 +36,7 @@ export async function maybeInstallSkillPrompt(): Promise<void> {
     const scope = isGlobal ? "global (~/.claude/)" : "project (.claude/)";
     console.log(`  ✓ /handoff skill already installed (${scope})\n`);
     console.log("    1) Keep as-is");
-    console.log("    2) Reinstall / change scope");
+    console.log("    2) Reinstall");
     console.log("    3) Uninstall\n");
     const choice = (await prompt("  Choose [1]: ")) || "1";
     if (choice === "3") {
@@ -59,20 +59,91 @@ export async function maybeInstallSkillPrompt(): Promise<void> {
   await installSkill();
 }
 
-function installSkillFiles(destinationDir: string, sourceDir: string): void {
-  // Clean destination to remove stale files from older versions (e.g. get-session-id.sh)
-  if (fs.existsSync(destinationDir)) {
-    fs.rmSync(destinationDir, { recursive: true, force: true });
+/** Remove legacy SessionStart hooks that pointed to the now-removed session-start.sh */
+function cleanupLegacyHooks(): void {
+  const settingsFiles = [
+    path.join(homeDir, ".claude", "settings.json"),
+    path.join(process.cwd(), ".claude", "settings.json"),
+  ];
+  for (const settingsFile of settingsFiles) {
+    if (!fs.existsSync(settingsFile)) continue;
+    const settings = readJson(settingsFile);
+    const hooks = settings.hooks as Record<string, unknown> | undefined;
+    if (!hooks?.SessionStart) continue;
+    const groups = hooks.SessionStart as Array<Record<string, unknown>>;
+    const filtered = groups.filter((g) => {
+      const gh = Array.isArray(g.hooks) ? g.hooks : [];
+      return !gh.some(
+        (h: Record<string, unknown>) =>
+          typeof h.command === "string" &&
+          h.command.includes("session-start.sh"),
+      );
+    });
+    if (filtered.length < groups.length) {
+      if (filtered.length === 0) delete hooks.SessionStart;
+      else hooks.SessionStart = filtered;
+      if (Object.keys(hooks).length === 0) delete settings.hooks;
+      writeJson(settingsFile, settings);
+      console.log(`Removed legacy hook from ${settingsFile}`);
+    }
   }
-  fs.mkdirSync(destinationDir, { recursive: true });
+}
 
-  const source = path.join(sourceDir, "SKILL.md");
-  const destination = path.join(destinationDir, "SKILL.md");
-  fs.copyFileSync(source, destination);
+function getPackageVersion(): string {
+  const pkg = JSON.parse(
+    fs.readFileSync(path.join(projectDir, "package.json"), "utf8"),
+  );
+  return pkg.version;
+}
+
+/** Replace destDir contents with srcDir contents. */
+function copyDirSync(srcDir: string, destDir: string): void {
+  if (fs.existsSync(destDir)) {
+    fs.rmSync(destDir, { recursive: true, force: true });
+  }
+  fs.mkdirSync(destDir, { recursive: true });
+  for (const entry of fs.readdirSync(srcDir, { withFileTypes: true })) {
+    if (!entry.isFile()) continue;
+    fs.copyFileSync(path.join(srcDir, entry.name), path.join(destDir, entry.name));
+  }
+}
+
+/** If the skill is installed and its version differs, sync it. */
+function syncInstalledSkill(): void {
+  const srcDir = path.join(projectDir, "skills", "handoff");
+  if (!fs.existsSync(srcDir)) return;
+
+  const currentVersion = getPackageVersion();
+  const candidateDirs = [
+    path.join(homeDir, ".claude", "skills", "handoff"),
+    path.join(process.cwd(), ".claude", "skills", "handoff"),
+  ];
+
+  for (const installedDir of candidateDirs) {
+    if (!fs.existsSync(path.join(installedDir, "SKILL.md"))) continue;
+    const versionFile = path.join(installedDir, ".version");
+    const installedVersion = fs.existsSync(versionFile)
+      ? fs.readFileSync(versionFile, "utf8").trim()
+      : "";
+    if (installedVersion === currentVersion) continue;
+    console.log(`Updating /handoff skill in ${installedDir} (${installedVersion || "unknown"} → ${currentVersion})...`);
+    copyDirSync(srcDir, installedDir);
+    fs.writeFileSync(versionFile, currentVersion);
+    console.log(`✓ /handoff skill updated`);
+  }
+}
+
+/**
+ * Run all upgrade migrations. Call on bot start/restart so that
+ * `npm update` + `teams-bot restart` is enough to complete an upgrade.
+ */
+export function runUpgradeMigrations(): void {
+  cleanupLegacyHooks();
+  syncInstalledSkill();
 }
 
 export async function installSkill(): Promise<void> {
-  const skillSrcDir = path.join(projectDir, ".claude", "skills", "handoff");
+  const skillSrcDir = path.join(projectDir, "skills", "handoff");
   const skillSrc = path.join(skillSrcDir, "SKILL.md");
 
   if (!fs.existsSync(skillSrc)) {
@@ -84,21 +155,11 @@ export async function installSkill(): Promise<void> {
   const envConfig = loadExistingSetupConfig();
   const botUrl = `http://localhost:${envConfig.PORT || "3978"}`;
 
-  console.log("\n  Where to install?");
-  console.log("    1) Global (all projects)   ~/.claude/");
-  console.log("    2) This project only       .claude/\n");
+  const settingsFile = path.join(homeDir, ".claude", "settings.json");
+  const skillDestDir = path.join(homeDir, ".claude", "skills", "handoff");
 
-  const scopeChoice = (await prompt("  Choose [1]: ")) || "1";
-
-  let settingsFile = path.join(projectDir, ".claude", "settings.json");
-  let skillDestDir = path.join(projectDir, ".claude", "skills", "handoff");
-
-  if (scopeChoice === "1") {
-    settingsFile = path.join(homeDir, ".claude", "settings.json");
-    skillDestDir = path.join(homeDir, ".claude", "skills", "handoff");
-  }
-
-  installSkillFiles(skillDestDir, skillSrcDir);
+  copyDirSync(skillSrcDir, skillDestDir);
+  fs.writeFileSync(path.join(skillDestDir, ".version"), getPackageVersion());
   console.log("✓ Skill installed");
 
   const settings = readJson(settingsFile);
@@ -135,33 +196,7 @@ export async function uninstallSkill(): Promise<void> {
     }
   }
 
-  // Clean up legacy SessionStart hooks that pointed to the now-removed session-start.sh
-  const settingsFiles = [
-    path.join(homeDir, ".claude", "settings.json"),
-    path.join(process.cwd(), ".claude", "settings.json"),
-  ];
-  for (const settingsFile of settingsFiles) {
-    if (!fs.existsSync(settingsFile)) continue;
-    const settings = readJson(settingsFile);
-    const hooks = settings.hooks as Record<string, unknown> | undefined;
-    if (!hooks?.SessionStart) continue;
-    const groups = hooks.SessionStart as Array<Record<string, unknown>>;
-    const filtered = groups.filter((g) => {
-      const gh = Array.isArray(g.hooks) ? g.hooks : [];
-      return !gh.some(
-        (h: Record<string, unknown>) =>
-          typeof h.command === "string" &&
-          h.command.includes("session-start.sh"),
-      );
-    });
-    if (filtered.length < groups.length) {
-      if (filtered.length === 0) delete hooks.SessionStart;
-      else hooks.SessionStart = filtered;
-      if (Object.keys(hooks).length === 0) delete settings.hooks;
-      writeJson(settingsFile, settings);
-      console.log(`Removed legacy hook from ${settingsFile}`);
-    }
-  }
+  cleanupLegacyHooks();
 
   console.log("Uninstalled /handoff skill.");
 }

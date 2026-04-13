@@ -27,8 +27,7 @@
     "dist/",
     "scripts/run.sh",
     "scripts/package-manifest.mjs",
-    ".claude/skills/",
-    ".claude/hooks/",
+    "skills/",
     "manifest/",
     ".env.example"
   ],
