@@ -9,7 +9,7 @@ import {
   showStatus,
   tailLogs,
 } from "./service.js";
-import { getConversationRefsPath } from "./skill.js";
+import { getConversationRefsPath, runUpgradeMigrations } from "./skill.js";
 import { loadExistingSetupConfig } from "./setup.js";
 
 async function preflightCheck(): Promise<void> {
@@ -120,6 +120,11 @@ export async function uninstallCommand(): Promise<void> {
 
 export async function restartCommand(): Promise<void> {
   const platform = detectPlatform();
+  try {
+    runUpgradeMigrations();
+  } catch (error) {
+    console.warn("Warning: upgrade migrations failed; continuing.", error);
+  }
   await stopService(platform);
   await preflightCheck();
   await runBuild();
@@ -179,6 +184,11 @@ async function pollAndShowLogs(platform: Platform): Promise<void> {
 
 export async function startCommand(): Promise<void> {
   const platform = detectPlatform();
+  try {
+    runUpgradeMigrations();
+  } catch (error) {
+    console.warn("Warning: upgrade migrations failed; continuing.", error);
+  }
 
   // Check if already running
   if (await probe("http://127.0.0.1:3978/healthz", 2000)) {
