@@ -70,6 +70,7 @@ function cleanupLegacyHooks(): void {
     const settings = readJson(settingsFile);
     const hooks = settings.hooks as Record<string, unknown> | undefined;
     if (!hooks?.SessionStart) continue;
+    if (!Array.isArray(hooks.SessionStart)) continue;
     const groups = hooks.SessionStart as Array<Record<string, unknown>>;
     const filtered = groups.filter((g) => {
       const gh = Array.isArray(g.hooks) ? g.hooks : [];
@@ -103,8 +104,14 @@ function copyDirSync(srcDir: string, destDir: string): void {
   }
   fs.mkdirSync(destDir, { recursive: true });
   for (const entry of fs.readdirSync(srcDir, { withFileTypes: true })) {
+    const srcPath = path.join(srcDir, entry.name);
+    const destPath = path.join(destDir, entry.name);
+    if (entry.isDirectory()) {
+      copyDirSync(srcPath, destPath);
+      continue;
+    }
     if (!entry.isFile()) continue;
-    fs.copyFileSync(path.join(srcDir, entry.name), path.join(destDir, entry.name));
+    fs.copyFileSync(srcPath, destPath);
   }
 }
 
