@@ -49,7 +49,7 @@
     "prepack": "npm run build"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.64",
+    "@anthropic-ai/claude-agent-sdk": "^0.2.110",
     "@microsoft/teams.api": "^2.0.6",
     "@microsoft/teams.apps": "^2.0.6",
     "@microsoft/teams.cards": "^2.0.6",
